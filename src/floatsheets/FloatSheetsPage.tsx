@@ -82,22 +82,15 @@ export function FloatSheetsPage({ page }: { page: FloatPage }) {
         setPhase("fading");
         fadeTimer = setTimeout(() => setPhase("done"), 260);
 
-        await Promise.all(
-          page.scripts.map(
-            (url) =>
-              new Promise<void>((resolve, reject) => {
-                const script = document.createElement("script");
-                script.src = url;
-                script.async = false;
-                script.onload = () => resolve();
-                script.onerror = () =>
-                  reject(new Error("An interaction file could not load."));
-                document.body.append(script);
-                added.push(script);
-              }),
-          ),
-        );
+        // A page's scripts share one scope (dashboard.js uses helpers from
+        // app.js), so they are joined and run as a single wrapped script —
+        // this also makes re-mounts safe instead of re-declaring globals.
+        const codes = await Promise.all(page.scripts.map(loadScript));
         if (!active) return;
+        const script = document.createElement("script");
+        script.textContent = `(function(){\n${codes.join("\n;\n")}\n})();`;
+        document.body.append(script);
+        added.push(script);
         const hash = window.location.hash;
         if (hash && !window.location.pathname.startsWith("/dashboard")) {
           document.getElementById(decodeURIComponent(hash.slice(1)))?.scrollIntoView();
