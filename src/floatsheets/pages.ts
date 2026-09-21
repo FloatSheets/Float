@@ -1,0 +1,12 @@
+import page_index from './index.json';
+import page_404 from './404.json';
+import page_protocol_index from './protocol-index.json';
+import page_dashboard_index from './dashboard-index.json';
+import page_research_listings_index from './research-listings-index.json';
+import page_research_oracle_index from './research-oracle-index.json';
+import page_research_risk_index from './research-risk-index.json';
+import page_research_vault_index from './research-vault-index.json';
+import page_legal_privacy_index from './legal-privacy-index.json';
+import page_legal_terms_index from './legal-terms-index.json';
+import page_legal_risk_index from './legal-risk-index.json';
+export const pages = [page_index,page_404,page_protocol_index,page_dashboard_index,page_research_listings_index,page_research_oracle_index,page_research_risk_index,page_research_vault_index,page_legal_privacy_index,page_legal_terms_index,page_legal_risk_index];
