@@ -94,7 +94,9 @@ export function FloatSheetsPage({ page }: { page: FloatPage }) {
 
     return () => {
       active = false;
-      setReady(false);
+      clearTimeout(fadeTimer);
+      setPhase("hidden");
+
       added.forEach((node) => node.remove());
     };
   }, [page]);
