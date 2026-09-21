@@ -26,6 +26,20 @@ function prepare(page: FloatPage) {
   return html;
 }
 
+/** Script files are fetched once and shared between page mounts. */
+const scriptCache = new Map<string, Promise<string>>();
+function loadScript(url: string) {
+  let code = scriptCache.get(url);
+  if (!code) {
+    code = fetch(url).then((res) => {
+      if (!res.ok) throw new Error("An interaction file could not load.");
+      return res.text();
+    });
+    scriptCache.set(url, code);
+  }
+  return code;
+}
+
 /** Renders a FloatSheets page: its original markup, stylesheets and interaction scripts. */
 export function FloatSheetsPage({ page }: { page: FloatPage }) {
   const host = useRef<HTMLDivElement>(null);
