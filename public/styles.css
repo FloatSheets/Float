@@ -150,7 +150,7 @@ section#faq header [data-framer-name$="/Light"]{height:auto!important;overflow:v
 section#faq [data-framer-name="Headline"]{height:auto!important;min-height:0!important;overflow:visible!important}
 section#faq [data-framer-name="SubHeader"],section#faq [data-framer-name="SubHeader"] p{height:auto!important}
 section#faq [data-framer-name="SubHeader"] p{font-size:26px!important;line-height:1.3!important}
-section#faq .fs-faq-item{padding-left:20px;padding-right:20px}
+section#faq .fs-faq-item{padding-left:28px;padding-right:28px}
 section#faq .fs-faq-item summary{font-size:18px;gap:16px}
-section#faq .fs-faq-item p{max-width:100%;font-size:15px}
+section#faq .fs-faq-item p{max-width:100%;font-size:15px;padding-top:16px}
 }
