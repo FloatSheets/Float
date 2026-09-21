@@ -65,7 +65,9 @@ export function FloatSheetsPage({ page }: { page: FloatPage }) {
     Promise.all(loaded)
       .then(async () => {
         if (!active) return;
-        setReady(true);
+        setPhase("fading");
+        fadeTimer = setTimeout(() => setPhase("done"), 260);
+
         await Promise.all(
           page.scripts.map(
             (url) =>
