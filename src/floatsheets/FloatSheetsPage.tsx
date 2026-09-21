@@ -26,6 +26,20 @@ function prepare(page: FloatPage) {
   return html;
 }
 
+/** Script files are fetched once and shared between page mounts. */
+const scriptCache = new Map<string, Promise<string>>();
+function loadScript(url: string) {
+  let code = scriptCache.get(url);
+  if (!code) {
+    code = fetch(url).then((res) => {
+      if (!res.ok) throw new Error("An interaction file could not load.");
+      return res.text();
+    });
+    scriptCache.set(url, code);
+  }
+  return code;
+}
+
 /** Renders a FloatSheets page: its original markup, stylesheets and interaction scripts. */
 export function FloatSheetsPage({ page }: { page: FloatPage }) {
   const host = useRef<HTMLDivElement>(null);
@@ -68,22 +82,15 @@ export function FloatSheetsPage({ page }: { page: FloatPage }) {
         setPhase("fading");
         fadeTimer = setTimeout(() => setPhase("done"), 260);
 
-        await Promise.all(
-          page.scripts.map(
-            (url) =>
-              new Promise<void>((resolve, reject) => {
-                const script = document.createElement("script");
-                script.src = url;
-                script.async = false;
-                script.onload = () => resolve();
-                script.onerror = () =>
-                  reject(new Error("An interaction file could not load."));
-                document.body.append(script);
-                added.push(script);
-              }),
-          ),
-        );
+        // A page's scripts share one scope (dashboard.js uses helpers from
+        // app.js), so they are joined and run as a single wrapped script —
+        // this also makes re-mounts safe instead of re-declaring globals.
+        const codes = await Promise.all(page.scripts.map(loadScript));
         if (!active) return;
+        const script = document.createElement("script");
+        script.textContent = `(function(){\n${codes.join("\n;\n")}\n})();`;
+        document.body.append(script);
+        added.push(script);
         const hash = window.location.hash;
         if (hash && !window.location.pathname.startsWith("/dashboard")) {
           document.getElementById(decodeURIComponent(hash.slice(1)))?.scrollIntoView();
