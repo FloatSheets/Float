@@ -99,11 +99,15 @@ export function FloatSheetsPage({ page }: { page: FloatPage }) {
     <>
       <div
         ref={host}
-        style={{
-          opacity: ready ? 1 : 0,
-          transition: "opacity 220ms ease-out",
-        }}
+        // Once the fade finishes the inline style is dropped entirely, so it
+        // never creates a stacking context for fixed elements.
+        style={
+          phase === "done"
+            ? undefined
+            : { opacity: phase === "hidden" ? 0 : 1, transition: "opacity 220ms ease-out" }
+        }
       />
+
       {error && <p role="alert">{error} Please refresh the page.</p>}
     </>
   );
