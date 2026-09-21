@@ -12,9 +12,24 @@ export function findPage(pathname: string): FloatPage {
   );
 }
 
+/** Below-the-fold images load lazily so the first screen paints sooner. */
+const preparedHtml = new Map<string, string>();
+function prepare(page: FloatPage) {
+  const cached = preparedHtml.get(page.route);
+  if (cached) return cached;
+  let seen = 0;
+  const html = page.html.replace(/<img\b(?![^>]*\bloading=)/g, () => {
+    seen += 1;
+    return seen <= 6 ? '<img decoding="async"' : '<img loading="lazy" decoding="async"';
+  });
+  preparedHtml.set(page.route, html);
+  return html;
+}
+
 /** Renders a FloatSheets page: its original markup, stylesheets and interaction scripts. */
 export function FloatSheetsPage({ page }: { page: FloatPage }) {
   const host = useRef<HTMLDivElement>(null);
+  const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -22,8 +37,10 @@ export function FloatSheetsPage({ page }: { page: FloatPage }) {
 
     const holder = document.createElement("template");
     holder.innerHTML = page.styles;
-    const heads = Array.from(holder.content.children);
-    const ready = heads.map(
+    const heads = Array.from(holder.content.children).filter(
+      (node) => !(node instanceof HTMLLinkElement && node.rel === "icon"),
+    );
+    const loaded = heads.map(
       (node) =>
         new Promise<void>((resolve, reject) => {
           if (node instanceof HTMLLinkElement && node.rel === "stylesheet") {
@@ -39,21 +56,29 @@ export function FloatSheetsPage({ page }: { page: FloatPage }) {
     let active = true;
     const added: Element[] = [...heads];
 
-    Promise.all(ready)
+    // Insert the markup right away (hidden) so images and fonts fetch in
+    // parallel with the stylesheets instead of after them.
+    if (host.current) host.current.innerHTML = prepare(page);
+
+    Promise.all(loaded)
       .then(async () => {
-        if (!active || !host.current) return;
-        host.current.innerHTML = page.html;
-        for (const url of page.scripts) {
-          await new Promise<void>((resolve, reject) => {
-            const script = document.createElement("script");
-            script.src = url;
-            script.async = false;
-            script.onload = () => resolve();
-            script.onerror = () => reject(new Error("An interaction file could not load."));
-            document.body.append(script);
-            added.push(script);
-          });
-        }
+        if (!active) return;
+        setReady(true);
+        await Promise.all(
+          page.scripts.map(
+            (url) =>
+              new Promise<void>((resolve, reject) => {
+                const script = document.createElement("script");
+                script.src = url;
+                script.async = false;
+                script.onload = () => resolve();
+                script.onerror = () =>
+                  reject(new Error("An interaction file could not load."));
+                document.body.append(script);
+                added.push(script);
+              }),
+          ),
+        );
         if (!active) return;
         const hash = window.location.hash;
         if (hash && !window.location.pathname.startsWith("/dashboard")) {
@@ -65,14 +90,22 @@ export function FloatSheetsPage({ page }: { page: FloatPage }) {
 
     return () => {
       active = false;
+      setReady(false);
       added.forEach((node) => node.remove());
     };
   }, [page]);
 
   return (
     <>
-      <div ref={host} />
+      <div
+        ref={host}
+        style={{
+          opacity: ready ? 1 : 0,
+          transition: "opacity 220ms ease-out",
+        }}
+      />
       {error && <p role="alert">{error} Please refresh the page.</p>}
     </>
   );
 }
+
