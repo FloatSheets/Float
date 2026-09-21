@@ -29,7 +29,7 @@ function prepare(page: FloatPage) {
 /** Renders a FloatSheets page: its original markup, stylesheets and interaction scripts. */
 export function FloatSheetsPage({ page }: { page: FloatPage }) {
   const host = useRef<HTMLDivElement>(null);
-  const [ready, setReady] = useState(false);
+  const [phase, setPhase] = useState<"hidden" | "fading" | "done">("hidden");
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -54,7 +54,9 @@ export function FloatSheetsPage({ page }: { page: FloatPage }) {
     );
 
     let active = true;
+    let fadeTimer: ReturnType<typeof setTimeout>;
     const added: Element[] = [...heads];
+
 
     // Insert the markup right away (hidden) so images and fonts fetch in
     // parallel with the stylesheets instead of after them.
