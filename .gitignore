@@ -18,6 +18,20 @@ dist-ssr
 .nitro
 *.local
 
+# Environment and service artifacts
+.env
+.env.*
+!.env.example
+backend/.env
+backend/node_modules/
+backend/dist/
+contracts/out/
+contracts/cache/
+contracts/lib/
+contracts/broadcast/
+*.pem
+.vercel
+
 # Wrangler / Cloudflare
 .wrangler/
 .dev.vars

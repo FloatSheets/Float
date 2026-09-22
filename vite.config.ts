@@ -12,4 +12,8 @@ export default defineConfig({
     // nitro/vite builds from this
     server: { entry: "server" },
   },
+  nitro: {
+    // Lovable uses Cloudflare. Vercel sets this environment variable during its build.
+    preset: process.env.VERCEL === "1" ? "vercel" : "cloudflare-module",
+  },
 });

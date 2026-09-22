@@ -1,15 +1,15 @@
 {
-  "name": "tanstack_start_ts",
+  "name": "floatsheets",
   "private": true,
   "sideEffects": false,
   "type": "module",
   "scripts": {
-    "dev": "vite dev",
-    "build": "vite build",
-    "build:dev": "vite build --mode development",
-    "preview": "vite preview",
-    "lint": "eslint .",
-    "format": "prettier --write ."
+    "dev": "bunx vite dev",
+    "build": "bunx vite build",
+    "build:dev": "bunx vite build --mode development",
+    "preview": "bunx vite preview",
+    "lint": "bunx eslint .",
+    "format": "bunx prettier --write ."
   },
   "overrides": {
     "rolldown": "1.2.1"
