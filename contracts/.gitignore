@@ -3,3 +3,4 @@ cache/
 lib/
 broadcast/
 .env
+AUDIT_READINESS.md
