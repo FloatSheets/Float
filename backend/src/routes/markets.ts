@@ -27,6 +27,24 @@ export function createMarketsRouter(database: Pool, maxPriceAgeSeconds = 120): R
     }
   });
 
+  router.get("/:symbol/history", async (request, response, next) => {
+    try {
+      const ranges: Record<string, number> = { "1H": 60 * 60, "4H": 4 * 60 * 60, "1D": 24 * 60 * 60, "1W": 7 * 24 * 60 * 60, "1M": 30 * 24 * 60 * 60 };
+      const range = String(request.query.range ?? "1D").toUpperCase();
+      const seconds = ranges[range] ?? ranges["1D"];
+      const result = await database.query(
+        `SELECT s.observed_at, s.twap_price_usdg, s.spot_price_usdg,
+                s.spot_twap_deviation_bps, s.oracle_tradable
+         FROM pool_snapshots s JOIN markets m ON m.id=s.market_id
+         WHERE m.symbol=$1 AND s.observed_at >= now() - ($2::text || ' seconds')::interval
+         ORDER BY s.observed_at ASC LIMIT 500`,
+        [request.params.symbol.toUpperCase(), String(seconds)]
+      );
+      if (!result.rowCount) return response.status(404).json({ error: "market history not found" });
+      response.json({ market: request.params.symbol.toUpperCase(), range, points: result.rows });
+    } catch (error) { next(error); }
+  });
+
   router.get("/:symbol", async (request, response, next) => {
     try {
       const result = await database.query(

@@ -16,7 +16,11 @@
         state:tradable?'LIVE':(status==='disabled'?'HALTED':'CLOSE_ONLY'),sector:'Equity',oracleTradable:tradable};
     }).filter(function(row){return row.price>0;});
     if (!liveMarkets.length) return;
-    markets=liveMarkets; selected=markets[0]; stale=!selected.oracleTradable; render();
+    markets=liveMarkets;
+    window.__FLOATSHEETS_LIVE_MARKETS__=true;
+    const detailSymbol=location.pathname.match(/^\/dashboard\/([A-Za-z0-9.-]+)\/?$/)?.[1]?.toUpperCase();
+    selected=markets.find(function(m){return m.symbol===detailSymbol})||markets[0];
+    stale=!selected.oracleTradable; render();
     if (typeof toast === 'function') toast('Live Robinhood Chain market data loaded.');
   } catch (error) { console.error('FloatSheets live market load failed', error); }
 })();

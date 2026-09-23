@@ -9,6 +9,7 @@ export function findPage(pathname: string): FloatPage {
     pathname.endsWith("/") || pathname.endsWith(".html") ? pathname : pathname + "/";
   return (
     pages.find((p) => p.route === normalized) ??
+    (normalized.match(/^\/dashboard\/[A-Za-z0-9.-]+\/$/) ? pages.find((p) => p.route === "/dashboard/") : undefined) ??
     pages.find((p) => p.route === "/404.html")!
   );
 }
