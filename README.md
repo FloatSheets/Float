@@ -79,7 +79,7 @@ Use a Render **Native Environment** service rooted at `backend`:
 | --- | --- |
 | Runtime | Bun |
 | Root directory | `backend` |
-| Build command | `bun install --frozen-lockfile` |
+| Build command | `bun install --frozen-lockfile && bun run check` |
 | Start command | `bun run start` |
 | Health check | `/health` |
 
