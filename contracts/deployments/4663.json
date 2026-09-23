@@ -1,0 +1,12 @@
+{
+  "chainId": 4663,
+  "network": "Robinhood Chain",
+  "settlementAsset": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+  "owner": "0x4a4c4e9Ad9afc8c5603ef5EA91cEf98CCdFE91f3",
+  "oracle": "0x841E9EBb75Da9F3B4045434cB38F4892f37F4Afd",
+  "vault": "0xC29aA325F8C20DC731031BdB37074765Cc98ec5e",
+  "clearingHouse": "0xb91fE7c85E6645D2134f1C313Ea787812d43bfa8",
+  "oracleSigner": "0x9417f45d924b43587fE1a03803001fA073ce3a5a",
+  "quoteSigner": "0x325Fd0FA56AC44dfe6015c6F4c2C426967aFb3ad",
+  "feeRecipient": "0x5140a99bf0fB56637a3DBDA7685cc4E190F15c94"
+}
