@@ -119,6 +119,27 @@ contract FloatClearingHouseForkTest {
         clearing.execute(_quote(true, 5_000 * USDG_UNIT, 3), _quoteSignature(_quote(true, 5_000 * USDG_UNIT, 3)));
     }
 
+    function testPausedAllowsOnlyRiskReduction() public {
+        _depositTraderMargin(20_000 * USDG_UNIT);
+        _execute(_quote(true, 50_000 * USDG_UNIT, 1));
+        clearing.setMarket(
+            MARKET,
+            FloatClearingHouse.Market({
+                state: FloatClearingHouse.MarketState.Paused,
+                maxLeverageE18: uint64(5 * E18),
+                maintenanceMarginBps: 1_000,
+                maxExecutionDeviationBps: 30,
+                maxOracleConfidenceBps: 50,
+                maxPositionNotionalUsdg: uint128(150_000 * USDG_UNIT)
+            })
+        );
+        _execute(_quote(false, 25_000 * USDG_UNIT, 2));
+        FloatClearingHouse.TradeQuote memory increase = _quote(true, 5_000 * USDG_UNIT, 3);
+        vm.expectRevert(FloatClearingHouse.MarketPaused.selector);
+        vm.prank(TRADER);
+        clearing.execute(increase, _quoteSignature(increase));
+    }
+
     function testFullLiquidationPaysKeeperAndClearsExposure() public {
         _depositTraderMargin(20_000 * USDG_UNIT);
         _execute(_quote(true, 50_000 * USDG_UNIT, 1));

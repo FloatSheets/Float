@@ -252,7 +252,7 @@ contract FloatClearingHouse {
 
     function execute(TradeQuote calldata quote, bytes calldata signature) external nonReentrant {
         Market memory market = markets[quote.marketId];
-        if (market.state == MarketState.Unset || market.state == MarketState.Paused) revert MarketPaused();
+        if (market.state == MarketState.Unset) revert MarketNotActive();
         if (quote.trader != msg.sender || quote.notionalUsdg == 0 || quote.executionPriceE18 == 0) {
             revert InvalidDirection();
         }
@@ -274,6 +274,9 @@ contract FloatClearingHouse {
         int256 nextSize = position.sizeE18 + signedDelta;
         if (market.state == MarketState.CloseOnly && !_isRiskReducing(position.sizeE18, signedDelta)) {
             revert MarketNotActive();
+        }
+        if (market.state == MarketState.Paused && !_isRiskReducing(position.sizeE18, signedDelta)) {
+            revert MarketPaused();
         }
         quoteUsed[msg.sender][quote.nonce] = true;
         _updateExposure(quote.marketId, position.sizeE18, nextSize);
