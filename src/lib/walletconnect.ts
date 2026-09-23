@@ -3,9 +3,15 @@ export function installWalletButton(button: HTMLButtonElement, notify: (message:
   managed.__floatsheetsWalletCleanup?.();
   const render = () => {
     const state = (window as Window & { __FLOATSHEETS_WALLET_STATE__?: { address: string; connected: boolean; usdgBalance?: string } }).__FLOATSHEETS_WALLET_STATE__;
-    button.textContent = state?.connected && state.address
-      ? `${state.address.slice(0, 6)}…${state.address.slice(-4)} · ${Number(state.usdgBalance ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 })} USDG`
-      : "Connect wallet";
+    if (!state?.connected || !state.address) {
+      button.textContent = "Connect wallet";
+      return;
+    }
+    button.replaceChildren(
+      document.createTextNode(`${state.address.slice(0, 6)}…${state.address.slice(-4)} · ${Number(state.usdgBalance ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 })} `),
+      Object.assign(document.createElement("img"), { src: "/usdg_logo.png", alt: "USDG", className: "wallet-usdg-icon" }),
+      document.createTextNode(" USDG")
+    );
   };
   render();
   const onState = () => { render(); notify("Wallet state updated."); };
