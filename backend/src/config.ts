@@ -8,6 +8,8 @@ const schema = z.object({
   FLOAT_CLEARING_HOUSE_ADDRESS: address,
   FLOAT_ORACLE_ADDRESS: address,
   FLOAT_VAULT_ADDRESS: address,
+  MASTER_ADMIN_KEY: z.string().min(32),
+  USDG_ADDRESS: address,
   FRONTEND_URL: z.url(),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]),
   MARKET_POLL_INTERVAL_MS: z.coerce.number().int().min(1_000),
