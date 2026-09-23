@@ -15,6 +15,9 @@
     const nodes=[]; let node;
     while((node=walker.nextNode())) if(/\b(?:USDG|ETH)\b/.test(node.nodeValue||'')) nodes.push(node);
     nodes.forEach(function(textNode){
+      // A previous pass may already have turned this unit into an asset reference.
+      // Do not nest a second USDG logo/text pair inside it.
+      if(textNode.parentElement?.closest('.asset-ref')) return;
       const fragment=document.createDocumentFragment();
       String(textNode.nodeValue).split(/(USDG|ETH)/g).forEach(function(part){
         if(!icon[part]) { fragment.append(document.createTextNode(part)); return; }
@@ -22,6 +25,25 @@
         const image=document.createElement('img'); image.src=icon[part]; image.alt=part; wrap.append(image,document.createTextNode(part)); fragment.append(wrap);
       });
       textNode.parentNode?.replaceChild(fragment,textNode);
+    });
+  }
+
+  function normalizeMetricNotes(){
+    root.querySelectorAll('.metric').forEach(function(metric){
+      const label=metric.querySelector(':scope > small')?.textContent?.trim();
+      const value=metric.querySelector(':scope > strong');
+      const note=metric.querySelector(':scope > span');
+      if(!value || !note || !['Available collateral','Portfolio equity','Unrealized PnL'].includes(label||'')) return;
+      // The old static template put USDG in a nested <small> in the value,
+      // then decorated it again on every render. Keep one semantic unit line.
+      value.querySelector('small')?.remove();
+      const copy=label==='Available collateral' ? 'wallet collateral' : label==='Portfolio equity' ? 'including unrealized PnL' : 'mark prices';
+      note.className='metric-note';
+      note.replaceChildren();
+      const unit=document.createElement('span'); unit.className='asset-ref';
+      const image=document.createElement('img'); image.src='/usdg_logo.png'; image.alt='USDG';
+      unit.append(image,document.createTextNode('USDG'));
+      note.append(unit,document.createTextNode(' · '+copy));
     });
   }
 
@@ -81,20 +103,29 @@
       if(!response.ok) throw new Error('history unavailable');
       const payload=await response.json();
       if(requestId!==chartRequest||!Array.isArray(payload.points)||!payload.points.length) return;
-      const points=payload.points.map(function(point){return {time:new Date(point.observed_at),price:Number(point.twap_price_usdg ?? point.spot_price_usdg),deviation:Number(point.spot_twap_deviation_bps||0)/10000};}).filter(function(point){return Number.isFinite(point.price)&&point.price>0;});
+      const points=payload.points.map(function(point){return {time:new Date(point.observed_at),price:Number(point.twap_price_usdg ?? point.spot_price_usdg),deviation:Number(point.spot_twap_deviation_bps||0)/10000};}).filter(function(point){return Number.isFinite(point.price)&&point.price>0&&!Number.isNaN(point.time.getTime());});
       if(!points.length) return;
+      // Candles are calculated only from persisted oracle snapshots. They are
+      // not market-data placeholders: each open/high/low/close is a recorded
+      // USDG midpoint within the selected time bucket.
+      const bucketMs={"1H":5*60e3,"4H":15*60e3,"1D":60*60e3,"1W":6*60*60e3,"1M":24*60*60e3}[timeframe]||60*60e3;
+      const candles=[];
+      points.forEach(function(point){
+        const bucket=Math.floor(point.time.getTime()/bucketMs)*bucketMs;
+        const candle=candles[candles.length-1];
+        if(!candle||candle.bucket!==bucket) candles.push({bucket:bucket,time:point.time,open:point.price,high:point.price,low:point.price,close:point.price,deviation:point.deviation});
+        else { candle.high=Math.max(candle.high,point.price); candle.low=Math.min(candle.low,point.price); candle.close=point.price; candle.deviation=Math.max(candle.deviation,point.deviation); }
+      });
       const box=canvas.getBoundingClientRect(),dpr=devicePixelRatio||1,w=box.width,h=box.height,left=12,right=56,top=25,bottom=35;
       const ctx=canvas.getContext('2d'); if(!ctx) return; canvas.width=w*dpr; canvas.height=h*dpr; ctx.setTransform(dpr,0,0,dpr,0,0);
-      const prices=points.map(function(point){return point.price;}),min=Math.min.apply(null,prices),max=Math.max.apply(null,prices),pad=Math.max((max-min)*.12,max*.0005),lo=min-pad,hi=max+pad;
-      const X=function(i){return left+(i/Math.max(1,points.length-1))*(w-left-right);},Y=function(price){return top+(hi-price)/(hi-lo)*(h-top-bottom);};
+      const prices=candles.flatMap(function(candle){return [candle.high,candle.low];}),min=Math.min.apply(null,prices),max=Math.max.apply(null,prices),pad=Math.max((max-min)*.12,max*.0005),lo=min-pad,hi=max+pad;
+      const X=function(i){return left+(i/Math.max(1,candles.length-1))*(w-left-right);},Y=function(price){return top+(hi-price)/(hi-lo)*(h-top-bottom);};
       ctx.clearRect(0,0,w,h);ctx.font='10px Arial';ctx.textAlign='left';
       for(let i=0;i<5;i++){const y=top+i*(h-top-bottom)/4;ctx.strokeStyle=document.body.classList.contains('dashboard-dark')?'#273754':'#edf1f7';ctx.beginPath();ctx.moveTo(left,y);ctx.lineTo(w-right,y);ctx.stroke();ctx.fillStyle=document.body.classList.contains('dashboard-dark')?'#9aacd0':'#8d9ab2';ctx.fillText((hi-i*(hi-lo)/4).toFixed(2),w-right+10,y+4);}
-      ctx.beginPath();points.forEach(function(point,i){const x=X(i),y=Y(point.price*(1+Math.max(point.deviation,selected.band)));i?ctx.lineTo(x,y):ctx.moveTo(x,y);});points.slice().reverse().forEach(function(point,i){ctx.lineTo(X(points.length-1-i),Y(point.price*(1-Math.max(point.deviation,selected.band))));});ctx.closePath();ctx.fillStyle='#aebfe52d';ctx.fill();
-      const grad=ctx.createLinearGradient(0,top,0,h-bottom);grad.addColorStop(0,'#b5c7ec66');grad.addColorStop(1,'#e8edf900');ctx.fillStyle=grad;ctx.beginPath();ctx.moveTo(X(0),h-bottom);points.forEach(function(point,i){ctx.lineTo(X(i),Y(point.price));});ctx.lineTo(X(points.length-1),h-bottom);ctx.closePath();ctx.fill();
-      ctx.strokeStyle=document.body.classList.contains('dashboard-dark')?'#dbe6ff':'#153c92';ctx.lineWidth=1.8;ctx.beginPath();points.forEach(function(point,i){i?ctx.lineTo(X(i),Y(point.price)):ctx.moveTo(X(i),Y(point.price));});ctx.stroke();
-      const last=points[points.length-1];ctx.beginPath();ctx.arc(X(points.length-1),Y(last.price),4,0,Math.PI*2);ctx.fillStyle='#ffb6c1';ctx.fill();
-      ctx.fillStyle=document.body.classList.contains('dashboard-dark')?'#9aacd0':'#8d9ab2';for(let i=0;i<5;i++){const point=points[Math.min(points.length-1,Math.round(i*(points.length-1)/4))];ctx.fillText(point.time.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}),X(Math.min(points.length-1,Math.round(i*(points.length-1)/4))),h-10);}
-      canvas.onmousemove=function(event){const rect=canvas.getBoundingClientRect(),index=Math.max(0,Math.min(points.length-1,Math.round((event.clientX-rect.left-left)/(w-left-right)*(points.length-1)))),point=points[index],tip=document.querySelector('.chart-tooltip');if(!tip)return;tip.style.display='block';tip.style.left=Math.min(w-170,Math.max(0,event.clientX-rect.left+10))+'px';tip.textContent=point.time.toLocaleString()+' · $'+money(point.price,4);};canvas.onmouseleave=function(){const tip=document.querySelector('.chart-tooltip');if(tip)tip.style.display='none';};
+      const slot=(w-left-right)/Math.max(1,candles.length),body=Math.max(2,Math.min(14,slot*.58));
+      candles.forEach(function(candle,i){const x=X(i),up=candle.close>=candle.open,color=up?'#1f9d70':'#db5b66',high=Y(candle.high),low=Y(candle.low),open=Y(candle.open),close=Y(candle.close);ctx.strokeStyle=color;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x,high);ctx.lineTo(x,low);ctx.stroke();ctx.fillStyle=color;ctx.fillRect(x-body/2,Math.min(open,close),body,Math.max(1,Math.abs(close-open)));});
+      ctx.fillStyle=document.body.classList.contains('dashboard-dark')?'#9aacd0':'#8d9ab2';for(let i=0;i<5;i++){const candle=candles[Math.min(candles.length-1,Math.round(i*(candles.length-1)/4))];ctx.fillText(candle.time.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}),X(Math.min(candles.length-1,Math.round(i*(candles.length-1)/4))),h-10);}
+      canvas.onmousemove=function(event){const rect=canvas.getBoundingClientRect(),index=Math.max(0,Math.min(candles.length-1,Math.round((event.clientX-rect.left-left)/(w-left-right)*(candles.length-1)))),candle=candles[index],tip=document.querySelector('.chart-tooltip');if(!tip)return;tip.style.display='block';tip.style.left=Math.min(w-190,Math.max(0,event.clientX-rect.left+10))+'px';tip.textContent=candle.time.toLocaleString()+' · O $'+money(candle.open,4)+' H $'+money(candle.high,4)+' L $'+money(candle.low,4)+' C $'+money(candle.close,4);};canvas.onmouseleave=function(){const tip=document.querySelector('.chart-tooltip');if(tip)tip.style.display='none';};
     } catch(error) { console.warn('FloatSheets historical chart unavailable',error); }
   };
 
@@ -104,6 +135,9 @@
     removeSimulationControls();
     genuinePageContent();
     decorateAssets();
+    normalizeMetricNotes();
+    const chartLegend=root.querySelector('.chart-legend');
+    if(chartLegend) chartLegend.textContent='Recorded oracle OHLC · USDG';
     installThemeToggle();
     window.__FLOATSHEETS_INSTALL_WALLET__?.();
   };

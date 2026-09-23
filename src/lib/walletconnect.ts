@@ -1,5 +1,10 @@
 export function installWalletButton(button: HTMLButtonElement, notify: (message: string) => void) {
-  const render = () => { const state = (window as Window & { __FLOATSHEETS_WALLET_STATE__?: { address: string; connected: boolean } }).__FLOATSHEETS_WALLET_STATE__; button.innerHTML = state?.connected && state.address ? `${state.address.slice(0, 6)}…${state.address.slice(-4)} <span>FS</span>` : "Connect wallet"; };
+  const render = () => {
+    const state = (window as Window & { __FLOATSHEETS_WALLET_STATE__?: { address: string; connected: boolean } }).__FLOATSHEETS_WALLET_STATE__;
+    button.textContent = state?.connected && state.address
+      ? `${state.address.slice(0, 6)}…${state.address.slice(-4)}`
+      : "Connect wallet";
+  };
   render();
   const onState = () => { render(); notify("Wallet state updated."); };
   window.addEventListener("floatsheets-wallet-state", onState);
