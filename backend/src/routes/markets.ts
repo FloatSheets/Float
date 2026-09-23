@@ -47,7 +47,11 @@ export function createMarketsRouter(database: Pool, maxPriceAgeSeconds = 120): R
         `SELECT q.observed_at, q.notional_usdg, q.direction, q.execution_degradation_bps, q.quoted_output
          FROM quote_samples q JOIN markets m ON m.id = q.market_id
          WHERE m.symbol = $1 AND q.observed_at = (
-           SELECT max(q2.observed_at) FROM quote_samples q2 WHERE q2.market_id = m.id
+           SELECT q2.observed_at FROM quote_samples q2
+           WHERE q2.market_id = m.id
+           GROUP BY q2.observed_at
+           HAVING count(*) = 10
+           ORDER BY q2.observed_at DESC LIMIT 1
          ) ORDER BY q.notional_usdg, q.direction`,
         [request.params.symbol.toUpperCase()]
       );
@@ -74,7 +78,11 @@ export function createMarketsRouter(database: Pool, maxPriceAgeSeconds = 120): R
       if (!row) return response.status(404).json({ error: "market not found" });
       const quotes = await database.query<{ execution_degradation_bps: number }>(
         `SELECT execution_degradation_bps FROM quote_samples WHERE market_id=$1 AND observed_at=(
-           SELECT max(observed_at) FROM quote_samples WHERE market_id=$1
+           SELECT q2.observed_at FROM quote_samples q2
+           WHERE q2.market_id=$1
+           GROUP BY q2.observed_at
+           HAVING count(*) = 10
+           ORDER BY q2.observed_at DESC LIMIT 1
          )`, [row.id]
       );
       const age = row.observed_at ? (Date.now() - row.observed_at.getTime()) / 1000 : null;
