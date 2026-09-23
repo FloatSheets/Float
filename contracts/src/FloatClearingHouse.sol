@@ -47,6 +47,7 @@ contract FloatClearingHouse {
     uint256 public constant LIQUIDATION_PENALTY_BPS = 500;
     uint256 public constant LIQUIDATOR_REWARD_BPS = 250;
     uint256 public constant MAX_MARKETS = 10;
+    uint256 private constant MAX_INT256 = 0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff;
     bytes32 private constant DOMAIN_TYPEHASH =
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
     bytes32 private constant QUOTE_TYPEHASH = keccak256(
@@ -215,13 +216,13 @@ contract FloatClearingHouse {
     /// @notice LP assets available for withdrawal after reserving 100% of gross OI at current oracle prices.
     function availableLiquidity() public view returns (uint256) {
         uint256 assets = vault.totalAssets();
-        uint256 reserve;
+        uint256 reserve = 0;
         for (uint256 i; i < marketIds.length; ++i) {
             bytes32 marketId = marketIds[i];
             MarketExposure memory exposure = marketExposure[marketId];
             uint256 price = _oraclePrice(marketId, markets[marketId]).priceE18;
-            reserve += _notionalUsdg(int256(exposure.longBaseE18), price)
-            + _notionalUsdg(int256(exposure.shortBaseE18), price);
+            reserve += _notionalUsdg(_asInt256(exposure.longBaseE18), price)
+            + _notionalUsdg(_asInt256(exposure.shortBaseE18), price);
         }
         return reserve >= assets ? 0 : assets - reserve;
     }
@@ -229,6 +230,9 @@ contract FloatClearingHouse {
     function depositMargin(bytes32 marketId, uint256 assets) external nonReentrant {
         if (markets[marketId].state != MarketState.Active) revert MarketNotActive();
         if (assets == 0) revert ZeroAmount();
+        if (assets > MAX_INT256 || positions[msg.sender][marketId].marginUsdg > MAX_INT256 - assets) {
+            revert PositionLimitExceeded();
+        }
         positions[msg.sender][marketId].marginUsdg += assets;
         _safeTransferFrom(msg.sender, address(this), assets);
         emit MarginDeposited(msg.sender, marketId, assets);
@@ -264,8 +268,8 @@ contract FloatClearingHouse {
             : (oraclePrice.priceE18 - quote.executionPriceE18) * BPS / oraclePrice.priceE18;
         if (deviation > market.maxExecutionDeviationBps) revert ExecutionPriceOutOfBounds();
         uint256 baseDelta = quote.notionalUsdg * USDG_TO_E18 * E18 / quote.executionPriceE18;
-        if (baseDelta > uint256(type(int256).max)) revert PositionLimitExceeded();
-        int256 signedDelta = quote.isLong ? int256(baseDelta) : -int256(baseDelta);
+        if (baseDelta > MAX_INT256) revert PositionLimitExceeded();
+        int256 signedDelta = quote.isLong ? _asInt256(baseDelta) : -_asInt256(baseDelta);
         Position storage position = positions[msg.sender][quote.marketId];
         int256 nextSize = position.sizeE18 + signedDelta;
         if (market.state == MarketState.CloseOnly && !_isRiskReducing(position.sizeE18, signedDelta)) {
@@ -298,22 +302,22 @@ contract FloatClearingHouse {
 
     function _updateExposure(bytes32 marketId, int256 previousSize, int256 nextSize) private {
         MarketExposure storage exposure = marketExposure[marketId];
-        if (previousSize > 0) exposure.longBaseE18 -= uint256(previousSize);
-        else if (previousSize < 0) exposure.shortBaseE18 -= uint256(-previousSize);
-        if (nextSize > 0) exposure.longBaseE18 += uint256(nextSize);
-        else if (nextSize < 0) exposure.shortBaseE18 += uint256(-nextSize);
+        if (previousSize > 0) exposure.longBaseE18 -= _abs(previousSize);
+        else if (previousSize < 0) exposure.shortBaseE18 -= _abs(previousSize);
+        if (nextSize > 0) exposure.longBaseE18 += _abs(nextSize);
+        else if (nextSize < 0) exposure.shortBaseE18 += _abs(nextSize);
     }
 
     function _enforceExposureLimits(bytes32 tradedMarketId, uint256 executionPrice) private view {
         uint256 assets = vault.totalAssets();
-        uint256 globalOi;
+        uint256 globalOi = 0;
         for (uint256 i; i < marketIds.length; ++i) {
             bytes32 marketId = marketIds[i];
             MarketExposure memory exposure = marketExposure[marketId];
             uint256 price =
                 marketId == tradedMarketId ? executionPrice : _oraclePrice(marketId, markets[marketId]).priceE18;
-            uint256 longOi = _notionalUsdg(int256(exposure.longBaseE18), price);
-            uint256 shortOi = _notionalUsdg(int256(exposure.shortBaseE18), price);
+            uint256 longOi = _notionalUsdg(_asInt256(exposure.longBaseE18), price);
+            uint256 shortOi = _notionalUsdg(_asInt256(exposure.shortBaseE18), price);
             uint256 marketOi = longOi + shortOi;
             if (marketOi > assets * MARKET_OPEN_INTEREST_BPS / BPS) revert OpenInterestLimitExceeded();
             uint256 skew = longOi > shortOi ? longOi - shortOi : shortOi - longOi;
@@ -337,7 +341,7 @@ contract FloatClearingHouse {
             return;
         }
         uint256 closed = _abs(oldSize) < _abs(delta) ? _abs(oldSize) : _abs(delta);
-        int256 pnl = _pnlUsdg(oldSize > 0 ? int256(closed) : -int256(closed), p.entryPriceE18, price);
+        int256 pnl = _pnlUsdg(oldSize > 0 ? _asInt256(closed) : -_asInt256(closed), p.entryPriceE18, price);
         _applyPnl(p, pnl);
         p.sizeE18 = oldSize + delta;
         if (p.sizeE18 == 0) p.entryPriceE18 = 0;
@@ -346,11 +350,11 @@ contract FloatClearingHouse {
 
     function _applyPnl(Position storage p, int256 pnl) private {
         if (pnl >= 0) {
-            uint256 profit = uint256(pnl);
+            uint256 profit = _abs(pnl);
             vault.payout(address(this), profit);
             p.marginUsdg += profit;
         } else {
-            uint256 loss = uint256(-pnl);
+            uint256 loss = _abs(pnl);
             if (loss > p.marginUsdg) revert InsufficientMargin();
             p.marginUsdg -= loss;
             _safeApprove(address(vault), loss);
@@ -363,11 +367,11 @@ contract FloatClearingHouse {
         returns (uint256 penalty)
     {
         if (pnl >= 0) {
-            uint256 profit = uint256(pnl);
+            uint256 profit = _abs(pnl);
             vault.payout(address(this), profit);
             p.marginUsdg += profit;
         } else {
-            uint256 loss = uint256(-pnl);
+            uint256 loss = _abs(pnl);
             uint256 collected = loss > p.marginUsdg ? p.marginUsdg : loss;
             if (collected != 0) {
                 _safeApprove(address(vault), collected);
@@ -402,7 +406,7 @@ contract FloatClearingHouse {
 
     function _equityUsdg(Position storage p, uint256 price) private view returns (uint256) {
         if (p.sizeE18 == 0) return p.marginUsdg;
-        int256 equity = int256(p.marginUsdg) + _pnlUsdg(p.sizeE18, p.entryPriceE18, price);
+        int256 equity = _asInt256(p.marginUsdg) + _pnlUsdg(p.sizeE18, p.entryPriceE18, price);
         return equity < 0 ? 0 : uint256(equity);
     }
 
@@ -423,8 +427,8 @@ contract FloatClearingHouse {
     }
 
     function _pnlUsdg(int256 size, uint256 entry, uint256 price) private pure returns (int256) {
-        int256 priceDelta = price >= entry ? int256(price - entry) : -int256(entry - price);
-        return size * priceDelta / int256(E18) / int256(USDG_TO_E18);
+        int256 priceDelta = price >= entry ? _asInt256(price - entry) : -_asInt256(entry - price);
+        return size * priceDelta / _asInt256(E18) / _asInt256(USDG_TO_E18);
     }
 
     function _notionalUsdg(int256 size, uint256 price) private pure returns (uint256) {
@@ -432,7 +436,13 @@ contract FloatClearingHouse {
     }
 
     function _abs(int256 value) private pure returns (uint256) {
+        if (value == type(int256).min) revert PositionLimitExceeded();
         return uint256(value >= 0 ? value : -value);
+    }
+
+    function _asInt256(uint256 value) private pure returns (int256) {
+        if (value > MAX_INT256) revert PositionLimitExceeded();
+        return int256(value);
     }
 
     function _quoteDigest(TradeQuote calldata q) private view returns (bytes32) {

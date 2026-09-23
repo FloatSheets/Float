@@ -21,11 +21,13 @@ contract FloatVault {
     error TransferFailed();
     error InsufficientAvailableLiquidity();
     error VaultInsolvent();
+    error Reentrant();
 
     IERC20 public immutable asset;
     address public owner;
     address public clearingHouse;
     uint256 public totalShares;
+    uint256 private entered;
     mapping(address => uint256) public balanceOf;
 
     event Deposit(address indexed caller, address indexed receiver, uint256 assets, uint256 shares);
@@ -46,6 +48,12 @@ contract FloatVault {
         if (msg.sender != clearingHouse) revert Unauthorized();
         _;
     }
+    modifier nonReentrant() {
+        if (entered == 1) revert Reentrant();
+        entered = 1;
+        _;
+        entered = 0;
+    }
 
     function totalAssets() public view returns (uint256) {
         return asset.balanceOf(address(this));
@@ -57,7 +65,7 @@ contract FloatVault {
         emit ClearingHouseUpdated(newClearingHouse);
     }
 
-    function deposit(uint256 assets, address receiver) external returns (uint256 shares) {
+    function deposit(uint256 assets, address receiver) external nonReentrant returns (uint256 shares) {
         if (assets == 0) revert ZeroAmount();
         uint256 assetsBefore = totalAssets();
         if (totalShares != 0 && assetsBefore == 0) revert VaultInsolvent();
@@ -69,7 +77,7 @@ contract FloatVault {
         emit Deposit(msg.sender, receiver, assets, shares);
     }
 
-    function withdraw(uint256 shares, address receiver) external returns (uint256 assets) {
+    function withdraw(uint256 shares, address receiver) external nonReentrant returns (uint256 assets) {
         if (shares == 0) revert ZeroAmount();
         if (balanceOf[msg.sender] < shares) revert InsufficientShares();
         assets = shares * totalAssets() / totalShares;
@@ -82,11 +90,11 @@ contract FloatVault {
         emit Withdraw(msg.sender, receiver, assets, shares);
     }
 
-    function payout(address receiver, uint256 assets) external onlyClearingHouse {
+    function payout(address receiver, uint256 assets) external nonReentrant onlyClearingHouse {
         if (assets != 0) _safeTransfer(receiver, assets);
     }
 
-    function collect(uint256 assets) external onlyClearingHouse {
+    function collect(uint256 assets) external nonReentrant onlyClearingHouse {
         if (assets != 0) _safeTransferFrom(msg.sender, address(this), assets);
     }
 
