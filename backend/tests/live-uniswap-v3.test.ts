@@ -21,4 +21,4 @@ test("reads a healthy, live NVDA/USDG TWAP from Robinhood Chain", async () => {
   expect(snapshot.liquidity).toBeGreaterThan(0n);
   expect(snapshot.priceUsdg).toBeGreaterThan(1);
   expect(snapshot.priceUsdg).toBeLessThan(10_000);
-});
+}, 30_000);
