@@ -1,7 +1,9 @@
 import { Router } from "express";
 import type { Pool } from "pg";
 
-export function createMarketsRouter(database: Pool): Router {
+import { assessMarketRisk } from "../markets/risk";
+
+export function createMarketsRouter(database: Pool, maxPriceAgeSeconds = 120): Router {
   const router = Router();
 
   router.get("/", async (_request, response, next) => {
@@ -35,6 +37,39 @@ export function createMarketsRouter(database: Pool): Router {
       );
       if (!result.rowCount) return response.status(404).json({ error: "market quotes not found" });
       response.json({ market: request.params.symbol.toUpperCase(), quotes: result.rows });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/:symbol/risk", async (request, response, next) => {
+    try {
+      const symbol = request.params.symbol.toUpperCase();
+      const market = await database.query<{
+        id: string; status: "active" | "restricted" | "pilot" | "disabled"; max_half_spread_bps: number;
+        observed_at: Date | null; usdg_balance: string | null;
+      }>(
+        `SELECT m.id, m.status, m.max_half_spread_bps, s.observed_at, s.usdg_balance
+         FROM markets m LEFT JOIN LATERAL (
+           SELECT observed_at, usdg_balance FROM pool_snapshots WHERE market_id=m.id ORDER BY observed_at DESC LIMIT 1
+         ) s ON true WHERE m.symbol=$1`, [symbol]
+      );
+      const row = market.rows[0];
+      if (!row) return response.status(404).json({ error: "market not found" });
+      const quotes = await database.query<{ execution_degradation_bps: number }>(
+        `SELECT execution_degradation_bps FROM quote_samples WHERE market_id=$1 AND observed_at=(
+           SELECT max(observed_at) FROM quote_samples WHERE market_id=$1
+         )`, [row.id]
+      );
+      const age = row.observed_at ? (Date.now() - row.observed_at.getTime()) / 1000 : null;
+      const state = assessMarketRisk({
+        marketStatus: row.status,
+        maxHalfSpreadBps: row.max_half_spread_bps,
+        quoteBps: quotes.rows.map((quote) => quote.execution_degradation_bps),
+        snapshotAgeSeconds: age,
+        usdgBalance: row.usdg_balance === null ? null : BigInt(row.usdg_balance)
+      }, maxPriceAgeSeconds);
+      response.json({ market: symbol, snapshot_age_seconds: age, state });
     } catch (error) {
       next(error);
     }

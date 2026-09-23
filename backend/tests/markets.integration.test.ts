@@ -32,3 +32,10 @@ test("returns the live five-notional, two-sided NVDA quote matrix", async () => 
     new Set(["5.000000", "10.000000", "1000.000000", "10000.000000", "50000.000000"])
   );
 });
+
+test("reports a live risk state for NVDA", async () => {
+  const response = await request(app).get("/v1/markets/NVDA/risk");
+  expect(response.status).toBe(200);
+  expect(["active", "close_only"]).toContain(response.body.state);
+  expect(response.body.snapshot_age_seconds).toBeNumber();
+});

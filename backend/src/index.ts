@@ -12,7 +12,7 @@ const config = loadConfig();
 const port = Number(process.env.PORT ?? 3001);
 
 await migrate();
-app.use("/v1/markets", createMarketsRouter(db));
+app.use("/v1/markets", createMarketsRouter(db, config.ORACLE_PRICE_MAX_AGE_SECONDS));
 
 const monitor = new MarketMonitor(db, createRpcTransport(config.RHC_RPC_URL), config.UNISWAP_TWAP_WINDOW_SECONDS);
 
