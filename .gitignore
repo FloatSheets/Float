@@ -1,5 +1,6 @@
 # Logs
 
+contracts/AUDITv1.md
 logs
 *.log
 npm-debug.log*
