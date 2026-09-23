@@ -3,4 +3,6 @@ cache/
 lib/
 broadcast/
 .env
+.deployer-password
+deployer-keystore/
 AUDIT_READINESS.md

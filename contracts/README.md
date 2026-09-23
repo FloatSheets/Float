@@ -15,3 +15,20 @@ Run locally (the current macOS Foundry installation requires its bundled libusb 
 ```sh
 DYLD_LIBRARY_PATH=/Users/apple/.foundry/deps/libusb/lib forge test
 ```
+
+## Deployment
+
+Populate the variables in `.env` from `.env.example`, then run the deployment
+script with the local deployer keystore:
+
+```sh
+set -a; source .env; set +a
+DYLD_LIBRARY_PATH=/Users/apple/.foundry/deps/libusb/lib forge script script/DeployFloatSheets.s.sol \
+  --rpc-url rhc --keystore deployer-keystore/deployer \
+  --password-file .deployer-password --broadcast
+```
+
+The script deploys the oracle, shared vault, and clearing house and prints
+their addresses. The admin EOA must then call
+`FloatVault.setClearingHouse(clearingHouse)` once before deposits or trading.
+The deployer keystore and password are intentionally ignored by Git.
