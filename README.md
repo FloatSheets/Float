@@ -89,7 +89,7 @@ The GitHub workflow also publishes `ghcr.io/notadeveloper7/floatsheets-backend:l
 
 ### Vercel frontend
 
-Connect the repository with the root directory set to the repository root. Use `bun run build` as the build command and configure `VITE_API_URL` to the deployed backend URL.
+Connect the repository with the root directory set to the repository root. Use `bun run build` as the build command. Configure `VITE_API_URL` to the deployed backend URL for read-only live market hydration, and configure the same origin as the server-only `FLOATSHEETS_API_URL` variable for TanStack Start server functions. Never prefix the BFF origin or `MASTER_ADMIN_KEY` with `VITE_`.
 
 ## Roadmap
 

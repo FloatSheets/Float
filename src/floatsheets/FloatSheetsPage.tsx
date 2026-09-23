@@ -88,7 +88,8 @@ export function FloatSheetsPage({ page }: { page: FloatPage }) {
         const codes = await Promise.all(page.scripts.map(loadScript));
         if (!active) return;
         const script = document.createElement("script");
-        script.textContent = `(function(){\n${codes.join("\n;\n")}\n})();`;
+        const publicApiUrl = import.meta.env["VITE_API_URL"] ?? "";
+        script.textContent = `(function(){\nwindow.__FLOATSHEETS_API_URL__=${JSON.stringify(publicApiUrl)};\n${codes.join("\n;\n")}\n})();`;
         document.body.append(script);
         added.push(script);
         const hash = window.location.hash;
@@ -125,4 +126,3 @@ export function FloatSheetsPage({ page }: { page: FloatPage }) {
     </>
   );
 }
-
