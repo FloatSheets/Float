@@ -5,6 +5,7 @@
   if (!root || typeof render !== 'function') return;
   const originalRender = render;
   const icon = {USDG:'/usdg_logo.png',ETH:'/eth.jpeg'};
+  document.body.classList.toggle('dashboard-dark',localStorage.getItem('floatsheets-dashboard-theme')==='dark');
 
   function decorateAssets(){
     root.querySelectorAll('.ticker-icon').forEach(function(el){
@@ -48,6 +49,8 @@
   }
 
   const usdgDecimals=6;
+  const activityStorageKey='floatsheets-wallet-activity-v1';
+  const activityNotificationsKey='floatsheets-activity-notifications';
   const rawUsdG=function(value){
     const normalized=String(value).trim();
     if(!/^\d+(?:\.\d{0,6})?$/.test(normalized)) throw new Error('Enter a USDG amount with up to 6 decimal places.');
@@ -57,6 +60,44 @@
   const displayUsdG=function(raw){ return (Number(raw)/1e6).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); };
   const walletState=function(){ return window.__FLOATSHEETS_WALLET_STATE__; };
   const walletApi=function(){ return window.__FLOATSHEETS_WALLET__; };
+  const activityNotificationsEnabled=function(){ return localStorage.getItem(activityNotificationsKey)!=='off'; };
+  const activities=function(){ try { const stored=JSON.parse(localStorage.getItem(activityStorageKey)||'[]'); return Array.isArray(stored)?stored:[]; } catch { return []; } };
+  const saveActivities=function(items){ localStorage.setItem(activityStorageKey,JSON.stringify(items.slice(0,60))); };
+  const activityCopy=function(item){
+    const market=item.market?' · '+item.market:'';
+    return ({approval:'USDG approval confirmed',deposit:'Margin added',withdraw:'Margin withdrawn',trade:'Position opened',close:'Position closed',liquidation:'Position liquidated'})[item.action]||'Transaction confirmed'+market;
+  };
+  function recordActivity(action,detail){
+    const item={action:action,market:detail?.market||'',hash:detail?.hash||'',time:new Date().toISOString()};
+    saveActivities([item].concat(activities()));
+    if(activityNotificationsEnabled()&&typeof toast==='function') toast(activityCopy(item)+(item.market?' · '+item.market:''));
+  }
+  function activityHtml(){
+    const records=activities();
+    if(!records.length) return '<p>No activity yet. Confirmed wallet actions will appear here.</p>';
+    return records.slice(0,20).map(function(item){const hash=item.hash?'<small><a href="https://robinhoodchain.blockscout.com/tx/'+item.hash+'" target="_blank" rel="noreferrer">View transaction ↗</a> · '+new Date(item.time).toLocaleString()+'</small>':'<small>'+new Date(item.time).toLocaleString()+'</small>';return '<div class="activity-row"><strong>'+activityCopy(item)+(item.market?' · '+item.market:'')+'</strong>'+hash+'</div>';}).join('');
+  }
+
+  function installSidebarToggle(){
+    const sidebar=document.querySelector('.dash-sidebar');
+    if(!sidebar||document.getElementById('sidebar-toggle')) return;
+    const toggle=document.createElement('button');
+    toggle.id='sidebar-toggle'; toggle.type='button'; toggle.className='sidebar-toggle'; toggle.setAttribute('aria-label','Collapse sidebar');
+    const setCollapsed=function(collapsed){ document.body.classList.toggle('dashboard-sidebar-collapsed',collapsed); toggle.textContent=collapsed?'›':'‹'; toggle.setAttribute('aria-label',collapsed?'Expand sidebar':'Collapse sidebar'); toggle.setAttribute('aria-expanded',String(!collapsed)); localStorage.setItem('floatsheets-sidebar-collapsed',collapsed?'true':'false'); };
+    setCollapsed(localStorage.getItem('floatsheets-sidebar-collapsed')==='true');
+    toggle.addEventListener('click',function(){setCollapsed(!document.body.classList.contains('dashboard-sidebar-collapsed'));});
+    sidebar.append(toggle);
+  }
+
+  function installActivityFeed(){
+    const activityButton=document.getElementById('activity-button');
+    if(activityButton) activityButton.onclick=function(){ modal('Recent activity.','<div>'+activityHtml()+'</div>'); };
+    const notifications=document.getElementById('notifications');
+    if(notifications){
+      notifications.checked=activityNotificationsEnabled();
+      notifications.onchange=function(){localStorage.setItem(activityNotificationsKey,notifications.checked?'on':'off');};
+    }
+  }
 
   function tradeTicket(){
     const wallet=walletState();
@@ -166,6 +207,11 @@
   }
 
   let chartRequest = 0;
+  function scheduleChartRefresh(){
+    clearInterval(window.__FLOATSHEETS_CHART_REFRESH_TIMER__);
+    const onMarketPage=Boolean(location.pathname.match(/^\/dashboard\/[A-Za-z0-9.-]+\/?$/));
+    if(onMarketPage) window.__FLOATSHEETS_CHART_REFRESH_TIMER__=setInterval(function(){ drawChart(); },30_000);
+  }
   drawChart = async function drawLiveChart(){
     const canvas=document.getElementById('price-chart');
     if(!canvas) return;
@@ -218,9 +264,12 @@
     const chartLegend=root.querySelector('.chart-legend');
     if(chartLegend) chartLegend.textContent='Price history · USDG';
     installThemeToggle();
+    installSidebarToggle();
+    installActivityFeed();
     window.__FLOATSHEETS_INSTALL_WALLET__?.();
     bindTradeTicket();
     void renderWalletContext();
+    scheduleChartRefresh();
   };
   // Discard any local design-time account state before the first live render.
   state={balance:0,positions:[],orders:[],activity:[],nominations:[],vault:0,staked:0,float:0,preferences:{notifications:true,reduced:false},name:'Trading account'};
@@ -232,4 +281,7 @@
   if(window.__FLOATSHEETS_DASHBOARD_WALLET_LISTENER__) window.removeEventListener('floatsheets-wallet-state',window.__FLOATSHEETS_DASHBOARD_WALLET_LISTENER__);
   window.__FLOATSHEETS_DASHBOARD_WALLET_LISTENER__=function(){if(!root.querySelector('.live-trade-ticket[data-submitting="true"]'))render();};
   window.addEventListener('floatsheets-wallet-state',window.__FLOATSHEETS_DASHBOARD_WALLET_LISTENER__);
+  if(window.__FLOATSHEETS_TRANSACTION_LISTENER__) window.removeEventListener('floatsheets-transaction-confirmed',window.__FLOATSHEETS_TRANSACTION_LISTENER__);
+  window.__FLOATSHEETS_TRANSACTION_LISTENER__=function(event){const detail=event.detail||{};if(detail.action&&detail.action!=='trade-quote')recordActivity(detail.action,detail);};
+  window.addEventListener('floatsheets-transaction-confirmed',window.__FLOATSHEETS_TRANSACTION_LISTENER__);
 })();

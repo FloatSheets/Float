@@ -51,15 +51,18 @@ export function RainbowWalletBridge() {
       ...state,
       async buildTransaction(action: "approve" | "deposit" | "withdraw" | "trade-quote", payload: Record<string, unknown>) {
         if (!connected || !address) throw new Error("Connect a wallet on Robinhood Chain first.");
-        if (action === "trade-quote") return getTradeTransaction({ data: { ...payload, trader: address } });
-        return getTransactionCalldata({ data: { action, payload } });
+        const result = action === "trade-quote"
+          ? await getTradeTransaction({ data: { ...payload, trader: address } })
+          : await getTransactionCalldata({ data: { action, payload } });
+        return { ...result, activity: action === "trade-quote" ? "trade" : action, market: typeof payload["market"] === "string" ? payload["market"] : "" };
       },
-      async send(transaction: { to: string; data: string; value?: string; chainId: number }) {
+      async send(transaction: { to: string; data: string; value?: string; chainId: number; activity?: string; market?: string }) {
         if (!connected) throw new Error("Connect a wallet on Robinhood Chain first.");
         if (transaction.chainId !== robinhoodChain.id) throw new Error("Transaction is not for Robinhood Chain.");
         const hash = await sendTransactionAsync({ to: transaction.to as Address, data: transaction.data as Hex, value: BigInt(transaction.value ?? "0x0"), chainId: robinhoodChain.id });
         await waitForTransactionReceipt(wagmiConfig, { hash, confirmations: 1 });
         await refetchUsdG();
+        window.dispatchEvent(new CustomEvent("floatsheets-transaction-confirmed", { detail: { action: transaction.activity, market: transaction.market, hash } }));
         return hash;
       },
       async allowance() {
