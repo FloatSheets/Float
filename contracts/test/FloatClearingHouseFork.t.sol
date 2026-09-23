@@ -12,6 +12,7 @@ interface VmFork {
     function prank(address sender) external;
     function sign(uint256 privateKey, bytes32 digest) external returns (uint8 v, bytes32 r, bytes32 s);
     function expectRevert(bytes4) external;
+    function warp(uint256 timestamp) external;
 }
 
 /// @notice Fork tests use the real Robinhood Chain USDG token and a real NVDA/USDG pool balance; no test ERC-20 is used.
@@ -70,6 +71,14 @@ contract FloatClearingHouseForkTest {
         uint256 available = clearing.availableLiquidity();
         require(available < 951_000 * USDG_UNIT, "gross OI was not reserved");
         require(available > 949_000 * USDG_UNIT, "unexpected reserve");
+    }
+
+    function testBlocksLpWithdrawalOfReservedLiquidity() public {
+        _depositTraderMargin(20_000 * USDG_UNIT);
+        _execute(_quote(true, 50_000 * USDG_UNIT, 1));
+
+        vm.expectRevert(FloatVault.InsufficientAvailableLiquidity.selector);
+        vault.withdraw(960_000 * USDG_UNIT, address(this));
     }
 
     function testReservesGrossOpenInterestEvenWhenLongAndShortExposureOffsets() public {
@@ -142,6 +151,21 @@ contract FloatClearingHouseForkTest {
         vm.expectRevert(FloatClearingHouse.OracleConfidenceTooLow.selector);
         vm.prank(TRADER);
         clearing.execute(quote, _quoteSignature(quote));
+    }
+
+    function testRejectsStaleOraclePricesAndReplayedQuotes() public {
+        _depositTraderMargin(20_000 * USDG_UNIT);
+        FloatClearingHouse.TradeQuote memory quote = _quote(true, 5_000 * USDG_UNIT, 1);
+        _execute(quote);
+        vm.expectRevert(FloatClearingHouse.QuoteUsed.selector);
+        vm.prank(TRADER);
+        clearing.execute(quote, _quoteSignature(quote));
+
+        vm.warp(block.timestamp + 121);
+        FloatClearingHouse.TradeQuote memory freshNonce = _quote(true, 5_000 * USDG_UNIT, 2);
+        vm.expectRevert(FloatClearingHouse.StaleOraclePrice.selector);
+        vm.prank(TRADER);
+        clearing.execute(freshNonce, _quoteSignature(freshNonce));
     }
 
     function _depositTraderMargin(uint256 amount) private {
