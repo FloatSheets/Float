@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { pages } from "./pages";
+import { installWalletButton } from "@/lib/walletconnect";
 
 export type FloatPage = (typeof pages)[number];
 
@@ -69,6 +70,7 @@ export function FloatSheetsPage({ page }: { page: FloatPage }) {
 
     let active = true;
     let fadeTimer: ReturnType<typeof setTimeout>;
+    let removeWalletButton: (() => void) | undefined;
     const added: Element[] = [...heads];
 
 
@@ -92,6 +94,10 @@ export function FloatSheetsPage({ page }: { page: FloatPage }) {
         script.textContent = `(function(){\nwindow.__FLOATSHEETS_API_URL__=${JSON.stringify(publicApiUrl)};\n${codes.join("\n;\n")}\n})();`;
         document.body.append(script);
         added.push(script);
+        const accountButton = document.getElementById("account-button");
+        removeWalletButton = page.route === "/dashboard/" && accountButton instanceof HTMLButtonElement
+          ? installWalletButton(accountButton, (message) => window.dispatchEvent(new CustomEvent("floatsheets-toast", { detail: message })))
+          : undefined;
         const hash = window.location.hash;
         if (hash && !window.location.pathname.startsWith("/dashboard")) {
           document.getElementById(decodeURIComponent(hash.slice(1)))?.scrollIntoView();
@@ -102,6 +108,7 @@ export function FloatSheetsPage({ page }: { page: FloatPage }) {
 
     return () => {
       active = false;
+      removeWalletButton?.();
       clearTimeout(fadeTimer);
       setPhase("hidden");
 
