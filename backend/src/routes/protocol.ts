@@ -9,6 +9,7 @@ export function createProtocolRouter(config: AppConfig): Router {
     response.json({
       chain_id: config.RHC_ID,
       settlement_asset: "USDG",
+      settlement_asset_address: config.USDG_ADDRESS,
       oracle: config.FLOAT_ORACLE_ADDRESS,
       vault: config.FLOAT_VAULT_ADDRESS,
       clearing_house: config.FLOAT_CLEARING_HOUSE_ADDRESS,

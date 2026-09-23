@@ -42,6 +42,7 @@ test("publishes the deployed protocol addresses for integrations", async () => {
   expect(response.body).toEqual({
     chain_id: 4663,
     settlement_asset: "USDG",
+    settlement_asset_address: config.USDG_ADDRESS,
     oracle: config.FLOAT_ORACLE_ADDRESS,
     vault: config.FLOAT_VAULT_ADDRESS,
     clearing_house: config.FLOAT_CLEARING_HOUSE_ADDRESS,
