@@ -5,6 +5,9 @@ const address = z.string().regex(/^0x[a-fA-F0-9]{40}$/, "must be an EVM address"
 
 const schema = z.object({
   ADMIN_EOA_ADDRESS: address,
+  FLOAT_CLEARING_HOUSE_ADDRESS: address,
+  FLOAT_ORACLE_ADDRESS: address,
+  FLOAT_VAULT_ADDRESS: address,
   FRONTEND_URL: z.url(),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]),
   MARKET_POLL_INTERVAL_MS: z.coerce.number().int().min(1_000),
