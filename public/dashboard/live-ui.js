@@ -32,9 +32,18 @@
     root.querySelectorAll('.info-note').forEach(function(note){
       note.textContent=note.textContent.replace(/These are illustrative oracle states\.[^.]*/, 'Oracle state is read from the deployed backend and Robinhood Chain.').replace(/No APY is promised\.[^.]*/, 'Vault actions require a wallet transaction and are not simulated here.');
     });
-    root.querySelectorAll('p,span').forEach(function(el){
+    root.querySelectorAll('p,span,small').forEach(function(el){
       el.textContent=el.textContent.replace(/fictional markets/gi,'live markets').replace(/virtual (account )?balance/gi,'wallet collateral').replace(/Illustrative equity market/gi,'Robinhood Chain market').replace(/24h change · sample/gi,'24h change · live feed');
     });
+  }
+
+  function genuinePageContent(){
+    const view=location.hash.slice(1)||'trade';
+    if(view==='portfolio') root.innerHTML='<div class="page-heading"><div><h1>Portfolio.</h1><p>On-chain positions and collateral for the connected wallet.</p></div></div><section class="panel live-only-panel"><h2>Connect a wallet to load portfolio</h2><p>FloatSheets does not create browser-local balances or positions. Connect on Robinhood Chain to read the wallet-backed account.</p></section>';
+    if(view==='oracle') root.innerHTML='<div class="page-heading"><div><h1>Oracle &amp; risk.</h1><p>Live market snapshots and execution eligibility from the deployed backend.</p></div></div><section class="panel markets-panel"><div class="panel-head"><h2>Robinhood Chain market state</h2><span class="pill">LIVE DATA</span></div><div class="table-scroll"><table><thead><tr><th>Market</th><th>Midpoint</th><th>Spread band</th><th>Leverage</th><th>State</th></tr></thead><tbody>'+markets.map(function(m){return '<tr><td>'+m.symbol+'</td><td>$'+money(m.price)+'</td><td>±'+money(m.band*100)+'%</td><td>'+m.max+'×</td><td>'+stateBadge(m.state)+'</td></tr>';}).join('')+'</tbody></table></div></section>';
+    if(view==='vault') root.innerHTML='<div class="page-heading"><div><h1>Liquidity vault.</h1><p>USDG liquidity is settled by the deployed FloatVault contract.</p></div></div><section class="panel live-only-panel"><h2>Wallet-backed vault actions</h2><p>Deposits and withdrawals require a connected wallet and signed USDG transactions. No local vault balances or simulated APY are shown.</p><a class="secondary-btn" href="/research/vault/">Read vault mechanics ↗</a></section>';
+    if(view==='listings') root.innerHTML='<div class="page-heading"><div><h1>Market listings.</h1><p>Markets configured on Robinhood Chain and monitored by the live backend.</p></div></div><section class="panel markets-panel"><div class="table-scroll"><table><thead><tr><th>Market</th><th>Settlement</th><th>Price</th><th>State</th></tr></thead><tbody>'+markets.map(function(m){return '<tr><td>'+m.symbol+'</td><td><span class="asset-ref"><img src="/usdg_logo.png" alt="USDG">USDG</span></td><td>$'+money(m.price)+'</td><td>'+stateBadge(m.state)+'</td></tr>';}).join('')+'</tbody></table></div></section>';
+    if(view==='settings') root.querySelectorAll('.panel').forEach(function(panel){if(!panel.querySelector('#preferences-form')) panel.remove();});
   }
 
   function installThemeToggle(){
@@ -52,8 +61,10 @@
   render=function(){
     originalRender();
     removeSimulationControls();
+    genuinePageContent();
     decorateAssets();
     installThemeToggle();
+    window.__FLOATSHEETS_INSTALL_WALLET__?.();
   };
   // Discard any local design-time account state before the first live render.
   state={balance:0,positions:[],orders:[],activity:[],nominations:[],vault:0,staked:0,float:0,preferences:{notifications:true,reduced:false},name:'Trading account'};

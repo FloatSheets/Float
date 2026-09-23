@@ -92,6 +92,10 @@ export function FloatSheetsPage({ page }: { page: FloatPage }) {
         const script = document.createElement("script");
         const publicApiUrl = import.meta.env["VITE_API_URL"] ?? "";
         script.textContent = `(function(){\nwindow.__FLOATSHEETS_API_URL__=${JSON.stringify(publicApiUrl)};\n${codes.join("\n;\n")}\n})();`;
+        (window as Window & { __FLOATSHEETS_INSTALL_WALLET__?: () => void }).__FLOATSHEETS_INSTALL_WALLET__ = () => {
+          const button = document.getElementById("account-button");
+          if (button instanceof HTMLButtonElement) installWalletButton(button, (message) => window.dispatchEvent(new CustomEvent("floatsheets-toast", { detail: message })));
+        };
         document.body.append(script);
         added.push(script);
         const accountButton = document.getElementById("account-button");
@@ -109,6 +113,7 @@ export function FloatSheetsPage({ page }: { page: FloatPage }) {
     return () => {
       active = false;
       removeWalletButton?.();
+      delete (window as Window & { __FLOATSHEETS_INSTALL_WALLET__?: () => void }).__FLOATSHEETS_INSTALL_WALLET__;
       clearTimeout(fadeTimer);
       setPhase("hidden");
 
