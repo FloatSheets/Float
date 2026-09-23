@@ -2,10 +2,11 @@ import type { Pool } from "pg";
 import type { Address } from "viem";
 
 import type { RpcTransport } from "../chain/rpc";
-import { quoteExactInputSingle, readPoolTwap } from "../chain/uniswap-v3";
+import { absoluteDeviationBps, quoteExactInputSingle, readPoolTwap } from "../chain/uniswap-v3";
 import { USDG_ADDRESS, USDG_DECIMALS } from "../chain/constants";
 
 const NOTIONALS = [5, 10, 1_000, 10_000, 50_000] as const;
+const MAX_SPOT_TWAP_DEVIATION_BPS = 50;
 
 type Market = { id: string; symbol: string; uniswap_v3_pool_address: Address; uniswap_v3_fee_tier: number };
 
@@ -61,10 +62,11 @@ export class MarketMonitor {
   private async refreshMarket(market: Market): Promise<void> {
     const twap = await readPoolTwap(this.rpc, market.uniswap_v3_pool_address, this.twapWindowSeconds);
     const observedAt = new Date();
+    const spotTwapDeviationBps = absoluteDeviationBps(twap.priceUsdg, twap.spotPriceUsdg);
     await this.database.query<{ id: string }>(
-      `INSERT INTO pool_snapshots (market_id, observed_at, sqrt_price_x96, liquidity, usdg_balance)
-       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-      [market.id, observedAt, twap.sqrtPriceX96.toString(), twap.liquidity.toString(), twap.usdgBalance.toString()]
+      `INSERT INTO pool_snapshots (market_id, observed_at, sqrt_price_x96, liquidity, usdg_balance, twap_price_usdg, spot_price_usdg, spot_twap_deviation_bps, oracle_tradable)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
+      [market.id, observedAt, twap.sqrtPriceX96.toString(), twap.liquidity.toString(), twap.usdgBalance.toString(), twap.priceUsdg, twap.spotPriceUsdg, spotTwapDeviationBps, spotTwapDeviationBps <= MAX_SPOT_TWAP_DEVIATION_BPS]
     );
 
     for (const notional of NOTIONALS) {

@@ -11,10 +11,12 @@ export function createMarketsRouter(database: Pool, maxPriceAgeSeconds = 120): R
       const result = await database.query(
         `SELECT m.symbol, m.status, m.max_leverage, m.max_ticket_usdg,
                 m.min_half_spread_bps, m.max_half_spread_bps,
-                s.observed_at, s.liquidity, s.usdg_balance
+                s.observed_at, s.liquidity, s.usdg_balance, s.twap_price_usdg, s.spot_price_usdg,
+                s.spot_twap_deviation_bps, s.oracle_tradable
          FROM markets m
          LEFT JOIN LATERAL (
-           SELECT observed_at, liquidity, usdg_balance FROM pool_snapshots
+           SELECT observed_at, liquidity, usdg_balance, twap_price_usdg, spot_price_usdg,
+                  spot_twap_deviation_bps, oracle_tradable FROM pool_snapshots
            WHERE market_id = m.id ORDER BY observed_at DESC LIMIT 1
          ) s ON true
          ORDER BY m.symbol`
@@ -61,11 +63,11 @@ export function createMarketsRouter(database: Pool, maxPriceAgeSeconds = 120): R
       const symbol = request.params.symbol.toUpperCase();
       const market = await database.query<{
         id: string; status: "active" | "restricted" | "pilot" | "disabled"; max_half_spread_bps: number;
-        observed_at: Date | null; usdg_balance: string | null;
+        observed_at: Date | null; usdg_balance: string | null; oracle_tradable: boolean | null;
       }>(
-        `SELECT m.id, m.status, m.max_half_spread_bps, s.observed_at, s.usdg_balance
+        `SELECT m.id, m.status, m.max_half_spread_bps, s.observed_at, s.usdg_balance, s.oracle_tradable
          FROM markets m LEFT JOIN LATERAL (
-           SELECT observed_at, usdg_balance FROM pool_snapshots WHERE market_id=m.id ORDER BY observed_at DESC LIMIT 1
+           SELECT observed_at, usdg_balance, oracle_tradable FROM pool_snapshots WHERE market_id=m.id ORDER BY observed_at DESC LIMIT 1
          ) s ON true WHERE m.symbol=$1`, [symbol]
       );
       const row = market.rows[0];
@@ -80,6 +82,7 @@ export function createMarketsRouter(database: Pool, maxPriceAgeSeconds = 120): R
         marketStatus: row.status,
         maxHalfSpreadBps: row.max_half_spread_bps,
         quoteBps: quotes.rows.map((quote) => quote.execution_degradation_bps),
+        oracleTradable: row.oracle_tradable,
         snapshotAgeSeconds: age,
         usdgBalance: row.usdg_balance === null ? null : BigInt(row.usdg_balance)
       }, maxPriceAgeSeconds);

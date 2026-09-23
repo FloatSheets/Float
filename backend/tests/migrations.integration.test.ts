@@ -40,5 +40,5 @@ test("applies the market schema to an isolated deployed-Postgres schema", async 
 test("is idempotent within its isolated schema", async () => {
   await migrate({ schema });
   const migrations = await db.query<{ count: string }>(`SELECT count(*) FROM "${schema}".schema_migrations`);
-  expect(migrations.rows[0]?.count).toBe("2");
+  expect(migrations.rows[0]?.count).toBe("3");
 }, 60_000);

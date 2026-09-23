@@ -69,14 +69,28 @@ contract FloatOracleTest {
     }
 
     function _digest(FloatOracle.PriceAttestation memory a) private view returns (bytes32) {
-        bytes32 domain = keccak256(abi.encode(
-            keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
-            keccak256("FloatSheetsOracle"), keccak256("1"), block.chainid, address(oracle)
-        ));
-        bytes32 structHash = keccak256(abi.encode(
-            keccak256("PriceAttestation(bytes32 marketId,uint256 priceE18,uint256 confidenceBps,uint64 timestamp,uint64 sequence,uint64 expiry)"),
-            a.marketId, a.priceE18, a.confidenceBps, a.timestamp, a.sequence, a.expiry
-        ));
+        bytes32 domain = keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256("FloatSheetsOracle"),
+                keccak256("1"),
+                block.chainid,
+                address(oracle)
+            )
+        );
+        bytes32 structHash = keccak256(
+            abi.encode(
+                keccak256(
+                    "PriceAttestation(bytes32 marketId,uint256 priceE18,uint256 confidenceBps,uint64 timestamp,uint64 sequence,uint64 expiry)"
+                ),
+                a.marketId,
+                a.priceE18,
+                a.confidenceBps,
+                a.timestamp,
+                a.sequence,
+                a.expiry
+            )
+        );
         return keccak256(abi.encodePacked("\x19\x01", domain, structHash));
     }
 }

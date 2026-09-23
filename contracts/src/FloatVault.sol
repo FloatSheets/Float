@@ -8,6 +8,10 @@ interface IERC20 {
     function transferFrom(address from, address to, uint256 amount) external returns (bool);
 }
 
+interface IFloatClearingLiquidity {
+    function availableLiquidity() external view returns (uint256);
+}
+
 /// @notice A single USDG liquidity vault. The clearing house alone may realize trader PnL.
 contract FloatVault {
     error Unauthorized();
@@ -15,6 +19,8 @@ contract FloatVault {
     error ZeroAmount();
     error InsufficientShares();
     error TransferFailed();
+    error InsufficientAvailableLiquidity();
+    error VaultInsolvent();
 
     IERC20 public immutable asset;
     address public owner;
@@ -32,10 +38,18 @@ contract FloatVault {
         asset = IERC20(settlementAsset);
     }
 
-    modifier onlyOwner() { if (msg.sender != owner) revert Unauthorized(); _; }
-    modifier onlyClearingHouse() { if (msg.sender != clearingHouse) revert Unauthorized(); _; }
+    modifier onlyOwner() {
+        if (msg.sender != owner) revert Unauthorized();
+        _;
+    }
+    modifier onlyClearingHouse() {
+        if (msg.sender != clearingHouse) revert Unauthorized();
+        _;
+    }
 
-    function totalAssets() public view returns (uint256) { return asset.balanceOf(address(this)); }
+    function totalAssets() public view returns (uint256) {
+        return asset.balanceOf(address(this));
+    }
 
     function setClearingHouse(address newClearingHouse) external onlyOwner {
         if (newClearingHouse == address(0)) revert ZeroAddress();
@@ -46,6 +60,7 @@ contract FloatVault {
     function deposit(uint256 assets, address receiver) external returns (uint256 shares) {
         if (assets == 0) revert ZeroAmount();
         uint256 assetsBefore = totalAssets();
+        if (totalShares != 0 && assetsBefore == 0) revert VaultInsolvent();
         shares = totalShares == 0 ? assets : assets * totalShares / assetsBefore;
         if (shares == 0) revert ZeroAmount();
         totalShares += shares;
@@ -58,6 +73,9 @@ contract FloatVault {
         if (shares == 0) revert ZeroAmount();
         if (balanceOf[msg.sender] < shares) revert InsufficientShares();
         assets = shares * totalAssets() / totalShares;
+        if (clearingHouse == address(0) || assets > IFloatClearingLiquidity(clearingHouse).availableLiquidity()) {
+            revert InsufficientAvailableLiquidity();
+        }
         balanceOf[msg.sender] -= shares;
         totalShares -= shares;
         _safeTransfer(receiver, assets);

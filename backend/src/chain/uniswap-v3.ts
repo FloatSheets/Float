@@ -30,6 +30,8 @@ export type PoolTwap = {
   usdgBalance: bigint;
   meanTick: number;
   priceUsdg: number;
+  spotTick: number;
+  spotPriceUsdg: number;
   token0: Address;
   token1: Address;
 };
@@ -65,6 +67,13 @@ export function priceUsdgFromTick(
   return 1 / token1PerUsdg;
 }
 
+export function absoluteDeviationBps(referencePrice: number, observedPrice: number): number {
+  if (!Number.isFinite(referencePrice) || !Number.isFinite(observedPrice) || referencePrice <= 0 || observedPrice <= 0) {
+    throw new Error("Prices must be finite and positive");
+  }
+  return Math.round(Math.abs(observedPrice - referencePrice) * 10_000 / referencePrice);
+}
+
 export async function readPoolTwap(
   rpc: RpcTransport,
   poolAddress: Address,
@@ -91,7 +100,7 @@ export async function readPoolTwap(
   const token0 = decodeFunctionResult({ abi: poolAbi, data: token0Result, functionName: "token0" });
   const token1 = decodeFunctionResult({ abi: poolAbi, data: token1Result, functionName: "token1" });
   const liquidity = decodeFunctionResult({ abi: poolAbi, data: liquidityResult, functionName: "liquidity" });
-  const [sqrtPriceX96] = decodeFunctionResult({ abi: poolAbi, data: slot0Result, functionName: "slot0" });
+  const [sqrtPriceX96, spotTick] = decodeFunctionResult({ abi: poolAbi, data: slot0Result, functionName: "slot0" });
   const [tickCumulatives] = decodeFunctionResult({ abi: poolAbi, data: observeResult, functionName: "observe" });
   const [token0DecimalsResult, token1DecimalsResult] = await Promise.all([
     rpc.call({
@@ -125,6 +134,8 @@ export async function readPoolTwap(
     usdgBalance,
     meanTick,
     priceUsdg: priceUsdgFromTick(meanTick, token0, token1, token0Decimals, token1Decimals),
+    spotTick,
+    spotPriceUsdg: priceUsdgFromTick(spotTick, token0, token1, token0Decimals, token1Decimals),
     token0,
     token1
   };

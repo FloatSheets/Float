@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { arithmeticMeanTick, priceUsdgFromTick } from "../src/chain/uniswap-v3";
+import { absoluteDeviationBps, arithmeticMeanTick, priceUsdgFromTick } from "../src/chain/uniswap-v3";
 
 const usdg = "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168";
 const stock = "0x1111111111111111111111111111111111111111";
@@ -21,4 +21,9 @@ test("refuses a pool without USDG", () => {
   expect(() => priceUsdgFromTick(0, stock, "0x2222222222222222222222222222222222222222", 18, 18)).toThrow(
     "direct USDG"
   );
+});
+
+test("measures a spot/TWAP circuit-breaker deviation in bps", () => {
+  expect(absoluteDeviationBps(100, 100.5)).toBe(50);
+  expect(() => absoluteDeviationBps(0, 100)).toThrow("Prices must be finite and positive");
 });
