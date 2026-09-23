@@ -15,6 +15,8 @@ const schema = z.object({
   MARKET_POLL_INTERVAL_MS: z.coerce.number().int().min(1_000),
   NODE_ENV: z.enum(["development", "test", "production"]),
   ORACLE_PRICE_MAX_AGE_SECONDS: z.coerce.number().int().min(15),
+  ORACLE_PUBLISHER_ADDRESS: address,
+  ORACLE_PUBLISHER_PRIVATE_KEY: z.string().regex(/^0x[a-fA-F0-9]{64}$/, "must be a 32-byte private key"),
   ORACLE_SIGNER_ADDRESS: address,
   ORACLE_SIGNER_PRIVATE_KEY: z.string().regex(/^0x[a-fA-F0-9]{64}$/, "must be a 32-byte private key"),
   QUOTE_TTL_SECONDS: z.coerce.number().int().min(1).max(60),
@@ -32,6 +34,10 @@ export function loadConfig(environment: Record<string, string | undefined> = pro
   const derivedSignerAddress = privateKeyToAccount(config.ORACLE_SIGNER_PRIVATE_KEY as `0x${string}`).address;
   if (derivedSignerAddress.toLowerCase() !== config.ORACLE_SIGNER_ADDRESS.toLowerCase()) {
     throw new Error("ORACLE_SIGNER_ADDRESS does not match ORACLE_SIGNER_PRIVATE_KEY");
+  }
+  const derivedPublisherAddress = privateKeyToAccount(config.ORACLE_PUBLISHER_PRIVATE_KEY as `0x${string}`).address;
+  if (derivedPublisherAddress.toLowerCase() !== config.ORACLE_PUBLISHER_ADDRESS.toLowerCase()) {
+    throw new Error("ORACLE_PUBLISHER_ADDRESS does not match ORACLE_PUBLISHER_PRIVATE_KEY");
   }
   const derivedQuoteSignerAddress = privateKeyToAccount(config.QUOTE_SIGNER_PRIVATE_KEY as `0x${string}`).address;
   if (derivedQuoteSignerAddress.toLowerCase() !== config.QUOTE_SIGNER_ADDRESS.toLowerCase()) {

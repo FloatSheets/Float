@@ -16,6 +16,8 @@ const validEnvironment = {
   MARKET_POLL_INTERVAL_MS: "15000",
   NODE_ENV: "test",
   ORACLE_PRICE_MAX_AGE_SECONDS: "120",
+  ORACLE_PUBLISHER_ADDRESS: privateKeyToAccount(testPrivateKey).address,
+  ORACLE_PUBLISHER_PRIVATE_KEY: testPrivateKey,
   ORACLE_SIGNER_ADDRESS: privateKeyToAccount(testPrivateKey).address,
   ORACLE_SIGNER_PRIVATE_KEY: testPrivateKey,
   QUOTE_TTL_SECONDS: "15",
