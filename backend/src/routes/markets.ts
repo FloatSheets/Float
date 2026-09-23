@@ -25,6 +25,20 @@ export function createMarketsRouter(database: Pool, maxPriceAgeSeconds = 120): R
     }
   });
 
+  router.get("/:symbol", async (request, response, next) => {
+    try {
+      const result = await database.query(
+        `SELECT symbol, status, settlement_asset, uniswap_v3_pool_address, uniswap_v3_fee_tier,
+                max_leverage, max_ticket_usdg, min_half_spread_bps, max_half_spread_bps
+         FROM markets WHERE symbol=$1`, [request.params.symbol.toUpperCase()]
+      );
+      if (!result.rowCount) return response.status(404).json({ error: "market not found" });
+      response.json({ market: result.rows[0] });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.get("/:symbol/quotes", async (request, response, next) => {
     try {
       const result = await database.query(

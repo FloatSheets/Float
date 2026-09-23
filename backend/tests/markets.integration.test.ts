@@ -18,6 +18,14 @@ test("lists the real configured direct-USDG markets", async () => {
   expect(response.body.markets.map((market: { symbol: string }) => market.symbol)).not.toContain("GME");
 });
 
+test("returns immutable direct-USDG configuration for NVDA", async () => {
+  const response = await request(app).get("/v1/markets/NVDA");
+  expect(response.status).toBe(200);
+  expect(response.body.market.symbol).toBe("NVDA");
+  expect(response.body.market.settlement_asset).toBe("USDG");
+  expect(response.body.market.uniswap_v3_fee_tier).toBe(500);
+});
+
 test("returns 404 for a market without recorded quotes", async () => {
   const response = await request(app).get("/v1/markets/GME/quotes");
   expect(response.status).toBe(404);
