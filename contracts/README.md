@@ -29,6 +29,8 @@ DYLD_LIBRARY_PATH=/Users/apple/.foundry/deps/libusb/lib forge script script/Depl
 ```
 
 The script deploys the oracle, shared vault, and clearing house and prints
-their addresses. The admin EOA must then call
-`FloatVault.setClearingHouse(clearingHouse)` once before deposits or trading.
+their addresses. Set `OWNER_EOA_ADDRESS` to the deployer address to complete
+the vault link in the same broadcast. If ownership is assigned to a separate
+EOA, that owner must call `FloatVault.setClearingHouse(clearingHouse)` once
+before deposits or trading.
 The deployer keystore and password are intentionally ignored by Git.
