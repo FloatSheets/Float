@@ -1,16 +1,15 @@
-import { ConnectButton, RainbowKitProvider } from "@rainbow-me/rainbowkit";
+import { ConnectButton, RainbowKitProvider, lightTheme } from "@rainbow-me/rainbowkit";
 import { getDefaultConfig } from "@rainbow-me/rainbowkit";
-import { http, useAccount, useChainId, WagmiProvider } from "wagmi";
+import { http, WagmiProvider } from "wagmi";
 import { defineChain } from "viem";
 import type { ReactNode } from "react";
-import { useEffect } from "react";
 
 export const robinhoodChain = defineChain({
   id: 4663,
   name: "Robinhood Chain",
   nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
   rpcUrls: { default: { http: ["https://rpc.mainnet.chain.robinhood.com"] } },
-  blockExplorers: { default: { name: "Robinhood Explorer", url: "https://explorer.mainnet.chain.robinhood.com" } },
+  blockExplorers: { default: { name: "Robinhood Chain Explorer", url: "https://robinhoodchain.blockscout.com" } },
 });
 
 export const wagmiConfig = getDefaultConfig({
@@ -22,20 +21,20 @@ export const wagmiConfig = getDefaultConfig({
 });
 
 export function RainbowProviders({ children }: { children: ReactNode }) {
-  return <WagmiProvider config={wagmiConfig}><RainbowKitProvider>{children}</RainbowKitProvider></WagmiProvider>;
+  return <WagmiProvider config={wagmiConfig}><RainbowKitProvider modalSize="compact" theme={lightTheme({ accentColor: "#153c92", accentColorForeground: "#ffb6c1", borderRadius: "medium", fontStack: "system", overlayBlur: "small" })}>{children}</RainbowKitProvider></WagmiProvider>;
 }
 
 export function RainbowWalletBridge() {
-  const account = useAccount();
-  const chainId = useChainId();
-  useEffect(() => {
-    const state = { address: account.address ?? "", connected: account.isConnected, chainId };
-    window.dispatchEvent(new CustomEvent("floatsheets-wallet-state", { detail: state }));
-    (window as Window & { __FLOATSHEETS_WALLET_STATE__?: typeof state }).__FLOATSHEETS_WALLET_STATE__ = state;
-  }, [account.address, account.isConnected, chainId]);
-  return <ConnectButton.Custom>{({ openConnectModal, openAccountModal }) => {
+  return <ConnectButton.Custom>{({ account, chain, openAccountModal, openChainModal, openConnectModal, authenticationStatus, mounted }) => {
+    const ready = mounted && authenticationStatus !== "loading";
+    const connected = ready && !!account && !!chain && (!authenticationStatus || authenticationStatus === "authenticated");
     if (typeof window !== "undefined") {
-      (window as Window & { __FLOATSHEETS_OPEN_WALLET__?: () => void }).__FLOATSHEETS_OPEN_WALLET__ = account.isConnected ? openAccountModal : openConnectModal;
+      const state = { address: connected ? (account?.address ?? "") : "", connected, chainId: chain?.id ?? 0 };
+      (window as Window & { __FLOATSHEETS_WALLET_STATE__?: typeof state }).__FLOATSHEETS_WALLET_STATE__ = state;
+      window.dispatchEvent(new CustomEvent("floatsheets-wallet-state", { detail: state }));
+      const walletWindow = window as Window & { __FLOATSHEETS_OPEN_WALLET__?: () => void };
+      if (!ready) delete walletWindow.__FLOATSHEETS_OPEN_WALLET__;
+      else walletWindow.__FLOATSHEETS_OPEN_WALLET__ = chain?.unsupported ? openChainModal : connected ? openAccountModal : openConnectModal;
     }
     return null;
   }}</ConnectButton.Custom>;
