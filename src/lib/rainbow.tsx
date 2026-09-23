@@ -2,6 +2,7 @@ import { ConnectButton, RainbowKitProvider, lightTheme } from "@rainbow-me/rainb
 import { getDefaultConfig } from "@rainbow-me/rainbowkit";
 import { http, WagmiProvider } from "wagmi";
 import { defineChain } from "viem";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
 export const robinhoodChain = defineChain({
@@ -20,8 +21,8 @@ export const wagmiConfig = getDefaultConfig({
   ssr: true,
 });
 
-export function RainbowProviders({ children }: { children: ReactNode }) {
-  return <WagmiProvider config={wagmiConfig}><RainbowKitProvider modalSize="compact" theme={lightTheme({ accentColor: "#153c92", accentColorForeground: "#ffb6c1", borderRadius: "medium", fontStack: "system", overlayBlur: "small" })}>{children}</RainbowKitProvider></WagmiProvider>;
+export function RainbowProviders({ children, queryClient }: { children: ReactNode; queryClient: QueryClient }) {
+  return <WagmiProvider config={wagmiConfig}><QueryClientProvider client={queryClient}><RainbowKitProvider modalSize="compact" theme={lightTheme({ accentColor: "#153c92", accentColorForeground: "#ffb6c1", borderRadius: "medium", fontStack: "system", overlayBlur: "small" })}>{children}</RainbowKitProvider></QueryClientProvider></WagmiProvider>;
 }
 
 export function RainbowWalletBridge() {

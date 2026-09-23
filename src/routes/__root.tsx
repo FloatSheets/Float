@@ -120,12 +120,10 @@ function RootComponent() {
   const { queryClient } = Route.useRouteContext();
 
   return (
-    <RainbowProviders>
-      <QueryClientProvider client={queryClient}>
-        <RainbowWalletBridge />
-        {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
-        <Outlet />
-      </QueryClientProvider>
+    <RainbowProviders queryClient={queryClient}>
+      <RainbowWalletBridge />
+      {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
+      <Outlet />
     </RainbowProviders>
   );
 }
