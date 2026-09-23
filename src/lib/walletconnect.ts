@@ -4,6 +4,7 @@ export const ROBINHOOD_CHAIN_ID = 4663;
 const ROBINHOOD_CHAIN_HEX = "0x1237";
 const ROBINHOOD_RPC = "https://rpc.mainnet.chain.robinhood.com";
 type ProviderInstance = Awaited<ReturnType<typeof EthereumProvider.init>>;
+type Eip1193Provider = { request<T = unknown>(args: { method: string; params?: unknown[] }): Promise<T> };
 let providerPromise: Promise<ProviderInstance> | undefined;
 
 async function getProvider() {
@@ -17,8 +18,9 @@ async function getProvider() {
   return providerPromise;
 }
 
-async function ensureRobinhoodChain(provider: ProviderInstance) {
-  if (provider.chainId === ROBINHOOD_CHAIN_ID) return;
+async function ensureRobinhoodChain(provider: Eip1193Provider) {
+  const chainId = await provider.request<string>({ method: "eth_chainId" });
+  if (Number.parseInt(chainId, 16) === ROBINHOOD_CHAIN_ID) return;
   try {
     await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: ROBINHOOD_CHAIN_HEX }] });
   } catch (error) {
@@ -28,13 +30,17 @@ async function ensureRobinhoodChain(provider: ProviderInstance) {
 }
 
 export async function connectWallet() {
-  const provider = await getProvider();
-  await provider.connect();
+  const browserProvider = (window as Window & { ethereum?: Eip1193Provider & { isRainbow?: boolean; providers?: Array<Eip1193Provider & { isRainbow?: boolean }> } }).ethereum;
+  const rainbowProvider = browserProvider?.providers?.find((candidate) => candidate.isRainbow) ?? (browserProvider?.isRainbow ? browserProvider : undefined);
+  const provider: Eip1193Provider = rainbowProvider ?? await getProvider();
+  if (!rainbowProvider) await (provider as ProviderInstance).connect();
+  await provider.request({ method: "eth_requestAccounts" });
   await ensureRobinhoodChain(provider);
   const accounts = await provider.request<string[]>({ method: "eth_accounts" });
   const address = accounts[0];
   if (!address) throw new Error("Wallet did not return an account.");
-  return { provider, address, chainId: provider.chainId };
+  const chainId = Number.parseInt(await provider.request<string>({ method: "eth_chainId" }), 16);
+  return { provider, address, chainId };
 }
 
 export async function sendWalletTransaction(transaction: { to: string; data: string; value?: string }) {
