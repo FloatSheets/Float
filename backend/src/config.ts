@@ -17,6 +17,7 @@ const schema = z.object({
   ORACLE_PRICE_MAX_AGE_SECONDS: z.coerce.number().int().min(15),
   ORACLE_PUBLISHER_ADDRESS: address,
   ORACLE_PUBLISHER_PRIVATE_KEY: z.string().regex(/^0x[a-fA-F0-9]{64}$/, "must be a 32-byte private key"),
+  ORACLE_PUBLISH_INTERVAL_SECONDS: z.coerce.number().int().min(30).max(3_600),
   ORACLE_SIGNER_ADDRESS: address,
   ORACLE_SIGNER_PRIVATE_KEY: z.string().regex(/^0x[a-fA-F0-9]{64}$/, "must be a 32-byte private key"),
   QUOTE_TTL_SECONDS: z.coerce.number().int().min(1).max(60),

@@ -18,6 +18,7 @@ const validEnvironment = {
   ORACLE_PRICE_MAX_AGE_SECONDS: "120",
   ORACLE_PUBLISHER_ADDRESS: privateKeyToAccount(testPrivateKey).address,
   ORACLE_PUBLISHER_PRIVATE_KEY: testPrivateKey,
+  ORACLE_PUBLISH_INTERVAL_SECONDS: "90",
   ORACLE_SIGNER_ADDRESS: privateKeyToAccount(testPrivateKey).address,
   ORACLE_SIGNER_PRIVATE_KEY: testPrivateKey,
   QUOTE_TTL_SECONDS: "15",

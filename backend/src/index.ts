@@ -29,7 +29,7 @@ let lastOraclePublishAt = 0;
 async function refreshMarkets(): Promise<void> {
   try {
     await monitor.refreshAll();
-    if (Date.now() - lastOraclePublishAt >= 60_000) {
+    if (Date.now() - lastOraclePublishAt >= config.ORACLE_PUBLISH_INTERVAL_SECONDS * 1_000) {
       lastOraclePublishAt = Date.now();
       await oraclePublisher.publishFreshMarkets();
     }

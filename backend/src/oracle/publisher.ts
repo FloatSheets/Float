@@ -15,6 +15,7 @@ const oracleAbi = parseAbi([
 ]);
 const MAX_CONFIDENCE_BPS = 50n;
 const ATTESTATION_TTL_SECONDS = 120n;
+const PUBLISH_SAFETY_WINDOW_SECONDS = 30n;
 
 const robinhoodChain = defineChain({
   id: 4663,
@@ -55,6 +56,7 @@ export class OraclePublisher {
       try {
         const current = await readOraclePrice(this.rpc, this.config.FLOAT_ORACLE_ADDRESS as Address, id);
         const now = BigInt(Math.floor(Date.now() / 1000));
+        if (current.sequence !== 0n && now < current.timestamp + ATTESTATION_TTL_SECONDS - PUBLISH_SAFETY_WINDOW_SECONDS) continue;
         const attestation: PriceAttestation = {
           marketId: id,
           priceE18: decimalToE18(row.twap_price_usdg),
