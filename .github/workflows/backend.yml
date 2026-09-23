@@ -11,9 +11,27 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: floatsheets_test
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+        options: >-
+          --health-cmd "pg_isready -U postgres -d floatsheets_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+        ports:
+          - 5432:5432
     defaults:
       run:
         working-directory: backend
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/floatsheets_test
+      RHC_RPC_URL: https://rpc.mainnet.chain.robinhood.com
+      UNISWAP_TWAP_WINDOW_SECONDS: "1800"
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2

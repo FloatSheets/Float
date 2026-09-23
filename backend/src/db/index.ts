@@ -6,4 +6,4 @@ if (!connectionString) {
   throw new Error("DATABASE_URL must be configured");
 }
 
-export const db = new Pool({ connectionString });
+export const db = new Pool({ connectionString, connectionTimeoutMillis: 45_000, options: "-c search_path=public" });
