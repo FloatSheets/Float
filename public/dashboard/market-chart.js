@@ -60,7 +60,10 @@
       if(!candles.length)return;
       const dark=document.body.classList.contains('dashboard-dark'), muted=dark?'#a6b3c9':'#586b87', grid=dark?'#303a49':'#d7dfe9';
       ctx.font='11px '+getComputedStyle(canvas).fontFamily;
-      const extrema=candles.flatMap(c=>[c.high,c.low]);if(liquidation)extrema.push(liquidation);
+      // The liquidation price can sit far beyond the selected window's
+      // trading range. It is an important annotation, but it must not set
+      // the price scale: doing so makes the actual candles unreadable.
+      const extrema=candles.flatMap(c=>[c.high,c.low]);
       const min=Math.min(...extrema),max=Math.max(...extrema),pad=Math.max((max-min)*.1,max*.001);
       const lo=Math.max(0,min-pad),hi=max+pad;
       const left=8,right=Math.min(w*.32,Math.max(62,ctx.measureText(priceText(hi)).width+16)),top=18,bottom=28,pw=w-left-right,ph=h-top-bottom;
@@ -77,12 +80,16 @@
         ctx.beginPath();ctx.roundRect(x-body/2,Math.min(a,b),body,Math.max(1.5,Math.abs(a-b)),Math.min(2,body/2));ctx.fill();
       });
       function line(price,color,dash){ctx.strokeStyle=color;ctx.setLineDash(dash);ctx.beginPath();ctx.moveTo(left,Y(price));ctx.lineTo(w-right,Y(price));ctx.stroke();ctx.setLineDash([]);}
+      function horizontal(y,color,dash){ctx.strokeStyle=color;ctx.setLineDash(dash);ctx.beginPath();ctx.moveTo(left,y);ctx.lineTo(w-right,y);ctx.stroke();ctx.setLineDash([]);}
       line(candles[candles.length-1].close,grid,[4,5]);
       if(liquidation){
-        line(liquidation,'#ef635c',[6,4]);
-        const label='Est. liquidation $'+priceText(liquidation),labelWidth=ctx.measureText(label).width+12;
-        ctx.fillStyle=dark?'#311b23':'#fff0ee';ctx.fillRect(left,Y(liquidation)-17,Math.min(labelWidth,pw),17);
-        ctx.fillStyle=dark?'#ff9c95':'#ab2923';ctx.textAlign='left';ctx.fillText(label,left+6,Y(liquidation)-5,pw-12);
+        const liquidationY=Y(liquidation);
+        const isOutsideScale=liquidationY<top+10||liquidationY>h-bottom-10;
+        const annotationY=Math.max(top+10,Math.min(h-bottom-10,liquidationY));
+        horizontal(annotationY,'#ef635c',[6,4]);
+        const label='Est. liquidation $'+priceText(liquidation)+(isOutsideScale?(liquidation<lo?' ↓':' ↑'):''),labelWidth=ctx.measureText(label).width+12;
+        ctx.fillStyle=dark?'#311b23':'#fff0ee';ctx.fillRect(left,annotationY-17,Math.min(labelWidth,pw),17);
+        ctx.fillStyle=dark?'#ff9c95':'#ab2923';ctx.textAlign='left';ctx.fillText(label,left+6,annotationY-5,pw-12);
       }
       ctx.fillStyle=muted;
       const ticks=w<480?3:5;
