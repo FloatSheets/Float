@@ -15,6 +15,6 @@ export function assessMarketRisk(input: MarketRiskInput, maxPriceAgeSeconds: num
   if (input.usdgBalance === null || input.usdgBalance <= 0n) return "close_only";
   if (input.oracleTradable !== true) return "close_only";
   if (input.quoteBps.length !== 10 || input.quoteBps.some((value) => !Number.isFinite(value))) return "close_only";
-  if (Math.max(...input.quoteBps) > input.maxHalfSpreadBps) return "close_only";
+  if (Math.max(...input.quoteBps.map(Math.abs)) > input.maxHalfSpreadBps) return "close_only";
   return input.marketStatus;
 }

@@ -180,3 +180,33 @@ test("builds a trader quote and execution transaction without exposing the quote
     await new Promise<void>((resolve, reject) => quoteServer.close((error) => error ? reject(error) : resolve()));
   }
 });
+
+test("accepts a signed, in-band improvement from the live buy matrix", async () => {
+  const clearingAbi = parseAbi(["function markets(bytes32) view returns (uint8,uint64,uint64,uint64,uint64,uint128)"]);
+  const oracleAbi = parseAbi(["function getPrice(bytes32) view returns (uint256,uint256,uint256,uint256,uint64,uint64,bool)"]);
+  const database = {
+    query: async (sql: string) => {
+      if (sql.includes("FROM public.markets")) return { rows: [{ id: "market-1", status: "active", max_ticket_usdg: "50000", max_half_spread_bps: 30, observed_at: new Date(), oracle_tradable: true }] };
+      if (sql.includes("SELECT notional_usdg")) return { rows: [{ notional_usdg: "5", execution_degradation_bps: -19 }] };
+      throw new Error(`unexpected query: ${sql}`);
+    }
+  } as unknown as Pool;
+  const rpc: RpcTransport = {
+    call: async ({ to }) => to.toLowerCase() === config.FLOAT_CLEARING_HOUSE_ADDRESS.toLowerCase()
+      ? encodeFunctionResult({ abi: clearingAbi, functionName: "markets", result: [1, 5_000000000000000000n, 1_000n, 30n, 50n, 50_000_000000n] })
+      : encodeFunctionResult({ abi: oracleAbi, functionName: "getPrice", result: [100_000000000000000000n, 100_000000000000000000n, 25n, 0n, BigInt(Math.floor(Date.now() / 1000)), 9n, false] })
+  };
+  const quoteApp = express();
+  quoteApp.use(express.json());
+  quoteApp.use("/v1/protocol/transactions", createProtocolTransactionsRouter(config, database, rpc, { ensureFreshMarket: async () => {} }));
+  const quoteServer = await listening(quoteApp);
+  try {
+    const response = await request(quoteServer).post("/v1/protocol/transactions/trade-quote").send({
+      market: "SPCX", trader: "0x1111111111111111111111111111111111111111", isLong: true, notionalUsdg: "250000"
+    });
+    expect(response.status).toBe(200);
+    expect(response.body.quote.executionPriceE18).toBe("99810000000000000000");
+  } finally {
+    await new Promise<void>((resolve, reject) => quoteServer.close((error) => error ? reject(error) : resolve()));
+  }
+});

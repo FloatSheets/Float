@@ -137,7 +137,7 @@ export function createProtocolTransactionsRouter(
       if (!marketRow || marketRow.status !== "active" || marketRow.oracle_tradable !== true) throw new Error("market is not tradable");
       if (!marketRow.observed_at || (Date.now() - marketRow.observed_at.getTime()) / 1000 > config.ORACLE_PRICE_MAX_AGE_SECONDS) throw new Error("market snapshot is stale");
       const quoteRows = await database.query<{ count: string; max_degradation: number | null }>(
-        `SELECT count(*)::text,max(execution_degradation_bps) AS max_degradation FROM public.quote_samples
+        `SELECT count(*)::text,max(abs(execution_degradation_bps)) AS max_degradation FROM public.quote_samples
          WHERE market_id=$1 AND observed_at=(SELECT q2.observed_at FROM public.quote_samples q2 WHERE q2.market_id=$1 GROUP BY q2.observed_at HAVING count(*)=10 ORDER BY q2.observed_at DESC LIMIT 1)`, [marketRow.id]
       );
       if (quoteRows.rows[0]?.count !== "10" || (quoteRows.rows[0].max_degradation ?? Infinity) > marketRow.max_half_spread_bps) throw new Error("market quote quality is outside its configured band");
@@ -220,7 +220,10 @@ export function createProtocolTransactionsRouter(
          ORDER BY notional_usdg ASC LIMIT 1`, [marketRow.id, direction, usdgDecimal(requestedNotional)]
       );
       const sample = sampleResult.rows[0];
-      if (!sample || !Number.isFinite(sample.execution_degradation_bps) || sample.execution_degradation_bps < 0 || sample.execution_degradation_bps > marketRow.max_half_spread_bps) throw new Error("market quote quality is outside its configured band");
+      // The matrix is signed against the TWAP. A negative value is a better
+      // executable buy price, not an invalid quote; its absolute magnitude is
+      // still bounded by the market's configured execution band.
+      if (!sample || !Number.isFinite(sample.execution_degradation_bps) || Math.abs(sample.execution_degradation_bps) > marketRow.max_half_spread_bps) throw new Error("market quote quality is outside its configured band");
       const degradationBps = BigInt(sample.execution_degradation_bps);
       const executionPriceE18 = input.isLong
         ? oraclePrice.priceE18 * (BPS + degradationBps) / BPS
@@ -288,7 +291,7 @@ export function createProtocolTransactionsRouter(
          LIMIT 1`, [marketRow.id, direction, usdgDecimal(positionNotional)]
       );
       const sample = sampleResult.rows[0];
-      if (!sample || !Number.isFinite(sample.execution_degradation_bps) || sample.execution_degradation_bps < 0 || sample.execution_degradation_bps > marketRow.max_half_spread_bps) throw new Error("market quote quality is outside its configured band");
+      if (!sample || !Number.isFinite(sample.execution_degradation_bps) || Math.abs(sample.execution_degradation_bps) > marketRow.max_half_spread_bps) throw new Error("market quote quality is outside its configured band");
       const degradationBps = BigInt(sample.execution_degradation_bps);
       const executionPriceE18 = direction === "buy"
         ? oraclePrice.priceE18 * (BPS + degradationBps) / BPS

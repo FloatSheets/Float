@@ -16,5 +16,6 @@ test("moves stale, empty, incomplete, and excessive-impact markets close-only", 
   expect(assessMarketRisk({ ...healthy, usdgBalance: 0n }, 120)).toBe("close_only");
   expect(assessMarketRisk({ ...healthy, quoteBps: [50] }, 120)).toBe("close_only");
   expect(assessMarketRisk({ ...healthy, quoteBps: Array(10).fill(101) }, 120)).toBe("close_only");
+  expect(assessMarketRisk({ ...healthy, quoteBps: Array(10).fill(-101) }, 120)).toBe("close_only");
   expect(assessMarketRisk({ ...healthy, oracleTradable: false }, 120)).toBe("close_only");
 });
