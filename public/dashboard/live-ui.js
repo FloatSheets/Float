@@ -18,7 +18,7 @@
     nodes.forEach(function(textNode){
       // A previous pass may already have turned this unit into an asset reference.
       // Do not nest a second USDG logo/text pair inside it.
-      if(textNode.parentElement?.closest('.asset-ref')) return;
+      if(textNode.parentElement?.closest('.asset-ref,.token-amount-shell')) return;
       const fragment=document.createDocumentFragment();
       String(textNode.nodeValue).split(/(USDG|ETH)/g).forEach(function(part){
         if(!icon[part]) { fragment.append(document.createTextNode(part)); return; }
@@ -97,6 +97,54 @@
     setCollapsed(localStorage.getItem('floatsheets-sidebar-collapsed')==='true');
     toggle.addEventListener('click',function(){setCollapsed(!document.body.classList.contains('dashboard-sidebar-collapsed'));});
     sidebar.append(toggle);
+  }
+
+  function installMobileWorkspaceMenu(){
+    if(document.getElementById('mobile-workspace-menu-trigger')) return;
+    const trigger=document.createElement('button');
+    trigger.id='mobile-workspace-menu-trigger';
+    trigger.type='button';
+    trigger.className='mobile-workspace-menu-trigger';
+    trigger.setAttribute('aria-label','Open workspace menu');
+    trigger.setAttribute('aria-expanded','false');
+    trigger.innerHTML='<span aria-hidden="true">☰</span>';
+
+    const menu=document.createElement('div');
+    menu.id='mobile-workspace-menu';
+    menu.className='mobile-workspace-menu';
+    menu.setAttribute('aria-hidden','true');
+    menu.innerHTML='<button type="button" class="mobile-workspace-backdrop" aria-label="Close workspace menu"></button><section class="mobile-workspace-sheet" role="dialog" aria-modal="true" aria-labelledby="mobile-workspace-menu-title"><div class="mobile-workspace-sheet-head"><span id="mobile-workspace-menu-title">WORKSPACE</span><button type="button" class="mobile-workspace-close" aria-label="Close workspace menu">×</button></div><nav aria-label="Workspace navigation"><a href="#trade">↗ <span>Trade</span></a><a href="#portfolio">▦ <span>Portfolio</span></a><a href="#oracle">◎ <span>Oracle &amp; Risk</span></a><a href="#vault">◈ <span>LP</span></a><a href="#listings">⊞ <span>Market listings</span></a><a href="#settings">⚙ <span>Settings</span></a></nav></section>';
+    document.body.append(menu,trigger);
+
+    const close=function(){
+      menu.classList.remove('is-open');
+      menu.setAttribute('aria-hidden','true');
+      trigger.setAttribute('aria-expanded','false');
+      trigger.setAttribute('aria-label','Open workspace menu');
+      trigger.innerHTML='<span aria-hidden="true">☰</span>';
+      document.body.classList.remove('mobile-workspace-menu-open');
+    };
+    const open=function(){
+      menu.classList.add('is-open');
+      menu.setAttribute('aria-hidden','false');
+      trigger.setAttribute('aria-expanded','true');
+      trigger.setAttribute('aria-label','Close workspace menu');
+      trigger.innerHTML='<span aria-hidden="true">×</span>';
+      document.body.classList.add('mobile-workspace-menu-open');
+      menu.querySelector('a')?.focus();
+    };
+    trigger.addEventListener('click',function(){menu.classList.contains('is-open')?close():open();});
+    menu.querySelector('.mobile-workspace-backdrop')?.addEventListener('click',close);
+    menu.querySelector('.mobile-workspace-close')?.addEventListener('click',close);
+    menu.querySelectorAll('a').forEach(function(link){link.addEventListener('click',close);});
+    const onKeydown=function(event){if(event.key==='Escape'&&menu.classList.contains('is-open')){close();trigger.focus();}};
+    document.addEventListener('keydown',onKeydown);
+    window.__FLOATSHEETS_MOBILE_MENU_DISPOSE__=function(){
+      document.removeEventListener('keydown',onKeydown);
+      document.body.classList.remove('mobile-workspace-menu-open');
+      menu.remove();trigger.remove();
+      delete window.__FLOATSHEETS_MOBILE_MENU_DISPOSE__;
+    };
   }
 
   function installActivityFeed(){
@@ -467,6 +515,7 @@
     ++chartRequest;++walletRequest;chartAbort?.abort();activeChart?.destroy();activeChart=null;
     clearInterval(window.__FLOATSHEETS_CHART_REFRESH_TIMER__);
     clearInterval(window.__FLOATSHEETS_WALLET_REFRESH_TIMER__);
+    window.__FLOATSHEETS_MOBILE_MENU_DISPOSE__?.();
   };
   window.addEventListener('floatsheets-dashboard-dispose',window.__FLOATSHEETS_CHART_DISPOSE__);
   drawChart = async function drawLiveChart(){
@@ -532,6 +581,7 @@
     if(chartLegend) chartLegend.textContent='Price history · USDG';
     installThemeToggle();
     installSidebarToggle();
+    installMobileWorkspaceMenu();
     installActivityFeed();
     window.__FLOATSHEETS_INSTALL_WALLET__?.();
     bindTradeTicket();
