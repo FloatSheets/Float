@@ -164,6 +164,7 @@ test("builds a trader quote and execution transaction without exposing the quote
     expect(response.body.quote.executionPriceE18).toBe("100250000000000000000");
     expect(BigInt(response.body.quote.sizeDeltaE18)).toBeGreaterThan(0n);
     expect(response.body.quote.feeUsdg).toBe("600000");
+    expect(BigInt(response.body.quote.expiry) - BigInt(Math.floor(Date.now() / 1_000))).toBeLessThanOrEqual(15n);
     expect(response.body.signature).toMatch(/^0x[0-9a-f]{130}$/);
     expect(response.body.transaction.to).toBe(config.FLOAT_CLEARING_HOUSE_ADDRESS);
     expect(refreshedMarkets).toEqual(["HIMS"]);

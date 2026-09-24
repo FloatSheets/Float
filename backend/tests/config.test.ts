@@ -49,3 +49,8 @@ test("rejects a quote signer address that does not match its private key", () =>
     QUOTE_SIGNER_ADDRESS: "0x0000000000000000000000000000000000000001"
   })).toThrow("QUOTE_SIGNER_ADDRESS does not match QUOTE_SIGNER_PRIVATE_KEY");
 });
+
+test("keeps quote TTL inside the deployed oracle freshness limit", () => {
+  expect(loadConfig({ ...validEnvironment, QUOTE_TTL_SECONDS: "105" }).QUOTE_TTL_SECONDS).toBe(105);
+  expect(() => loadConfig({ ...validEnvironment, QUOTE_TTL_SECONDS: "106" })).toThrow();
+});

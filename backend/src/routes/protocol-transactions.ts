@@ -35,6 +35,7 @@ const MAX_TRADING_FEE_BPS = 100n;
 const BPS = 10_000n;
 const USDG_TO_E18 = 1_000_000_000_000n;
 const E18 = 1_000_000_000_000_000_000n;
+const QUOTE_ORACLE_HEADROOM_SECONDS = 5n;
 
 function bigint(value: string): bigint {
   return BigInt(value);
@@ -73,6 +74,22 @@ function notionalForSize(sizeDeltaE18: bigint, executionPriceE18: bigint): bigin
 function sizeForNotional(notionalUsdg: bigint, executionPriceE18: bigint, isLong: boolean): bigint {
   const size = notionalUsdg * USDG_TO_E18 * E18 / executionPriceE18;
   return isLong ? size : -size;
+}
+
+/**
+ * A trade quote must not outlive the oracle price it references. The small
+ * headroom avoids a quote becoming invalid while it is being propagated into
+ * a block at the end of the oracle freshness window.
+ */
+function boundedQuoteExpiry(
+  now: bigint,
+  oracleTimestamp: bigint,
+  oracleMaxAgeSeconds: number,
+  configuredTtlSeconds: number
+): bigint {
+  const requestedExpiry = now + BigInt(configuredTtlSeconds);
+  const oracleExpiry = oracleTimestamp + BigInt(oracleMaxAgeSeconds) - QUOTE_ORACLE_HEADROOM_SECONDS;
+  return requestedExpiry < oracleExpiry ? requestedExpiry : oracleExpiry;
 }
 
 function protocolError(response: Response, error: unknown): void {
@@ -134,7 +151,7 @@ export function createProtocolTransactionsRouter(
       if (oraclePrice.sequence === 0n || now > oraclePrice.timestamp + BigInt(config.ORACLE_PRICE_MAX_AGE_SECONDS)) throw new Error("on-chain oracle price is stale");
       if (oraclePrice.confidenceBps > onchainMarket.maxOracleConfidenceBps) throw new Error("oracle confidence exceeds market limit");
       if (bigint(input.oracleSequence as string) !== oraclePrice.sequence) throw new Error("oracle sequence is stale");
-      if (expiry <= now || expiry > now + BigInt(config.QUOTE_TTL_SECONDS)) throw new Error("quote expiry is outside allowed TTL");
+      if (expiry <= now || expiry > boundedQuoteExpiry(now, oraclePrice.timestamp, config.ORACLE_PRICE_MAX_AGE_SECONDS, config.QUOTE_TTL_SECONDS)) throw new Error("quote expiry is outside the safe oracle window");
       if (bigint(input.maxLeverageE18 as string) !== onchainMarket.maxLeverageE18) throw new Error("quote leverage does not match market");
       const executionPriceE18 = bigint(input.executionPriceE18 as string);
       const sizeDeltaE18 = bigint(input.sizeDeltaE18 as string);
@@ -215,8 +232,10 @@ export function createProtocolTransactionsRouter(
         sizeDeltaE18: sizeForNotional(requestedNotional, executionPriceE18, input.isLong), executionPriceE18,
         feeUsdg: requestedNotional * TRADING_FEE_BPS / BPS,
         maxLeverageE18: onchainMarket.maxLeverageE18,
-        oracleSequence: oraclePrice.sequence, nonce: quoteNonce(), expiry: now + BigInt(config.QUOTE_TTL_SECONDS)
+        oracleSequence: oraclePrice.sequence, nonce: quoteNonce(),
+        expiry: boundedQuoteExpiry(now, oraclePrice.timestamp, config.ORACLE_PRICE_MAX_AGE_SECONDS, config.QUOTE_TTL_SECONDS)
       };
+      if (value.expiry <= now) throw new Error("on-chain oracle price is too close to expiry");
       const signature = await signTradeQuote(config.QUOTE_SIGNER_PRIVATE_KEY as Hex, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, value);
       response.json({
         quote: Object.fromEntries(Object.entries(value).map(([key, item]) => [key, typeof item === "bigint" ? item.toString() : item])),
@@ -281,8 +300,10 @@ export function createProtocolTransactionsRouter(
         marketId: id, trader: input.trader as Address, sizeDeltaE18, executionPriceE18,
         feeUsdg: tradeNotional * TRADING_FEE_BPS / BPS,
         maxLeverageE18: onchainMarket.maxLeverageE18,
-        oracleSequence: oraclePrice.sequence, nonce: quoteNonce(), expiry: now + BigInt(config.QUOTE_TTL_SECONDS)
+        oracleSequence: oraclePrice.sequence, nonce: quoteNonce(),
+        expiry: boundedQuoteExpiry(now, oraclePrice.timestamp, config.ORACLE_PRICE_MAX_AGE_SECONDS, config.QUOTE_TTL_SECONDS)
       };
+      if (value.expiry <= now) throw new Error("on-chain oracle price is too close to expiry");
       const signature = await signTradeQuote(config.QUOTE_SIGNER_PRIVATE_KEY as Hex, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, value);
       response.json({
         quote: Object.fromEntries(Object.entries(value).map(([key, item]) => [key, typeof item === "bigint" ? item.toString() : item])),

@@ -20,7 +20,10 @@ const schema = z.object({
   ORACLE_PUBLISH_INTERVAL_SECONDS: z.coerce.number().int().min(30).max(3_600).default(90),
   ORACLE_SIGNER_ADDRESS: address,
   ORACLE_SIGNER_PRIVATE_KEY: z.string().regex(/^0x[a-fA-F0-9]{64}$/, "must be a 32-byte private key"),
-  QUOTE_TTL_SECONDS: z.coerce.number().int().min(1).max(60),
+  // The deployed clearing house accepts oracle prices for 120 seconds. Keep
+  // enough headroom for block propagation instead of letting a quote survive
+  // until the oracle expires.
+  QUOTE_TTL_SECONDS: z.coerce.number().int().min(1).max(105),
   QUOTE_SIGNER_ADDRESS: address,
   QUOTE_SIGNER_PRIVATE_KEY: z.string().regex(/^0x[a-fA-F0-9]{64}$/, "must be a 32-byte private key"),
   RHC_ID: z.coerce.number().int().refine((value) => value === 4663, "must be Robinhood Chain (4663)"),
