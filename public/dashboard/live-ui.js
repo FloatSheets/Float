@@ -347,7 +347,7 @@
       note.textContent=note.textContent.replace(/These are illustrative oracle states\.[^.]*/, 'Market prices are updated regularly.').replace(/No APY is promised\.[^.]*/, 'Vault actions require your wallet confirmation.');
     });
     root.querySelectorAll('p,span,small').forEach(function(el){
-      el.textContent=el.textContent.replace(/fictional markets/gi,'live markets').replace(/virtual (account )?balance/gi,'wallet collateral').replace(/Illustrative equity market/gi,'Robinhood Chain market').replace(/24h change · sample/gi,'24h change · live feed');
+      el.textContent=el.textContent.replace(/fictional markets/gi,'live markets').replace(/virtual (account )?balance/gi,'wallet collateral').replace(/Illustrative equity market/gi,'Robinhood Chain market').replace(/24h change · sample/gi,'24h change · recorded oracle');
     });
   }
 
@@ -404,6 +404,23 @@
     },15_000);
   }
   let activeChart = null, chartKey = '', chartAbort = null;
+  function paintTwentyFourHourChange(history){
+    const stat=root.querySelector('.chart-stats > div:nth-child(2)');
+    const label=stat?.querySelector('small'), value=stat?.querySelector('strong');
+    if(!label||!value)return;
+    label.textContent='24h change · recorded oracle';
+    let candles=[];
+    try { candles=history ? globalThis.FloatSheetsMarketChart.readCandles(history,'1D') : []; } catch {}
+    const first=candles[0], last=candles[candles.length-1];
+    // Do not describe a partial new-market history as a 24-hour performance.
+    if(!first||!last||last.observed-first.observed<21*60*60*1000||first.open<=0){
+      value.className='';value.textContent='—';label.textContent='24h change · building history';return;
+    }
+    const change=(last.close-first.open)/first.open*100;
+    if(!Number.isFinite(change)){value.className='';value.textContent='—';return;}
+    value.className=change>=0?'positive':'negative';
+    value.textContent=(change>=0?'+':'')+change.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4})+'%';
+  }
   if(window.__FLOATSHEETS_CHART_DISPOSE__)window.removeEventListener('floatsheets-dashboard-dispose',window.__FLOATSHEETS_CHART_DISPOSE__);
   window.__FLOATSHEETS_CHART_DISPOSE__=function(){
     ++chartRequest;++walletRequest;chartAbort?.abort();activeChart?.destroy();activeChart=null;
@@ -433,11 +450,18 @@
     const controller=chartAbort;
     const timeout=setTimeout(()=>controller.abort(),15000);
     try {
-      const response=await fetch(api.replace(/\/$/,'')+'/v1/markets/'+encodeURIComponent(selected.symbol)+'/history?range='+encodeURIComponent(timeframe)+'&format=candles',{headers:{accept:'application/json'},signal:chartAbort.signal});
+      const endpoint=api.replace(/\/$/,'')+'/v1/markets/'+encodeURIComponent(selected.symbol)+'/history?format=candles';
+      const historyRequest=fetch(endpoint+'&range='+encodeURIComponent(timeframe),{headers:{accept:'application/json'},signal:controller.signal});
+      const dayRequest=timeframe==='1D' ? null : fetch(endpoint+'&range=1D',{headers:{accept:'application/json'},signal:controller.signal});
+      const response=await historyRequest;
       if(!response.ok) throw new Error('History unavailable');
       const payload=await response.json();
       if(requestId!==chartRequest || !canvas.isConnected) return;
       activeChart.setData(payload,timeframe);
+      if(dayRequest){
+        try { const dayResponse=await dayRequest;if(dayResponse.ok) paintTwentyFourHourChange(await dayResponse.json());else paintTwentyFourHourChange(null); }
+        catch { paintTwentyFourHourChange(null); }
+      } else paintTwentyFourHourChange(payload);
     } catch(error) {
       if(requestId===chartRequest && canvas.isConnected)activeChart.unavailable();
     } finally {clearTimeout(timeout);}
@@ -457,6 +481,7 @@
     originalRender();
     removeSimulationControls();
     genuinePageContent();
+    paintTwentyFourHourChange(null);
     document.querySelector('.network-label .pill')?.remove();
     root.querySelectorAll('.risk-strip span').forEach(function(item){if(item.textContent?.trim().startsWith('Sources'))item.remove();});
     decorateAssets();
