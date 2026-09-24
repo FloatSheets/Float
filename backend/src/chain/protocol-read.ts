@@ -8,6 +8,7 @@ const clearingAbi = parseAbi([
   "function marketExposure(bytes32) view returns (uint256 longBaseE18,uint256 shortBaseE18)",
   "function getPosition(address,bytes32) view returns (int256,uint256,uint256)"
 ]);
+const vaultAbi = parseAbi(["function totalAssets() view returns (uint256)"]);
 
 export type OraclePrice = {
   priceE18: bigint; spotPriceE18: bigint; confidenceBps: bigint; spotTwapDeviationBps: bigint;
@@ -46,4 +47,10 @@ export async function readClearingMarket(rpc: RpcTransport, clearingHouse: Addre
   const result = await rpc.call({ to: clearingHouse, data });
   const [state, maxLeverageE18, maintenanceMarginBps, maxExecutionDeviationBps, maxOracleConfidenceBps, maxPositionNotionalUsdg] = decodeFunctionResult({ abi: clearingAbi, functionName: "markets", data: result });
   return { state, maxLeverageE18, maintenanceMarginBps, maxExecutionDeviationBps, maxOracleConfidenceBps, maxPositionNotionalUsdg };
+}
+
+export async function readVaultAssets(rpc: RpcTransport, vault: Address): Promise<bigint> {
+  const data = encodeFunctionData({ abi: vaultAbi, functionName: "totalAssets" });
+  const result = await rpc.call({ to: vault, data });
+  return decodeFunctionResult({ abi: vaultAbi, functionName: "totalAssets", data: result });
 }

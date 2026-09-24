@@ -14,7 +14,7 @@ import { requireMasterAdmin } from "../auth/master-admin";
 import { signPriceAttestation, signTradeQuote } from "../signing/signer";
 import type { PriceAttestation, TradeQuote } from "../signing/types";
 import type { RpcTransport } from "../chain/rpc";
-import { readClearingMarket, readClearingPosition, readOraclePrice } from "../chain/protocol-read";
+import { readClearingExposure, readClearingMarket, readClearingPosition, readOraclePrice, readVaultAssets } from "../chain/protocol-read";
 import type { OraclePublisher } from "../oracle/publisher";
 
 const address = z.string().regex(/^0x[0-9a-fA-F]{40}$/);
@@ -36,6 +36,8 @@ const BPS = 10_000n;
 const USDG_TO_E18 = 1_000_000_000_000n;
 const E18 = 1_000_000_000_000_000_000n;
 const QUOTE_ORACLE_HEADROOM_SECONDS = 5n;
+const BPS_MARKET_OPEN_INTEREST_CAP = 1_500n;
+const BPS_MARKET_SKEW_CAP = 1_000n;
 
 function bigint(value: string): bigint {
   return BigInt(value);
@@ -74,6 +76,10 @@ function notionalForSize(sizeDeltaE18: bigint, executionPriceE18: bigint): bigin
 function sizeForNotional(notionalUsdg: bigint, executionPriceE18: bigint, isLong: boolean): bigint {
   const size = notionalUsdg * USDG_TO_E18 * E18 / executionPriceE18;
   return isLong ? size : -size;
+}
+
+function ceilingDiv(numerator: bigint, denominator: bigint): bigint {
+  return numerator === 0n ? 0n : (numerator - 1n) / denominator + 1n;
 }
 
 /**
@@ -239,6 +245,25 @@ export function createProtocolTransactionsRouter(
         expiry: boundedQuoteExpiry(now, oraclePrice.timestamp, config.ORACLE_PRICE_MAX_AGE_SECONDS, config.QUOTE_TTL_SECONDS)
       };
       if (value.expiry <= now) throw new Error("on-chain oracle price is too close to expiry");
+      const position = await readClearingPosition(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, input.trader as Address, id);
+      const requiredMargin = ceilingDiv(notionalForSize(value.sizeDeltaE18, value.executionPriceE18) * E18, onchainMarket.maxLeverageE18) + value.feeUsdg;
+      if (position.sizeE18 === 0n && position.marginUsdg < requiredMargin) {
+        throw new Error(`add at least ${usdgDecimal(requiredMargin)} USDG margin before opening this position`);
+      }
+      const nextSize = position.sizeE18 + value.sizeDeltaE18;
+      const riskIncreasing = !(position.sizeE18 !== 0n && ((position.sizeE18 > 0n && value.sizeDeltaE18 < 0n) || (position.sizeE18 < 0n && value.sizeDeltaE18 > 0n)) && abs(value.sizeDeltaE18) <= abs(position.sizeE18));
+      if (riskIncreasing) {
+        const [exposure, vaultAssets] = await Promise.all([
+          readClearingExposure(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, id),
+          readVaultAssets(rpc, config.FLOAT_VAULT_ADDRESS as Address)
+        ]);
+        const nextLong = exposure.longBaseE18 - (position.sizeE18 > 0n ? abs(position.sizeE18) : 0n) + (nextSize > 0n ? abs(nextSize) : 0n);
+        const nextShort = exposure.shortBaseE18 - (position.sizeE18 < 0n ? abs(position.sizeE18) : 0n) + (nextSize < 0n ? abs(nextSize) : 0n);
+        const marketOpenInterest = notionalForSize(nextLong, value.executionPriceE18) + notionalForSize(nextShort, value.executionPriceE18);
+        const marketSkew = nextLong > nextShort ? notionalForSize(nextLong - nextShort, value.executionPriceE18) : notionalForSize(nextShort - nextLong, value.executionPriceE18);
+        if (marketOpenInterest > vaultAssets * BPS_MARKET_OPEN_INTEREST_CAP / BPS) throw new Error(`this position exceeds current ${symbol} market capacity`);
+        if (marketSkew > vaultAssets * BPS_MARKET_SKEW_CAP / BPS) throw new Error(`this position exceeds current ${symbol} one-sided market capacity`);
+      }
       const signature = await signTradeQuote(config.QUOTE_SIGNER_PRIVATE_KEY as Hex, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, value);
       response.json({
         quote: Object.fromEntries(Object.entries(value).map(([key, item]) => [key, typeof item === "bigint" ? item.toString() : item])),

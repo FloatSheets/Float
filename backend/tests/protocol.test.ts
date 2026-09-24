@@ -210,3 +210,50 @@ test("accepts a signed, in-band improvement from the live buy matrix", async () 
     await new Promise<void>((resolve, reject) => quoteServer.close((error) => error ? reject(error) : resolve()));
   }
 });
+
+test("rejects an unfunded or vault-capacity-exceeding opening quote before wallet execution", async () => {
+  const clearingAbi = parseAbi([
+    "function markets(bytes32) view returns (uint8,uint64,uint64,uint64,uint64,uint128)",
+    "function getPosition(address,bytes32) view returns (int256,uint256,uint256)",
+    "function marketExposure(bytes32) view returns (uint256,uint256)"
+  ]);
+  const oracleAbi = parseAbi(["function getPrice(bytes32) view returns (uint256,uint256,uint256,uint256,uint64,uint64,bool)"]);
+  const vaultAbi = parseAbi(["function totalAssets() view returns (uint256)"]);
+  const positionSelector = encodeFunctionData({ abi: clearingAbi, functionName: "getPosition", args: ["0x1111111111111111111111111111111111111111", (`0x${"00".repeat(32)}`) as `0x${string}`] }).slice(0, 10);
+  const exposureSelector = encodeFunctionData({ abi: clearingAbi, functionName: "marketExposure", args: [(`0x${"00".repeat(32)}`) as `0x${string}`] }).slice(0, 10);
+  let margin = 0n;
+  const database = {
+    query: async (sql: string) => {
+      if (sql.includes("FROM public.markets")) return { rows: [{ id: "market-1", status: "active", max_ticket_usdg: "50000", max_half_spread_bps: 30, observed_at: new Date(), oracle_tradable: true }] };
+      if (sql.includes("SELECT notional_usdg")) return { rows: [{ notional_usdg: "5", execution_degradation_bps: -19 }] };
+      throw new Error(`unexpected query: ${sql}`);
+    }
+  } as unknown as Pool;
+  const rpc: RpcTransport = {
+    call: async ({ to, data }) => {
+      if (to.toLowerCase() === config.FLOAT_VAULT_ADDRESS.toLowerCase()) return encodeFunctionResult({ abi: vaultAbi, functionName: "totalAssets", result: 2_750_000n });
+      if (to.toLowerCase() === config.FLOAT_ORACLE_ADDRESS.toLowerCase()) return encodeFunctionResult({ abi: oracleAbi, functionName: "getPrice", result: [100_000000000000000000n, 100_000000000000000000n, 25n, 0n, BigInt(Math.floor(Date.now() / 1000)), 9n, false] });
+      if (data.startsWith(positionSelector)) return encodeFunctionResult({ abi: clearingAbi, functionName: "getPosition", result: [0n, 0n, margin] });
+      if (data.startsWith(exposureSelector)) return encodeFunctionResult({ abi: clearingAbi, functionName: "marketExposure", result: [0n, 0n] });
+      return encodeFunctionResult({ abi: clearingAbi, functionName: "markets", result: [1, 5_000000000000000000n, 1_000n, 30n, 50n, 50_000_000000n] });
+    }
+  };
+  const quoteApp = express();
+  quoteApp.use(express.json());
+  quoteApp.use("/v1/protocol/transactions", createProtocolTransactionsRouter(config, database, rpc, { ensureFreshMarket: async () => {} }));
+  const quoteServer = await listening(quoteApp);
+  try {
+    const requestQuote = () => request(quoteServer).post("/v1/protocol/transactions/trade-quote").send({
+      market: "SPCX", trader: "0x1111111111111111111111111111111111111111", isLong: true, notionalUsdg: "300000"
+    });
+    const unfunded = await requestQuote();
+    expect(unfunded.status).toBe(400);
+    expect(unfunded.body.error).toContain("add at least");
+    margin = 100_000n;
+    const overCapacity = await requestQuote();
+    expect(overCapacity.status).toBe(400);
+    expect(overCapacity.body.error).toContain("one-sided market capacity");
+  } finally {
+    await new Promise<void>((resolve, reject) => quoteServer.close((error) => error ? reject(error) : resolve()));
+  }
+});
