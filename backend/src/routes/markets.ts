@@ -81,7 +81,10 @@ export function createMarketsRouter(database: Pool, maxPriceAgeSeconds = 120, li
       const [oracle,onchainMarket]=await Promise.all([readOraclePrice(live.rpc,live.oracle,id),readClearingMarket(live.rpc,live.clearingHouse,id)]);
       const oracleAgeSeconds=Number(BigInt(Math.floor(Date.now()/1_000))-oracle.timestamp);
       const oracleFresh=oracle.sequence!==0n&&oracleAgeSeconds<=maxPriceAgeSeconds&&!oracle.circuitBroken;
-      const state=onchainMarket.state!==1?'HALTED':(monitoredState==='active'&&oracleFresh?'LIVE':'CLOSE_ONLY');
+      // Idle markets intentionally do not consume publisher gas every 120
+      // seconds. A fresh attestation is produced by ensureFreshMarket() just
+      // before an open/close quote. They are ready to trade, not close-only.
+      const state=onchainMarket.state!==1?'HALTED':(monitoredState!=='active'?'CLOSE_ONLY':(oracleFresh?'LIVE':'READY'));
       response.json({market:symbol,state,monitored_state:monitoredState,onchain_market_state:onchainMarket.state,
         oracle_confidence_bps:oracle.confidenceBps.toString(),oracle_confidence_limit_bps:onchainMarket.maxOracleConfidenceBps.toString(),
         oracle_age_seconds:oracleAgeSeconds,oracle_circuit_broken:oracle.circuitBroken,oracle_fresh:oracleFresh});

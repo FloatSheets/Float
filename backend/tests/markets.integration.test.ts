@@ -58,7 +58,7 @@ test('reads the current on-chain oracle confidence and trade gate for NVDA', asy
   }));
   const response=await request(liveApp).get('/v1/markets/NVDA/live');
   expect(response.status).toBe(200);
-  expect(['LIVE','CLOSE_ONLY','HALTED']).toContain(response.body.state);
+  expect(['LIVE','READY','CLOSE_ONLY','HALTED']).toContain(response.body.state);
   expect(Number(response.body.oracle_confidence_bps)).toBeGreaterThanOrEqual(0);
   expect(Number(response.body.oracle_confidence_limit_bps)).toBeGreaterThanOrEqual(Number(response.body.oracle_confidence_bps));
   expect(typeof response.body.oracle_fresh).toBe('boolean');

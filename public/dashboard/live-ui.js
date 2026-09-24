@@ -437,8 +437,8 @@
     }
     if(stateValue){
       stateValue.className='state '+data.state;
-      stateValue.textContent=data.state==='LIVE'?'LIVE':data.state==='HALTED'?'HALTED':data.state==='CLOSE_ONLY'?'CLOSE ONLY':'UNAVAILABLE';
-      stateValue.title='Current on-chain market and oracle check';
+      stateValue.textContent=data.state==='LIVE'?'LIVE':data.state==='READY'?'READY':data.state==='HALTED'?'HALTED':data.state==='CLOSE_ONLY'?'CLOSE ONLY':'UNAVAILABLE';
+      stateValue.title=data.state==='READY'?'A current oracle price is published when you request a quote.':'Current on-chain market and oracle check';
     }
   }
   async function refreshLiveMarketTruth(){
