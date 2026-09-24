@@ -76,7 +76,8 @@ export const getTransactionCalldata = createServerFn({ method: "POST" })
     if (!input || typeof input !== "object") throw new Error("Transaction input is required.");
     const value = input as JsonRecord;
     const action = value["action"];
-    if (action !== "approve" && action !== "deposit" && action !== "withdraw" && action !== "liquidate") {
+    if (action !== "approve" && action !== "deposit" && action !== "withdraw" && action !== "liquidate"
+      && action !== "vault-approve" && action !== "vault-deposit" && action !== "vault-withdraw") {
       throw new Error("Unsupported wallet transaction.");
     }
     return value;

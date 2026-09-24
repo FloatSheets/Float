@@ -79,6 +79,25 @@ test("builds a real USDG approval transaction", async () => {
   expect(response.body.transaction.to).toBe(config.USDG_ADDRESS);
   expect(response.body.transaction.chainId).toBe(4663);
   expect(response.body.transaction.data).toMatch(/^0x095ea7b3/);
+
+  const vaultApproval = await request(server).post("/v1/protocol/transactions/vault-approve").send({ amountUsdg: "1000000" });
+  expect(vaultApproval.status).toBe(200);
+  expect(vaultApproval.body.transaction.to).toBe(config.USDG_ADDRESS);
+  expect(vaultApproval.body.transaction.data).toMatch(/^0x095ea7b3/);
+
+  const vaultDeposit = await request(server).post("/v1/protocol/transactions/vault-deposit").send({
+    amountUsdg: "1000000", receiver: "0x1111111111111111111111111111111111111111"
+  });
+  expect(vaultDeposit.status).toBe(200);
+  expect(vaultDeposit.body.transaction.to).toBe(config.FLOAT_VAULT_ADDRESS);
+  expect(vaultDeposit.body.transaction.data).toMatch(/^0x6e553f65/);
+
+  const vaultWithdraw = await request(server).post("/v1/protocol/transactions/vault-withdraw").send({
+    shares: "1000000000000", receiver: "0x1111111111111111111111111111111111111111"
+  });
+  expect(vaultWithdraw.status).toBe(200);
+  expect(vaultWithdraw.body.transaction.to).toBe(config.FLOAT_VAULT_ADDRESS);
+  expect(vaultWithdraw.body.transaction.data).toMatch(/^0x00f714ce/);
 });
 
 test("rejects signer issuance without the master admin key", async () => {

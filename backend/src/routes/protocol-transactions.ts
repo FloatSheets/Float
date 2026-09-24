@@ -7,7 +7,7 @@ import type { Pool } from "pg";
 
 import type { AppConfig } from "../config";
 import {
-  approveUsdG, configureMarket, depositMargin, enableMarket, liquidate, marketId, withdrawMargin
+  approveUsdG, configureMarket, depositMargin, depositVault, enableMarket, liquidate, marketId, withdrawMargin, withdrawVault
 } from "../chain/protocol";
 import { publishOracle, executeTrade } from "../chain/protocol";
 import { requireMasterAdmin } from "../auth/master-admin";
@@ -284,6 +284,27 @@ export function createProtocolTransactionsRouter(config: AppConfig, database?: P
   router.post("/approve", (request, response) => {
     try { const body = z.object({ amountUsdg: uint }).parse(request.body); response.json({ transaction: approveUsdG(config.USDG_ADDRESS as Address, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, bigint(body.amountUsdg)) }); }
     catch (error) { protocolError(response, error); }
+  });
+
+  router.post("/vault-approve", (request, response) => {
+    try { const body = z.object({ amountUsdg: uint }).parse(request.body); response.json({ transaction: approveUsdG(config.USDG_ADDRESS as Address, config.FLOAT_VAULT_ADDRESS as Address, bigint(body.amountUsdg)) }); }
+    catch (error) { protocolError(response, error); }
+  });
+
+  router.post("/vault-deposit", (request, response) => {
+    try {
+      const body = z.object({ amountUsdg: uint, receiver: address }).parse(request.body);
+      if (bigint(body.amountUsdg) === 0n) throw new Error("amount must be greater than zero");
+      response.json({ transaction: depositVault(config.FLOAT_VAULT_ADDRESS as Address, bigint(body.amountUsdg), body.receiver as Address) });
+    } catch (error) { protocolError(response, error); }
+  });
+
+  router.post("/vault-withdraw", (request, response) => {
+    try {
+      const body = z.object({ shares: uint, receiver: address }).parse(request.body);
+      if (bigint(body.shares) === 0n) throw new Error("shares must be greater than zero");
+      response.json({ transaction: withdrawVault(config.FLOAT_VAULT_ADDRESS as Address, bigint(body.shares), body.receiver as Address) });
+    } catch (error) { protocolError(response, error); }
   });
 
   router.post("/deposit", (request, response) => {

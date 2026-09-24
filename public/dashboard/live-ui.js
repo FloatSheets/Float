@@ -65,7 +65,7 @@
   const saveActivities=function(items){ localStorage.setItem(activityStorageKey,JSON.stringify(items.slice(0,60))); };
   const activityCopy=function(item){
     const market=item.market?' · '+item.market:'';
-    return ({approval:'USDG approval confirmed',deposit:'Margin added',withdraw:'Margin withdrawn',trade:'Position opened',close:'Position closed',liquidation:'Position liquidated'})[item.action]||'Transaction confirmed'+market;
+    return ({approval:'USDG approval confirmed',deposit:'Margin added',withdraw:'Margin withdrawn',trade:'Position opened',close:'Position closed',liquidation:'Position liquidated','vault-approve':'USDG approval confirmed','vault-deposit':'Liquidity added','vault-withdraw':'Liquidity withdrawn'})[item.action]||'Transaction confirmed'+market;
   };
   function recordActivity(action,detail){
     const item={action:action,market:detail?.market||'',hash:detail?.hash||'',time:new Date().toISOString()};
@@ -180,6 +180,27 @@
     }
   }
 
+  function vaultPanel(){
+    const wallet=walletState();
+    if(!wallet?.connected) return '<section class="panel live-only-panel"><h2>Provide liquidity</h2><p>Connect your wallet to deposit USDG and receive vault shares.</p><button class="primary-btn" id="connect-to-vault" type="button">Connect wallet</button></section>';
+    return '<section class="panel live-only-panel" id="live-vault-panel"><h2>Provide liquidity</h2><p>Your USDG helps back all FloatSheets markets. Your vault share value changes as traders profit or lose.</p><div id="live-vault-data"><p>Loading vault balances.</p></div></section>';
+  }
+
+  async function renderVaultContext(){
+    const target=root.querySelector('#live-vault-data');
+    root.querySelector('#connect-to-vault')?.addEventListener('click',function(){document.getElementById('account-button')?.click();});
+    if(!target||!walletState()?.connected) return;
+    try {
+      const wallet=walletApi(),vault=await wallet?.vault();if(!vault)return;
+      const assets=BigInt(vault.assets),shares=BigInt(vault.shares),totalShares=BigInt(vault.totalShares),available=BigInt(vault.availableLiquidity);
+      const ownership=totalShares===0n?'0.00':(Number(shares)*100/Number(totalShares)).toFixed(2);
+      target.innerHTML='<div class="metric-grid"><div class="metric featured"><small>Vault assets</small><strong>'+displayUsdG(assets)+'</strong><div class="metric-note"><span class="asset-ref"><img src="/usdg_logo.png" alt="USDG">USDG</span> · shared liquidity</div></div><div class="metric"><small>Your vault share</small><strong>'+ownership+'%</strong><div class="metric-note">of all vault shares</div></div><div class="metric"><small>Available liquidity</small><strong>'+displayUsdG(available)+'</strong><div class="metric-note">USDG available for markets</div></div></div><div class="field"><label for="live-vault-deposit">USDG to deposit</label><div class="input-wrap"><input id="live-vault-deposit" inputmode="decimal" value="10" aria-label="USDG to deposit"><span>USDG</span></div></div><button class="primary-btn" id="submit-vault-deposit" type="button">Add liquidity</button>'+(shares>0n?'<button class="secondary-btn" id="submit-vault-withdraw" type="button">Withdraw all liquidity</button><p class="vault-share-note">You hold '+shares.toString()+' vault shares.</p>':'')+'<p class="order-error" id="live-vault-error" hidden></p>';
+      const input=target.querySelector('#live-vault-deposit'),deposit=target.querySelector('#submit-vault-deposit'),withdraw=target.querySelector('#submit-vault-withdraw'),error=target.querySelector('#live-vault-error');
+      deposit?.addEventListener('click',async function(){try{const amount=rawUsdG(input.value);if(amount===0n)throw new Error('Enter a USDG amount greater than zero.');deposit.disabled=true;error.hidden=true;const allowance=await wallet.vaultAllowance();if(allowance<amount){deposit.textContent='Confirm USDG approval…';const approval=await wallet.buildTransaction('vault-approve',{amountUsdg:amount.toString()});await wallet.send(approval.transaction);}deposit.textContent='Confirm deposit…';const tx=await wallet.buildTransaction('vault-deposit',{amountUsdg:amount.toString()});await wallet.send(tx.transaction);render();}catch(reason){deposit.disabled=false;deposit.textContent='Add liquidity';error.textContent=reason instanceof Error?reason.message:'Liquidity could not be added.';error.hidden=false;}});
+      withdraw?.addEventListener('click',async function(){try{withdraw.disabled=true;error.hidden=true;withdraw.textContent='Confirm withdrawal…';const tx=await wallet.buildTransaction('vault-withdraw',{shares:shares.toString()});await wallet.send(tx.transaction);render();}catch(reason){withdraw.disabled=false;withdraw.textContent='Withdraw all liquidity';error.textContent=reason instanceof Error?reason.message:'Liquidity could not be withdrawn.';error.hidden=false;}});
+    } catch(error) { target.innerHTML='<p class="order-error">Unable to read the vault. '+(error instanceof Error?error.message:'')+'</p>'; }
+  }
+
   function removeSimulationControls(){
     const order=root.querySelector('.order-panel');
     if(order) order.innerHTML=tradeTicket();
@@ -207,7 +228,7 @@
     }
     if(view==='portfolio') root.innerHTML='<div class="page-heading"><div><h1>Portfolio.</h1><p>Your positions and available USDG.</p></div></div><section class="panel live-only-panel"><h2>'+ (walletState()?.connected?'Your portfolio':'Connect your wallet') +'</h2><div id="wallet-portfolio"><p>'+ (walletState()?.connected?'Loading your positions.':'Connect on Robinhood Chain to see your USDG and positions.') +'</p></div></section>';
     if(view==='oracle') root.innerHTML='<div class="page-heading"><div><h1>Prices &amp; risk.</h1><p>See current prices and whether each market is open for trading.</p></div></div><section class="panel markets-panel"><div class="panel-head"><h2>Market status</h2><span class="pill">LIVE DATA</span></div><div class="table-scroll"><table><thead><tr><th>Market</th><th>Price</th><th>Price range</th><th>Leverage</th><th>Status</th></tr></thead><tbody>'+markets.map(function(m){return '<tr><td>'+m.symbol+'</td><td>$'+money(m.price)+'</td><td>±'+money(m.band*100)+'%</td><td>'+m.max+'×</td><td>'+stateBadge(m.state)+'</td></tr>';}).join('')+'</tbody></table></div></section>';
-    if(view==='vault') root.innerHTML='<div class="page-heading"><div><h1>Liquidity vault.</h1><p>Provide USDG liquidity for FloatSheets markets.</p></div></div><section class="panel live-only-panel"><h2>Vault access is coming soon</h2><p>When available, you will use your wallet to deposit or withdraw USDG.</p><a class="secondary-btn" href="/research/vault/">Learn about the vault ↗</a></section>';
+    if(view==='vault') root.innerHTML='<div class="page-heading"><div><h1>Liquidity vault.</h1><p>Provide USDG liquidity for FloatSheets markets.</p></div></div>'+vaultPanel();
     if(view==='listings') root.innerHTML='<div class="page-heading"><div><h1>Market listings.</h1><p>Available markets on Robinhood Chain.</p></div></div><section class="panel markets-panel"><div class="table-scroll"><table><thead><tr><th>Market</th><th>Settlement</th><th>Price</th><th>Status</th></tr></thead><tbody>'+markets.map(function(m){return '<tr><td>'+m.symbol+'</td><td><span class="asset-ref"><img src="/usdg_logo.png" alt="USDG">USDG</span></td><td>$'+money(m.price)+'</td><td>'+stateBadge(m.state)+'</td></tr>';}).join('')+'</tbody></table></div></section>';
     if(view==='settings') root.querySelectorAll('.panel').forEach(function(panel){if(!panel.querySelector('#preferences-form')) panel.remove();});
   }
@@ -287,6 +308,7 @@
     window.__FLOATSHEETS_INSTALL_WALLET__?.();
     bindTradeTicket();
     void renderWalletContext();
+    void renderVaultContext();
     scheduleChartRefresh();
   };
   // Discard any local design-time account state before the first live render.

@@ -11,6 +11,11 @@ import { getCloseTransaction, getProtocol, getTradeTransaction, getTransactionCa
 const DEFAULT_USDG_ADDRESS = "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168" as const;
 const erc20Abi = parseAbi(["function allowance(address owner,address spender) view returns (uint256)", "function balanceOf(address account) view returns (uint256)"]);
 const clearingAbi = parseAbi(["function getPosition(address trader,bytes32 marketId) view returns (int256 sizeE18,uint256 entryPriceE18,uint256 marginUsdg)"]);
+const clearingLiquidityAbi = parseAbi(["function availableLiquidity() view returns (uint256)"]);
+const vaultAbi = parseAbi([
+  "function totalAssets() view returns (uint256)", "function totalShares() view returns (uint256)",
+  "function balanceOf(address) view returns (uint256)"
+]);
 
 export const robinhoodChain = defineChain({
   id: 4663,
@@ -34,7 +39,7 @@ export function RainbowProviders({ children, queryClient }: { children: ReactNod
 
 export function RainbowWalletBridge() {
   const { address, chainId, isConnected } = useAccount();
-  const [protocolAddresses, setProtocolAddresses] = useState<{ usdg: Address; clearingHouse: Address } | null>(null);
+  const [protocolAddresses, setProtocolAddresses] = useState<{ usdg: Address; vault: Address; clearingHouse: Address } | null>(null);
   const usdgAddress = protocolAddresses?.usdg ?? DEFAULT_USDG_ADDRESS;
   const { data: usdgBalance, refetch: refetchUsdG } = useReadContract({ address: usdgAddress, abi: erc20Abi, functionName: "balanceOf", args: [address ?? "0x0000000000000000000000000000000000000000"], query: { enabled: Boolean(address) && chainId === robinhoodChain.id } });
   const publicClient = usePublicClient({ chainId: robinhoodChain.id });
@@ -45,9 +50,10 @@ export function RainbowWalletBridge() {
     void getProtocol().then((protocol) => {
       if (!active) return;
       const usdg = protocol.settlement_asset_address;
+      const vault = protocol.vault;
       const clearingHouse = protocol.clearing_house;
-      if (typeof usdg === "string" && /^0x[0-9a-fA-F]{40}$/.test(usdg) && typeof clearingHouse === "string" && /^0x[0-9a-fA-F]{40}$/.test(clearingHouse)) {
-        setProtocolAddresses({ usdg: usdg as Address, clearingHouse: clearingHouse as Address });
+      if (typeof usdg === "string" && /^0x[0-9a-fA-F]{40}$/.test(usdg) && typeof vault === "string" && /^0x[0-9a-fA-F]{40}$/.test(vault) && typeof clearingHouse === "string" && /^0x[0-9a-fA-F]{40}$/.test(clearingHouse)) {
+        setProtocolAddresses({ usdg: usdg as Address, vault: vault as Address, clearingHouse: clearingHouse as Address });
       }
     }).catch((error) => console.warn("FloatSheets protocol address lookup failed", error));
     return () => { active = false; };
@@ -63,13 +69,14 @@ export function RainbowWalletBridge() {
     walletWindow.__FLOATSHEETS_WALLET_STATE__ = state;
     walletWindow.__FLOATSHEETS_WALLET__ = {
       ...state,
-      async buildTransaction(action: "approve" | "deposit" | "withdraw" | "trade-quote" | "close-quote", payload: Record<string, unknown>) {
+      async buildTransaction(action: "approve" | "deposit" | "withdraw" | "trade-quote" | "close-quote" | "vault-approve" | "vault-deposit" | "vault-withdraw", payload: Record<string, unknown>) {
         if (!connected || !address) throw new Error("Connect a wallet on Robinhood Chain first.");
+        const transactionPayload = action === "vault-deposit" || action === "vault-withdraw" ? { ...payload, receiver: address } : payload;
         const result = action === "trade-quote"
           ? await getTradeTransaction({ data: { ...payload, trader: address } })
           : action === "close-quote"
             ? await getCloseTransaction({ data: { ...payload, trader: address } })
-          : await getTransactionCalldata({ data: { action, payload } });
+          : await getTransactionCalldata({ data: { action, payload: transactionPayload } });
         const activity = action === "trade-quote" ? "trade" : action === "close-quote" ? "close" : action;
         const market = typeof payload["market"] === "string" ? payload["market"] : "";
         return { ...result, transaction: { ...(result.transaction as object), activity, market }, activity, market };
@@ -87,6 +94,22 @@ export function RainbowWalletBridge() {
         if (!connected || !address || !publicClient) return 0n;
         if (!protocolAddresses) throw new Error("Trading configuration is still loading. Please try again.");
         return publicClient.readContract({ address: protocolAddresses.usdg, abi: erc20Abi, functionName: "allowance", args: [address, protocolAddresses.clearingHouse] });
+      },
+      async vaultAllowance() {
+        if (!connected || !address || !publicClient) return 0n;
+        if (!protocolAddresses) throw new Error("Trading configuration is still loading. Please try again.");
+        return publicClient.readContract({ address: protocolAddresses.usdg, abi: erc20Abi, functionName: "allowance", args: [address, protocolAddresses.vault] });
+      },
+      async vault() {
+        if (!connected || !address || !publicClient) return null;
+        if (!protocolAddresses) throw new Error("Trading configuration is still loading. Please try again.");
+        const [assets, shares, totalShares, availableLiquidity] = await Promise.all([
+          publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "totalAssets" }),
+          publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "balanceOf", args: [address] }),
+          publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "totalShares" }),
+          publicClient.readContract({ address: protocolAddresses.clearingHouse, abi: clearingLiquidityAbi, functionName: "availableLiquidity" })
+        ]);
+        return { assets: assets.toString(), shares: shares.toString(), totalShares: totalShares.toString(), availableLiquidity: availableLiquidity.toString() };
       },
       async position(symbol: string) {
         if (!connected || !address || !publicClient) return null;

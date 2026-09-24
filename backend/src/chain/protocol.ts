@@ -3,6 +3,10 @@ import { encodeFunctionData, keccak256, parseAbi, stringToHex, type Address, typ
 import type { TradeQuote } from "../signing/types";
 
 const erc20Abi = parseAbi(["function approve(address spender,uint256 amount)"]);
+const vaultAbi = parseAbi([
+  "function deposit(uint256 assets,address receiver) returns (uint256 shares)",
+  "function withdraw(uint256 shares,address receiver) returns (uint256 assets)"
+]);
 const oracleAbi = parseAbi([
   "function publish((bytes32 marketId,uint256 priceE18,uint256 spotPriceE18,uint256 confidenceBps,uint64 timestamp,uint64 sequence,uint64 expiry) attestation,bytes signature)",
   "function setMarketEnabled(bytes32 marketId,bool enabled)"
@@ -29,6 +33,14 @@ export function approveUsdG(usdG: Address, clearingHouse: Address, amount: bigin
 
 export function depositMargin(clearingHouse: Address, id: Hex, amount: bigint): ProtocolTransaction {
   return tx(clearingHouse, encodeFunctionData({ abi: clearingAbi, functionName: "depositMargin", args: [id, amount] }));
+}
+
+export function depositVault(vault: Address, assets: bigint, receiver: Address): ProtocolTransaction {
+  return tx(vault, encodeFunctionData({ abi: vaultAbi, functionName: "deposit", args: [assets, receiver] }));
+}
+
+export function withdrawVault(vault: Address, shares: bigint, receiver: Address): ProtocolTransaction {
+  return tx(vault, encodeFunctionData({ abi: vaultAbi, functionName: "withdraw", args: [shares, receiver] }));
 }
 
 export function withdrawMargin(clearingHouse: Address, id: Hex, amount: bigint): ProtocolTransaction {
