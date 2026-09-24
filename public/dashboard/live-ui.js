@@ -130,6 +130,7 @@
     ticket.querySelectorAll('[data-live-side]').forEach(function(button){button.addEventListener('click',function(){isLong=button.dataset.liveSide==='long';ticket.querySelectorAll('[data-live-side]').forEach(function(item){item.classList.toggle('active',item===button);});submit.textContent='Open '+(isLong?'long':'short')+' position';});});
     collateral.addEventListener('input',update); leverage.addEventListener('input',update); update();
     submit.addEventListener('click',async function(){
+      let marginDeposited=false;
       try {
         const wallet=walletApi(); if(!wallet?.connected) throw new Error('Connect a Robinhood Chain wallet first.');
         const margin=rawUsdG(collateral.value),lev=BigInt(leverage.value),notional=margin*lev*10000n/(10000n+lev*6n);
@@ -137,12 +138,33 @@
         ticket.dataset.submitting='true'; submit.disabled=true;
         const allowance=await wallet.allowance();
         if(allowance<margin){submit.textContent='Confirm USDG approval…';const approval=await wallet.buildTransaction('approve',{amountUsdg:margin.toString()});await wallet.send(approval.transaction);}
-        submit.textContent='Confirm margin deposit…';const deposit=await wallet.buildTransaction('deposit',{market:selected.symbol,amountUsdg:margin.toString()});await wallet.send(deposit.transaction);
+        submit.textContent='Confirm margin deposit…';const deposit=await wallet.buildTransaction('deposit',{market:selected.symbol,amountUsdg:margin.toString()});await wallet.send(deposit.transaction);marginDeposited=true;
         submit.textContent='Requesting live quote…';const quote=await wallet.buildTransaction('trade-quote',{market:selected.symbol,isLong:isLong,notionalUsdg:notional.toString()});
         submit.textContent='Confirm trade…';const hash=await wallet.send(quote.transaction);
         delete ticket.dataset.submitting; render(); showActionModal('Position opened','Your '+selected.symbol+' position was confirmed on Robinhood Chain. Transaction: '+hash);
-      } catch(reason) { delete ticket.dataset.submitting; submit.disabled=false; submit.textContent='Open '+(isLong?'long':'short')+' position'; showActionModal('Could not open position',reason instanceof Error?reason.message:'Trade could not be submitted.'); }
+      } catch(reason) { delete ticket.dataset.submitting; submit.disabled=false; submit.textContent='Open '+(isLong?'long':'short')+' position'; const message=reason instanceof Error?reason.message:'Trade could not be submitted.'; if(marginDeposited) void offerMarginRecovery(selected.symbol,margin,message); else showActionModal('Could not open position',message); }
     });
+  }
+
+  async function withdrawPendingMargin(symbol, amount){
+    try {
+      const wallet=walletApi();
+      const transaction=await wallet.buildTransaction('withdraw',{market:symbol,amountUsdg:amount.toString()});
+      const hash=await wallet.send(transaction.transaction);
+      render();
+      showActionModal('Margin withdrawn','Your '+displayUsdG(amount)+' USDG margin was returned to your wallet. Transaction: '+hash);
+    } catch(reason) {
+      showActionModal('Could not withdraw margin',reason instanceof Error?reason.message:'Your margin could not be withdrawn.');
+    }
+  }
+
+  async function offerMarginRecovery(symbol, fallbackAmount, reason){
+    try {
+      const position=await walletApi().position(symbol);
+      const amount=position && BigInt(position.sizeE18)===0n ? BigInt(position.marginUsdg) : 0n;
+      if(amount===0n) { showActionModal('Could not open position',reason); return; }
+      modal('Position not opened','<p>'+escapeMessage(reason)+'</p><p>Your '+displayUsdG(amount)+' USDG margin is safely held in the clearing account. You can withdraw it now.</p>','Withdraw margin',function(){ dialog.close(); void withdrawPendingMargin(symbol,amount); });
+    } catch { showActionModal('Could not open position',reason); }
   }
 
   function installClosePosition(position){
@@ -162,6 +184,16 @@
     ticket.append(button);
   }
 
+  function installMarginRecovery(position){
+    const ticket=root.querySelector('.live-trade-ticket');
+    if(!ticket || !position || BigInt(position.sizeE18)!==0n || BigInt(position.marginUsdg)===0n || ticket.querySelector('#withdraw-live-margin')) return;
+    const amount=BigInt(position.marginUsdg);
+    const button=document.createElement('button');
+    button.id='withdraw-live-margin';button.type='button';button.className='secondary-btn';button.textContent='Withdraw available margin';
+    button.addEventListener('click',function(){modal('Withdraw available margin','<p>Withdraw '+displayUsdG(amount)+' USDG back to your wallet.</p>','Withdraw margin',function(){dialog.close();void withdrawPendingMargin(selected.symbol,amount);});});
+    ticket.append(button);
+  }
+
   let walletRequest = 0;
   async function renderWalletContext(){
     const wallet=walletState(), request=++walletRequest;
@@ -171,7 +203,7 @@
     if(details){
       const grid=root.querySelector('.metric-grid');
       if(grid) grid.innerHTML='<div class="metric featured"><small>Wallet USDG balance</small><strong>'+balance+'</strong><div class="metric-note"><span class="asset-ref"><img src="/usdg_logo.png" alt="USDG">USDG</span> · available to use</div></div><div class="metric"><small>Margin in this market</small><strong id="wallet-market-margin">…</strong><div class="metric-note">'+details+' only</div></div><div class="metric"><small>Your position</small><strong id="wallet-market-size">…</strong><div class="metric-note">current size</div></div><div class="metric"><small>Settlement</small><strong>USDG</strong><div class="metric-note">Robinhood Chain</div></div>';
-      try { const position=await walletApi().position(details); if(request!==walletRequest||!position)return; const margin=root.querySelector('#wallet-market-margin'),size=root.querySelector('#wallet-market-size'); if(margin)margin.textContent=displayUsdG(BigInt(position.marginUsdg)); if(size)size.textContent=(Number(BigInt(position.sizeE18))/1e18).toLocaleString(undefined,{maximumFractionDigits:4}); installClosePosition(position); } catch(error) { console.warn('FloatSheets position read failed',error); }
+      try { const position=await walletApi().position(details); if(request!==walletRequest||!position)return; const margin=root.querySelector('#wallet-market-margin'),size=root.querySelector('#wallet-market-size'); if(margin)margin.textContent=displayUsdG(BigInt(position.marginUsdg)); if(size)size.textContent=(Number(BigInt(position.sizeE18))/1e18).toLocaleString(undefined,{maximumFractionDigits:4}); installClosePosition(position); installMarginRecovery(position); } catch(error) { console.warn('FloatSheets position read failed',error); }
     }
     if(location.hash.slice(1)==='portfolio'){
       const target=root.querySelector('#wallet-portfolio'); if(!target)return;
