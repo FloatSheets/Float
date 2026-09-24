@@ -73,7 +73,7 @@
 .candlestick-chart canvas:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
 .candle-status,.candle-risk{font-size:11px;line-height:1.6;color:var(--muted);padding:6px 8px 0;overflow-wrap:anywhere}
 .candle-risk:empty{display:none}.candle-risk{color:#b3362c}
-.dashboard-dark .candlestick-chart{background:#10151e;border-radius:8px;padding:8px}
+.dashboard-dark .candlestick-chart{background:transparent;border-radius:8px;padding:8px}
 .dashboard-dark .candle-price,.dashboard-dark .candle-ohlc b{color:#edf3ff}
 .dashboard-dark .candle-change.is-up{color:#25d88c}.dashboard-dark .candle-change.is-down{color:#ff7965}
 .dashboard-dark .candle-risk{color:#ff9c95}
