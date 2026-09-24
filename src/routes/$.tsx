@@ -1,7 +1,13 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 import { FloatSheetsPage, findPage } from "@/floatsheets/FloatSheetsPage";
 
 export const Route = createFileRoute("/$")({
+  beforeLoad: ({ params }) => {
+    const raw = (params._splat ?? "").toLowerCase().replace(/^\/+|\/+$/g, "");
+    if (raw === "whitepaper" || raw === "whitepaper.html") {
+      throw redirect({ href: "/protocol/" });
+    }
+  },
   head: ({ params }) => {
     const page = findPage("/" + (params._splat ?? ""));
     return {

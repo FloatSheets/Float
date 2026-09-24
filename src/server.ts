@@ -46,6 +46,11 @@ function isH3SwallowedErrorBody(body: string): boolean {
 
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
+    const url = new URL(request.url);
+    const normalizedPath = url.pathname.toLowerCase().replace(/\/+$/, "");
+    if (normalizedPath === "/whitepaper" || normalizedPath === "/whitepaper.html") {
+      return Response.redirect(new URL("/protocol/", request.url).toString(), 301);
+    }
     try {
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);

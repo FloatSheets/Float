@@ -7,6 +7,9 @@ export type FloatPage = (typeof pages)[number];
 export function findPage(pathname: string): FloatPage {
   const normalized =
     pathname.endsWith("/") || pathname.endsWith(".html") ? pathname : pathname + "/";
+  if (normalized === "/whitepaper/" || normalized === "/whitepaper.html") {
+    return pages.find((p) => p.route === "/protocol/")!;
+  }
   return (
     pages.find((p) => p.route === normalized) ??
     (normalized.match(/^\/dashboard\/[A-Za-z0-9.-]+\/$/) ? pages.find((p) => p.route === "/dashboard/") : undefined) ??
