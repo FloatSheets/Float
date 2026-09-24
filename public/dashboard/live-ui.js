@@ -390,7 +390,7 @@
     const onMarketPage=Boolean(location.pathname.match(/^\/dashboard\/[A-Za-z0-9.-]+\/?$/));
     if(onMarketPage) window.__FLOATSHEETS_CHART_REFRESH_TIMER__=setInterval(function(){
       if(!root.isConnected){clearInterval(window.__FLOATSHEETS_CHART_REFRESH_TIMER__);activeChart?.destroy();return;}
-      if(!document.hidden)drawChart();
+      if(!document.hidden){drawChart();void refreshLiveMarketTruth();}
     },30_000);
   }
   function scheduleWalletRefresh(){
@@ -403,7 +403,7 @@
       try { await renderWalletContext(); } finally { refreshing=false; }
     },15_000);
   }
-  let activeChart = null, chartKey = '', chartAbort = null;
+  let activeChart = null, chartKey = '', chartAbort = null, liveTruthRequest = 0;
   function paintTwentyFourHourChange(history){
     const stat=root.querySelector('.chart-stats > div:nth-child(2)');
     const label=stat?.querySelector('small'), value=stat?.querySelector('strong');
@@ -420,6 +420,38 @@
     if(!Number.isFinite(change)){value.className='';value.textContent='—';return;}
     value.className=change>=0?'positive':'negative';
     value.textContent=(change>=0?'+':'')+change.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4})+'%';
+  }
+  function paintLiveMarketTruth(data){
+    const confidence=root.querySelector('.chart-stats > div:nth-child(3)');
+    const status=root.querySelector('.chart-stats > div:nth-child(4)');
+    if(!confidence||!status)return;
+    const confidenceLabel=confidence.querySelector('small'),confidenceValue=confidence.querySelector('strong');
+    const stateLabel=status.querySelector('small'),stateValue=status.querySelector('.state');
+    if(confidenceLabel)confidenceLabel.textContent='Oracle confidence';
+    if(stateLabel)stateLabel.textContent='Trade status';
+    if(!data){if(confidenceValue)confidenceValue.textContent='—';if(stateValue)stateValue.textContent='CHECKING';return;}
+    const bps=Number(data.oracle_confidence_bps);
+    if(confidenceValue){
+      confidenceValue.textContent=Number.isFinite(bps)?'± '+(bps/100).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+'%':'—';
+      confidenceValue.title=Number.isFinite(bps)?bps+' bps · current on-chain oracle attestation':'Unavailable';
+    }
+    if(stateValue){
+      stateValue.className='state '+data.state;
+      stateValue.textContent=data.state==='LIVE'?'LIVE':data.state==='HALTED'?'HALTED':data.state==='CLOSE_ONLY'?'CLOSE ONLY':'UNAVAILABLE';
+      stateValue.title='Current on-chain market and oracle check';
+    }
+  }
+  async function refreshLiveMarketTruth(){
+    const detail=location.pathname.match(/^\/dashboard\/([A-Za-z0-9.-]+)\/?$/)?.[1]?.toUpperCase();
+    const api=window.__FLOATSHEETS_API_URL__;
+    if(!detail||!api)return;
+    const request=++liveTruthRequest;paintLiveMarketTruth(null);
+    try {
+      const response=await fetch(api.replace(/\/$/,'')+'/v1/markets/'+encodeURIComponent(detail)+'/live',{headers:{accept:'application/json'}});
+      if(!response.ok)throw new Error('live state unavailable');
+      const data=await response.json();
+      if(request===liveTruthRequest&&root.isConnected&&selected.symbol===detail)paintLiveMarketTruth(data);
+    } catch { if(request===liveTruthRequest&&root.isConnected)paintLiveMarketTruth({state:'UNAVAILABLE'}); }
   }
   if(window.__FLOATSHEETS_CHART_DISPOSE__)window.removeEventListener('floatsheets-dashboard-dispose',window.__FLOATSHEETS_CHART_DISPOSE__);
   window.__FLOATSHEETS_CHART_DISPOSE__=function(){
@@ -482,6 +514,7 @@
     removeSimulationControls();
     genuinePageContent();
     paintTwentyFourHourChange(null);
+    void refreshLiveMarketTruth();
     document.querySelector('.network-label .pill')?.remove();
     root.querySelectorAll('.risk-strip span').forEach(function(item){if(item.textContent?.trim().startsWith('Sources'))item.remove();});
     decorateAssets();

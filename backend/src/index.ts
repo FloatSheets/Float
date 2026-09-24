@@ -19,7 +19,9 @@ const rpc = createRpcTransport(config.RHC_RPC_URL);
 await migrate();
 const monitor = new MarketMonitor(db, rpc, config.UNISWAP_TWAP_WINDOW_SECONDS);
 const oraclePublisher = new OraclePublisher(db, rpc, config);
-app.use("/v1/markets", createMarketsRouter(db, config.ORACLE_PRICE_MAX_AGE_SECONDS));
+app.use("/v1/markets", createMarketsRouter(db, config.ORACLE_PRICE_MAX_AGE_SECONDS, {
+  rpc, clearingHouse: config.FLOAT_CLEARING_HOUSE_ADDRESS as `0x${string}`, oracle: config.FLOAT_ORACLE_ADDRESS as `0x${string}`
+}));
 app.use("/ready", createReadinessRouter(db));
 app.use("/v1/protocol", createProtocolRouter(config));
 app.use("/v1/protocol/transactions", createProtocolTransactionsRouter(config, db, rpc, oraclePublisher));
