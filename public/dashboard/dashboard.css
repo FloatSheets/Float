@@ -92,6 +92,14 @@
 .dashboard-dark .token-amount-shell{background:transparent;border-color:#2a3b5b}.dashboard-dark .token-amount-shell:focus-within{border-color:#809dff;box-shadow:0 0 0 3px #809dff22}.dashboard-dark .token-amount-value,.dashboard-dark .token-amount-value input{color:#edf3ff!important}.dashboard-dark .token-amount-value>span{color:#8493aa}.dashboard-dark .token-amount-value input::placeholder{color:#526179}.dashboard-dark .token-amount-token,.dashboard-dark .token-amount-equivalent{color:#9fb2d4}
 @media(max-width:720px){.token-amount-shell{padding:14px 12px 16px;border-radius:14px}.token-amount-value input{font-size:clamp(38px,13vw,54px)!important}.token-amount-value>span{font-size:clamp(30px,10vw,42px)}.token-amount-equivalent{font-size:13px}}
 
+/* The only inline form feedback: a live, read-only contract-risk check. */
+.trade-contract-warning{margin:-8px 0 16px;padding:10px 12px;border:1px solid #e3ae34;border-radius:8px;background:#fff8df;color:#805900;font-size:12px;line-height:1.45}
+.token-amount-shell.is-contract-invalid,.live-leverage-field.is-contract-invalid{border-color:#e3ae34!important;box-shadow:0 0 0 3px #e3ae3429}
+.live-leverage-field.is-contract-invalid input[type=range]{accent-color:#bf8212}
+.contract-shake{animation:contract-input-shake .35s ease-in-out}
+@keyframes contract-input-shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-5px)}75%{transform:translateX(5px)}}
+.dashboard-dark .trade-contract-warning{border-color:#e6ba4e;background:#3a2d12;color:#ffe5a2}.dashboard-dark .token-amount-shell.is-contract-invalid,.dashboard-dark .live-leverage-field.is-contract-invalid{border-color:#e6ba4e!important;box-shadow:0 0 0 3px #e6ba4e2b}
+
 /* Mobile navigation is one thumb-reachable workspace menu, not a bottom bar. */
 .mobile-workspace-menu,.mobile-workspace-menu-trigger{display:none}
 @media(max-width:720px){

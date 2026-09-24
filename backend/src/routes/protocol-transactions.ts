@@ -29,6 +29,7 @@ const quote = z.object({
 const traderQuoteRequest = z.object({
   market: z.string().min(1).max(16), trader: address, isLong: z.boolean(), notionalUsdg: uint
 });
+const tradeCheckRequest = traderQuoteRequest.extend({ marginUsdg: uint, targetLeverage: uint });
 const closeQuoteRequest = z.object({ market: z.string().min(1).max(16), trader: address });
 const TRADING_FEE_BPS = 6n;
 const MAX_TRADING_FEE_BPS = 100n;
@@ -271,6 +272,61 @@ export function createProtocolTransactionsRouter(
         signature,
         transaction: executeTrade(config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, value, signature)
       });
+    } catch (error) { protocolError(response, error); }
+  });
+
+  /**
+   * A read-only preflight for the trade form. Unlike quote issuance, this
+   * never refreshes the oracle, signs a quote, or spends publisher gas.
+   * The final quote repeats these checks against its exact execution price.
+   */
+  router.post("/trade-check", async (request, response) => {
+    try {
+      if (!database || !rpc) throw new Error("trade validation dependencies are unavailable");
+      const input = tradeCheckRequest.parse(request.body);
+      const reject = (reason: string, field: "margin" | "leverage" = "leverage") => response.json({ acceptable: false, reason, field });
+      const symbol = input.market.trim().toUpperCase();
+      const id = marketId(symbol);
+      const requestedNotional = bigint(input.notionalUsdg);
+      const requestedMargin = bigint(input.marginUsdg);
+      const targetLeverage = bigint(input.targetLeverage) * E18;
+      if (requestedNotional === 0n || requestedMargin === 0n) return reject("Enter a margin amount before checking your position.", "margin");
+
+      const marketResult = await database.query<{ id: string; status: "active" | "restricted" | "pilot" | "disabled"; max_ticket_usdg: string }>(
+        "SELECT id,status,max_ticket_usdg FROM public.markets WHERE symbol=$1", [symbol]
+      );
+      const marketRow = marketResult.rows[0];
+      if (!marketRow || marketRow.status !== "active") return reject("This market is not open for new positions.");
+      const onchainMarket = await readClearingMarket(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, id);
+      if (onchainMarket.state !== 1) return reject("This market is not open for new positions.");
+      if (targetLeverage === 0n || targetLeverage > onchainMarket.maxLeverageE18) return reject("Choose leverage at or below this market's maximum.");
+      if (requestedNotional > usdgUnits(marketRow.max_ticket_usdg) || requestedNotional > onchainMarket.maxPositionNotionalUsdg) return reject("Lower your leverage or margin to stay within this market's position limit.");
+
+      const [position, oraclePrice] = await Promise.all([
+        readClearingPosition(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, input.trader as Address, id),
+        readOraclePrice(rpc, config.FLOAT_ORACLE_ADDRESS as Address, id)
+      ]);
+      const fee = requestedNotional * TRADING_FEE_BPS / BPS;
+      const requiredMargin = ceilingDiv(requestedNotional * E18, onchainMarket.maxLeverageE18) + fee;
+      if (position.marginUsdg + requestedMargin < requiredMargin) return reject("Add more margin or choose lower leverage for this position.", "margin");
+      if (oraclePrice.sequence === 0n || oraclePrice.priceE18 === 0n || oraclePrice.circuitBroken) return reject("This market price is not ready for a new position. Try again shortly.");
+
+      const nextSize = position.sizeE18 + sizeForNotional(requestedNotional, oraclePrice.priceE18, input.isLong);
+      if (notionalForSize(nextSize, oraclePrice.priceE18) > onchainMarket.maxPositionNotionalUsdg) return reject("Lower your leverage or margin to stay within this market's position limit.");
+      const riskIncreasing = !(position.sizeE18 !== 0n && ((position.sizeE18 > 0n && nextSize < position.sizeE18) || (position.sizeE18 < 0n && nextSize > position.sizeE18)));
+      if (riskIncreasing) {
+        const [exposure, vaultAssets] = await Promise.all([
+          readClearingExposure(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, id),
+          readVaultAssets(rpc, config.FLOAT_VAULT_ADDRESS as Address)
+        ]);
+        const nextLong = exposure.longBaseE18 - (position.sizeE18 > 0n ? abs(position.sizeE18) : 0n) + (nextSize > 0n ? abs(nextSize) : 0n);
+        const nextShort = exposure.shortBaseE18 - (position.sizeE18 < 0n ? abs(position.sizeE18) : 0n) + (nextSize < 0n ? abs(nextSize) : 0n);
+        const openInterest = notionalForSize(nextLong, oraclePrice.priceE18) + notionalForSize(nextShort, oraclePrice.priceE18);
+        const skew = nextLong > nextShort ? notionalForSize(nextLong - nextShort, oraclePrice.priceE18) : notionalForSize(nextShort - nextLong, oraclePrice.priceE18);
+        if (openInterest > vaultAssets * BPS_MARKET_OPEN_INTEREST_CAP / BPS) return reject("Lower your leverage or margin: this market has reached its current capacity.");
+        if (skew > vaultAssets * BPS_MARKET_SKEW_CAP / BPS) return reject("Lower your leverage or margin: this side of the market has reached its current capacity.");
+      }
+      response.json({ acceptable: true });
     } catch (error) { protocolError(response, error); }
   });
 

@@ -7,7 +7,7 @@ import { replayAccount, unrealizedPnl, liquidationPrice, type AccountEvent } fro
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { getCloseTransaction, getProtocol, getTradeTransaction, getTransactionCalldata } from "./server-api";
+import { checkTrade, getCloseTransaction, getProtocol, getTradeTransaction, getTransactionCalldata } from "./server-api";
 
 const DEFAULT_USDG_ADDRESS = "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168" as const;
 const erc20Abi = parseAbi(["function allowance(address owner,address spender) view returns (uint256)", "function balanceOf(address account) view returns (uint256)"]);
@@ -84,6 +84,10 @@ export function RainbowWalletBridge() {
         const activity = action === "trade-quote" ? "trade" : action === "close-quote" ? "close" : action;
         const market = typeof payload["market"] === "string" ? payload["market"] : "";
         return { ...result, transaction: { ...(result.transaction as object), activity, market }, activity, market };
+      },
+      async checkTrade(payload: Record<string, unknown>) {
+        if (!connected || !address) throw new Error("Connect a wallet on Robinhood Chain first.");
+        return checkTrade({ data: { ...payload, trader: address } });
       },
       async send(transaction: { to: string; data: string; value?: string; chainId: number; activity?: string; market?: string }) {
         if (!connected) throw new Error("Connect a wallet on Robinhood Chain first.");

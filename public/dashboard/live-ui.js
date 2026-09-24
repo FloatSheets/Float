@@ -160,7 +160,7 @@
   function tradeTicket(){
     const wallet=walletState();
     if(!wallet?.connected) return '<div class="live-only-panel"><h2>Ready to trade?</h2><p>Connect your wallet to use USDG as margin and open a position.</p><button class="primary-btn" id="connect-to-trade">Connect wallet</button></div>';
-    return '<div class="live-only-panel live-trade-ticket"><h2>Open '+selected.symbol+' exposure</h2><div class="segmented"><button type="button" data-live-side="long" class="active">↗ Long</button><button type="button" data-live-side="short" class="short">↘ Short</button></div>'+tokenAmountInput('live-collateral','Margin to deposit')+'<div class="field"><label for="live-leverage">Target leverage <b id="live-leverage-value">1×</b></label><input id="live-leverage" type="range" min="1" max="'+selected.max+'" value="1" step="1"><div class="leverage-row"><span>1×</span><span>'+selected.max+'× maximum</span></div></div><div class="order-summary" id="live-order-summary"></div><p class="order-disclosure">You will see the final price and fee before confirming. Prices refresh quickly.</p><button class="primary-btn" id="submit-live-trade" type="button">Open long position</button></div>';
+    return '<div class="live-only-panel live-trade-ticket"><h2>Open '+selected.symbol+' exposure</h2><div class="segmented"><button type="button" data-live-side="long" class="active">↗ Long</button><button type="button" data-live-side="short" class="short">↘ Short</button></div>'+tokenAmountInput('live-collateral','Margin to deposit')+'<div class="field live-leverage-field"><label for="live-leverage">Target leverage <b id="live-leverage-value">1×</b></label><input id="live-leverage" type="range" min="1" max="'+selected.max+'" value="1" step="1"><div class="leverage-row"><span>1×</span><span>'+selected.max+'× maximum</span></div></div><p class="trade-contract-warning" id="live-contract-warning" role="alert" hidden></p><div class="order-summary" id="live-order-summary"></div><p class="order-disclosure">You will see the final price and fee before confirming. Prices refresh quickly.</p><button class="primary-btn" id="submit-live-trade" type="button">Open long position</button></div>';
   }
 
   function bindTradeTicket(){
@@ -172,6 +172,18 @@
     const leverage=ticket.querySelector('#live-leverage');
     const summary=ticket.querySelector('#live-order-summary');
     const submit=ticket.querySelector('#submit-live-trade');
+    const warning=ticket.querySelector('#live-contract-warning');
+    const leverageField=ticket.querySelector('.live-leverage-field');
+    let validationTimer=0,validationRequest=0,tradeAccepted=false;
+    const clearContractWarning=function(){
+      warning.hidden=true;warning.textContent='';ticket.querySelector('.token-amount-shell')?.classList.remove('is-contract-invalid','contract-shake');leverageField?.classList.remove('is-contract-invalid','contract-shake');
+    };
+    const showContractWarning=function(message,field){
+      clearContractWarning();warning.hidden=false;warning.textContent=message;
+      const target=field==='margin'?ticket.querySelector('.token-amount-shell'):leverageField;
+      target?.classList.add('is-contract-invalid','contract-shake');
+      setTimeout(function(){target?.classList.remove('contract-shake');},380);
+    };
     const update=function(){
       try {
         const margin=rawUsdG(collateral.value),lev=BigInt(leverage.value);
@@ -180,11 +192,32 @@
         const notional=margin*lev*10000n/(10000n+lev*6n);
         ticket.querySelector('#live-leverage-value').textContent=leverage.value+'×';
         summary.innerHTML='<div><span>Margin</span><b>'+displayUsdG(margin)+' USDG</b></div><div><span>Position size</span><b>Up to '+displayUsdG(notional)+' USDG</b></div><div><span>Trading fee</span><b>0.06%</b></div>';
-        submit.disabled=margin===0n;
+        submit.disabled=margin===0n||!tradeAccepted;
       } catch { summary.innerHTML=''; submit.disabled=true; }
     };
-    ticket.querySelectorAll('[data-live-side]').forEach(function(button){button.addEventListener('click',function(){isLong=button.dataset.liveSide==='long';ticket.querySelectorAll('[data-live-side]').forEach(function(item){item.classList.toggle('active',item===button);});submit.textContent='Open '+(isLong?'long':'short')+' position';});});
-    collateral.addEventListener('input',function(){paintTokenAmount(collateral);update();}); leverage.addEventListener('input',update); paintTokenAmount(collateral);update();
+    const checkTrade=function(){
+      clearTimeout(validationTimer);
+      tradeAccepted=false;update();clearContractWarning();
+      let margin,lev,notional;
+      try { margin=rawUsdG(collateral.value);lev=BigInt(leverage.value);notional=margin*lev*10000n/(10000n+lev*6n); } catch { return; }
+      if(margin===0n||notional===0n) return;
+      const request=++validationRequest;
+      validationTimer=setTimeout(async function(){
+        try {
+          const wallet=walletApi();if(!wallet?.checkTrade) throw new Error('Trading checks are still loading.');
+          const result=await wallet.checkTrade({market:selected.symbol,isLong:isLong,marginUsdg:margin.toString(),notionalUsdg:notional.toString(),targetLeverage:lev.toString()});
+          if(request!==validationRequest||!ticket.isConnected)return;
+          tradeAccepted=result?.acceptable===true;
+          if(!tradeAccepted) showContractWarning(typeof result?.reason==='string'?result.reason:'This position is not available right now.',result?.field==='margin'?'margin':'leverage');
+        } catch(reason) {
+          if(request!==validationRequest||!ticket.isConnected)return;
+          tradeAccepted=false;showContractWarning(reason instanceof Error?reason.message:'This position could not be checked right now.','leverage');
+        }
+        update();
+      },350);
+    };
+    ticket.querySelectorAll('[data-live-side]').forEach(function(button){button.addEventListener('click',function(){isLong=button.dataset.liveSide==='long';ticket.querySelectorAll('[data-live-side]').forEach(function(item){item.classList.toggle('active',item===button);});submit.textContent='Open '+(isLong?'long':'short')+' position';checkTrade();});});
+    collateral.addEventListener('input',function(){paintTokenAmount(collateral);checkTrade();}); leverage.addEventListener('input',checkTrade); paintTokenAmount(collateral);update();
     submit.addEventListener('click',async function(){
       let marginDeposited=false;
       let marginAlreadyHeld=false;
@@ -195,6 +228,7 @@
         const lev=BigInt(leverage.value);
         let notional=margin*lev*10000n/(10000n+lev*6n);
         if(margin===0n||notional===0n) throw new Error('Margin is too small for this leverage.');
+        if(!tradeAccepted) throw new Error('Adjust your margin or leverage until this position is available.');
         ticket.dataset.submitting='true'; submit.disabled=true;
         const existingPosition=await wallet.position(selected.symbol);
         const heldMargin=existingPosition&&BigInt(existingPosition.sizeE18)===0n?BigInt(existingPosition.marginUsdg):0n;
