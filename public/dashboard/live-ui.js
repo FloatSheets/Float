@@ -77,7 +77,7 @@
   function activityHtml(){
     const records=activities();
     if(!records.length) return '<p>No activity yet. Confirmed wallet actions will appear here.</p>';
-    return records.slice(0,20).map(function(item){const hash=item.hash?'<small><a href="https://robinhoodchain.blockscout.com/tx/'+item.hash+'" target="_blank" rel="noreferrer">View transaction ↗</a> · '+new Date(item.time).toLocaleString()+'</small>':'<small>'+new Date(item.time).toLocaleString()+'</small>';return '<div class="activity-row"><strong>'+activityCopy(item)+(item.market?' · '+item.market:'')+'</strong>'+hash+'</div>';}).join('');
+    return records.slice(0,20).map(function(item){const timestamp='<time datetime="'+item.time+'">'+new Date(item.time).toLocaleString()+'</time>',link=item.hash?'<a href="https://robinhoodchain.blockscout.com/tx/'+item.hash+'" target="_blank" rel="noreferrer">View transaction ↗</a>':'';return '<div class="activity-row"><strong>'+activityCopy(item)+(item.market?' · '+item.market:'')+'</strong><div class="activity-meta">'+link+timestamp+'</div></div>';}).join('');
   }
 
   function installSidebarToggle(){
@@ -217,8 +217,8 @@
     const balance=displayUsdG(rawUsdG(wallet.usdgBalance||'0'));
     if(details){
       const grid=root.querySelector('.metric-grid');
-      if(grid) grid.innerHTML='<div class="metric featured"><small>Wallet USDG balance</small><strong>'+balance+'</strong><div class="metric-note"><span class="asset-ref"><img src="/usdg_logo.png" alt="USDG">USDG</span> · available to use</div></div><div class="metric"><small>Margin in this market</small><strong id="wallet-market-margin">…</strong><div class="metric-note">'+details+' only</div></div><div class="metric"><small>Your position</small><strong id="wallet-market-size">…</strong><div class="metric-note">current size</div></div><div class="metric"><small>Settlement</small><strong>USDG</strong><div class="metric-note">Robinhood Chain</div></div>';
-      try { const position=await walletApi().position(details); if(request!==walletRequest||!position)return; const margin=root.querySelector('#wallet-market-margin'),size=root.querySelector('#wallet-market-size'); if(margin)margin.textContent=displayUsdG(BigInt(position.marginUsdg)); if(size)size.textContent=(Number(BigInt(position.sizeE18))/1e18).toLocaleString(undefined,{maximumFractionDigits:4}); installClosePosition(position); installMarginRecovery(position); } catch(error) { console.warn('FloatSheets position read failed',error); }
+      if(grid) grid.innerHTML='<div class="metric featured"><small>Wallet USDG balance</small><strong>'+balance+'</strong><div class="metric-note"><span class="asset-ref"><img src="/usdg_logo.png" alt="USDG">USDG</span> · available to use</div></div><div class="metric"><small>Margin in this market</small><strong id="wallet-market-margin">…</strong><div class="metric-note">'+details+' only</div></div><div class="metric"><small>Your position</small><strong id="wallet-market-size">…</strong><div class="metric-note">current size</div></div><div class="metric"><small>Unrealized PnL</small><strong id="wallet-market-pnl">…</strong><div class="metric-note">live price</div></div>';
+      try { const results=await Promise.all([walletApi().position(details),walletApi().marketPrice(details)]),position=results[0],price=results[1]; if(request!==walletRequest||!position)return; const margin=root.querySelector('#wallet-market-margin'),size=root.querySelector('#wallet-market-size'),pnl=root.querySelector('#wallet-market-pnl'); if(margin)margin.textContent=displayUsdG(BigInt(position.marginUsdg)); if(size)size.textContent=(Number(BigInt(position.sizeE18))/1e18).toLocaleString(undefined,{maximumFractionDigits:4}); if(pnl){const rawPnl=BigInt(position.sizeE18)*(BigInt(price?.priceE18||'0')-BigInt(position.entryPriceE18))/1000000000000000000000000000000n;pnl.textContent=(rawPnl>=0n?'+':'−')+displayUsdG(rawPnl>=0n?rawPnl:-rawPnl);pnl.classList.toggle('positive',rawPnl>0n);pnl.classList.toggle('negative',rawPnl<0n);} installClosePosition(position); installMarginRecovery(position); } catch(error) { console.warn('FloatSheets position read failed',error); }
     }
     if(location.hash.slice(1)==='portfolio'){
       const target=root.querySelector('#wallet-portfolio'); if(!target)return;
@@ -310,6 +310,11 @@
     const onMarketPage=Boolean(location.pathname.match(/^\/dashboard\/[A-Za-z0-9.-]+\/?$/));
     if(onMarketPage) window.__FLOATSHEETS_CHART_REFRESH_TIMER__=setInterval(function(){ drawChart(); },30_000);
   }
+  function scheduleWalletRefresh(){
+    clearInterval(window.__FLOATSHEETS_WALLET_REFRESH_TIMER__);
+    const onMarketPage=Boolean(location.pathname.match(/^\/dashboard\/[A-Za-z0-9.-]+\/?$/));
+    if(walletState()?.connected&&(onMarketPage||location.hash.slice(1)==='portfolio'||location.hash.slice(1)==='vault')) window.__FLOATSHEETS_WALLET_REFRESH_TIMER__=setInterval(function(){void renderWalletContext();void renderVaultContext();},15_000);
+  }
   drawChart = async function drawLiveChart(){
     const canvas=document.getElementById('price-chart');
     if(!canvas) return;
@@ -357,6 +362,8 @@
     originalRender();
     removeSimulationControls();
     genuinePageContent();
+    document.querySelector('.network-label .pill')?.remove();
+    root.querySelectorAll('.risk-strip span').forEach(function(item){if(item.textContent?.trim().startsWith('Sources'))item.remove();});
     decorateAssets();
     normalizeMetricNotes();
     const chartLegend=root.querySelector('.chart-legend');
@@ -369,6 +376,7 @@
     void renderWalletContext();
     void renderVaultContext();
     scheduleChartRefresh();
+    scheduleWalletRefresh();
   };
   // Discard any local design-time account state before the first live render.
   state={balance:0,positions:[],orders:[],activity:[],nominations:[],vault:0,staked:0,float:0,preferences:{notifications:true,reduced:false},name:'Trading account'};

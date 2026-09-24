@@ -12,6 +12,7 @@ const DEFAULT_USDG_ADDRESS = "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168" as con
 const erc20Abi = parseAbi(["function allowance(address owner,address spender) view returns (uint256)", "function balanceOf(address account) view returns (uint256)"]);
 const clearingAbi = parseAbi(["function getPosition(address trader,bytes32 marketId) view returns (int256 sizeE18,uint256 entryPriceE18,uint256 marginUsdg)"]);
 const clearingLiquidityAbi = parseAbi(["function availableLiquidity() view returns (uint256)"]);
+const oracleAbi = parseAbi(["function getPrice(bytes32) view returns (uint256,uint256,uint256,uint256,uint64,uint64,bool)"]);
 const vaultAbi = parseAbi([
   "function totalAssets() view returns (uint256)", "function totalShares() view returns (uint256)",
   "function balanceOf(address) view returns (uint256)"
@@ -39,7 +40,7 @@ export function RainbowProviders({ children, queryClient }: { children: ReactNod
 
 export function RainbowWalletBridge() {
   const { address, chainId, isConnected } = useAccount();
-  const [protocolAddresses, setProtocolAddresses] = useState<{ usdg: Address; vault: Address; clearingHouse: Address } | null>(null);
+  const [protocolAddresses, setProtocolAddresses] = useState<{ usdg: Address; vault: Address; clearingHouse: Address; oracle: Address } | null>(null);
   const usdgAddress = protocolAddresses?.usdg ?? DEFAULT_USDG_ADDRESS;
   const { data: usdgBalance, refetch: refetchUsdG } = useReadContract({ address: usdgAddress, abi: erc20Abi, functionName: "balanceOf", args: [address ?? "0x0000000000000000000000000000000000000000"], query: { enabled: Boolean(address) && chainId === robinhoodChain.id } });
   const publicClient = usePublicClient({ chainId: robinhoodChain.id });
@@ -52,8 +53,9 @@ export function RainbowWalletBridge() {
       const usdg = protocol.settlement_asset_address;
       const vault = protocol.vault;
       const clearingHouse = protocol.clearing_house;
-      if (typeof usdg === "string" && /^0x[0-9a-fA-F]{40}$/.test(usdg) && typeof vault === "string" && /^0x[0-9a-fA-F]{40}$/.test(vault) && typeof clearingHouse === "string" && /^0x[0-9a-fA-F]{40}$/.test(clearingHouse)) {
-        setProtocolAddresses({ usdg: usdg as Address, vault: vault as Address, clearingHouse: clearingHouse as Address });
+      const oracle = protocol.oracle;
+      if (typeof usdg === "string" && /^0x[0-9a-fA-F]{40}$/.test(usdg) && typeof vault === "string" && /^0x[0-9a-fA-F]{40}$/.test(vault) && typeof clearingHouse === "string" && /^0x[0-9a-fA-F]{40}$/.test(clearingHouse) && typeof oracle === "string" && /^0x[0-9a-fA-F]{40}$/.test(oracle)) {
+        setProtocolAddresses({ usdg: usdg as Address, vault: vault as Address, clearingHouse: clearingHouse as Address, oracle: oracle as Address });
       }
     }).catch((error) => console.warn("FloatSheets protocol address lookup failed", error));
     return () => { active = false; };
@@ -117,6 +119,13 @@ export function RainbowWalletBridge() {
         const marketId = keccak256(stringToHex(symbol.trim().toUpperCase()));
         const result = await publicClient.readContract({ address: protocolAddresses.clearingHouse, abi: clearingAbi, functionName: "getPosition", args: [address, marketId] });
         return { sizeE18: result[0].toString(), entryPriceE18: result[1].toString(), marginUsdg: result[2].toString() };
+      },
+      async marketPrice(symbol: string) {
+        if (!connected || !publicClient) return null;
+        if (!protocolAddresses) throw new Error("Trading configuration is still loading. Please try again.");
+        const marketId = keccak256(stringToHex(symbol.trim().toUpperCase()));
+        const result = await publicClient.readContract({ address: protocolAddresses.oracle, abi: oracleAbi, functionName: "getPrice", args: [marketId] });
+        return { priceE18: result[0].toString(), timestamp: result[4].toString(), circuitBroken: result[6] };
       }
     };
     window.dispatchEvent(new CustomEvent("floatsheets-wallet-state", { detail: state }));
