@@ -60,6 +60,8 @@
   const displayUsdG=function(raw){ return (Number(raw)/1e6).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); };
   const walletState=function(){ return window.__FLOATSHEETS_WALLET_STATE__; };
   const walletApi=function(){ return window.__FLOATSHEETS_WALLET__; };
+  const escapeMessage=function(value){ return String(value).replace(/[&<>"']/g,function(character){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[character]; }); };
+  const showActionModal=function(title,message){ modal(title,'<p>'+escapeMessage(message)+'</p>'); };
   const activityNotificationsEnabled=function(){ return localStorage.getItem(activityNotificationsKey)!=='off'; };
   const activities=function(){ try { const stored=JSON.parse(localStorage.getItem(activityStorageKey)||'[]'); return Array.isArray(stored)?stored:[]; } catch { return []; } };
   const saveActivities=function(items){ localStorage.setItem(activityStorageKey,JSON.stringify(items.slice(0,60))); };
@@ -102,7 +104,7 @@
   function tradeTicket(){
     const wallet=walletState();
     if(!wallet?.connected) return '<div class="live-only-panel"><h2>Ready to trade?</h2><p>Connect your wallet to use USDG as margin and open a position.</p><button class="primary-btn" id="connect-to-trade">Connect wallet</button></div>';
-    return '<div class="live-only-panel live-trade-ticket"><h2>Open '+selected.symbol+' exposure</h2><div class="segmented"><button type="button" data-live-side="long" class="active">↗ Long</button><button type="button" data-live-side="short" class="short">↘ Short</button></div><div class="field"><label for="live-collateral">Margin to deposit</label><div class="input-wrap"><input id="live-collateral" inputmode="decimal" value="10" aria-label="USDG margin"><span>USDG</span></div></div><div class="field"><label for="live-leverage">Target leverage <b id="live-leverage-value">1×</b></label><input id="live-leverage" type="range" min="1" max="'+selected.max+'" value="1" step="1"><div class="leverage-row"><span>1×</span><span>'+selected.max+'× maximum</span></div></div><div class="order-summary" id="live-order-summary"></div><p class="order-disclosure">You will see the final price and fee before confirming. Prices refresh quickly.</p><button class="primary-btn" id="submit-live-trade" type="button">Open long position</button><p class="order-error" id="live-trade-error" hidden></p></div>';
+    return '<div class="live-only-panel live-trade-ticket"><h2>Open '+selected.symbol+' exposure</h2><div class="segmented"><button type="button" data-live-side="long" class="active">↗ Long</button><button type="button" data-live-side="short" class="short">↘ Short</button></div><div class="field"><label for="live-collateral">Margin to deposit</label><div class="input-wrap"><input id="live-collateral" inputmode="decimal" value="10" aria-label="USDG margin"><span>USDG</span></div></div><div class="field"><label for="live-leverage">Target leverage <b id="live-leverage-value">1×</b></label><input id="live-leverage" type="range" min="1" max="'+selected.max+'" value="1" step="1"><div class="leverage-row"><span>1×</span><span>'+selected.max+'× maximum</span></div></div><div class="order-summary" id="live-order-summary"></div><p class="order-disclosure">You will see the final price and fee before confirming. Prices refresh quickly.</p><button class="primary-btn" id="submit-live-trade" type="button">Open long position</button></div>';
   }
 
   function bindTradeTicket(){
@@ -114,7 +116,6 @@
     const leverage=ticket.querySelector('#live-leverage');
     const summary=ticket.querySelector('#live-order-summary');
     const submit=ticket.querySelector('#submit-live-trade');
-    const error=ticket.querySelector('#live-trade-error');
     const update=function(){
       try {
         const margin=rawUsdG(collateral.value),lev=BigInt(leverage.value);
@@ -123,8 +124,8 @@
         const notional=margin*lev*10000n/(10000n+lev*6n);
         ticket.querySelector('#live-leverage-value').textContent=leverage.value+'×';
         summary.innerHTML='<div><span>Margin</span><b>'+displayUsdG(margin)+' USDG</b></div><div><span>Position size</span><b>Up to '+displayUsdG(notional)+' USDG</b></div><div><span>Trading fee</span><b>0.06%</b></div>';
-        error.hidden=true; submit.disabled=margin===0n;
-      } catch(reason) { summary.innerHTML=''; error.textContent=reason.message; error.hidden=false; submit.disabled=true; }
+        submit.disabled=margin===0n;
+      } catch { summary.innerHTML=''; submit.disabled=true; }
     };
     ticket.querySelectorAll('[data-live-side]').forEach(function(button){button.addEventListener('click',function(){isLong=button.dataset.liveSide==='long';ticket.querySelectorAll('[data-live-side]').forEach(function(item){item.classList.toggle('active',item===button);});submit.textContent='Open '+(isLong?'long':'short')+' position';});});
     collateral.addEventListener('input',update); leverage.addEventListener('input',update); update();
@@ -133,14 +134,14 @@
         const wallet=walletApi(); if(!wallet?.connected) throw new Error('Connect a Robinhood Chain wallet first.');
         const margin=rawUsdG(collateral.value),lev=BigInt(leverage.value),notional=margin*lev*10000n/(10000n+lev*6n);
         if(margin===0n||notional===0n) throw new Error('Margin is too small for this leverage.');
-        ticket.dataset.submitting='true'; submit.disabled=true; error.hidden=true;
+        ticket.dataset.submitting='true'; submit.disabled=true;
         const allowance=await wallet.allowance();
         if(allowance<margin){submit.textContent='Confirm USDG approval…';const approval=await wallet.buildTransaction('approve',{amountUsdg:margin.toString()});await wallet.send(approval.transaction);}
         submit.textContent='Confirm margin deposit…';const deposit=await wallet.buildTransaction('deposit',{market:selected.symbol,amountUsdg:margin.toString()});await wallet.send(deposit.transaction);
         submit.textContent='Requesting live quote…';const quote=await wallet.buildTransaction('trade-quote',{market:selected.symbol,isLong:isLong,notionalUsdg:notional.toString()});
         submit.textContent='Confirm trade…';const hash=await wallet.send(quote.transaction);
-        submit.textContent='Position opened'; error.textContent='Confirmed on Robinhood Chain: '+hash; error.hidden=false; delete ticket.dataset.submitting; render();
-      } catch(reason) { delete ticket.dataset.submitting; error.textContent=reason instanceof Error?reason.message:'Trade could not be submitted.'; error.hidden=false; submit.disabled=false; submit.textContent='Open '+(isLong?'long':'short')+' position'; }
+        delete ticket.dataset.submitting; render(); showActionModal('Position opened','Your '+selected.symbol+' position was confirmed on Robinhood Chain. Transaction: '+hash);
+      } catch(reason) { delete ticket.dataset.submitting; submit.disabled=false; submit.textContent='Open '+(isLong?'long':'short')+' position'; showActionModal('Could not open position',reason instanceof Error?reason.message:'Trade could not be submitted.'); }
     });
   }
 
@@ -149,17 +150,16 @@
     if(!ticket||!position||BigInt(position.sizeE18)===0n||ticket.querySelector('#close-live-position'))return;
     const button=document.createElement('button');
     button.id='close-live-position';button.type='button';button.className='secondary-btn';button.textContent='Close current position';
-    const error=ticket.querySelector('#live-trade-error');
     button.addEventListener('click',async function(){
       try{
         const wallet=walletApi();if(!wallet?.connected)throw new Error('Connect a Robinhood Chain wallet first.');
-        button.disabled=true;button.textContent='Getting closing price…';if(error)error.hidden=true;
+        button.disabled=true;button.textContent='Getting closing price…';
         const quote=await wallet.buildTransaction('close-quote',{market:selected.symbol});
         button.textContent='Confirm close…';const hash=await wallet.send(quote.transaction);
-        button.textContent='Position closed';if(error){error.textContent='Confirmed on Robinhood Chain: '+hash;error.hidden=false;}render();
-      }catch(reason){button.disabled=false;button.textContent='Close current position';if(error){error.textContent=reason instanceof Error?reason.message:'Position could not be closed.';error.hidden=false;}}
+        render();showActionModal('Position closed','Your '+selected.symbol+' position was confirmed closed on Robinhood Chain. Transaction: '+hash);
+      }catch(reason){button.disabled=false;button.textContent='Close current position';showActionModal('Could not close position',reason instanceof Error?reason.message:'Position could not be closed.');}
     });
-    ticket.insertBefore(button,error||null);
+    ticket.append(button);
   }
 
   let walletRequest = 0;
@@ -176,7 +176,7 @@
     if(location.hash.slice(1)==='portfolio'){
       const target=root.querySelector('#wallet-portfolio'); if(!target)return;
       target.innerHTML='<p>Loading your positions.</p>';
-      try { const positions=(await Promise.all(markets.map(async function(m){return {market:m,position:await walletApi().position(m.symbol)};}))).filter(function(item){return item.position&&BigInt(item.position.sizeE18)!==0n;}); if(request!==walletRequest)return; target.innerHTML='<div class="metric-grid"><div class="metric featured"><small>Wallet USDG balance</small><strong>'+balance+'</strong><div class="metric-note"><span class="asset-ref"><img src="/usdg_logo.png" alt="USDG">USDG</span> · wallet balance</div></div><div class="metric"><small>Open on-chain positions</small><strong>'+positions.length+'</strong><div class="metric-note">across configured markets</div></div></div>'+(positions.length?'<div class="table-scroll"><table><thead><tr><th>Market</th><th>Direction</th><th>Base size</th><th>Entry price</th><th>Margin</th></tr></thead><tbody>'+positions.map(function(item){const p=item.position;return '<tr><td>'+item.market.symbol+'</td><td class="'+(BigInt(p.sizeE18)>0n?'positive':'negative')+'">'+(BigInt(p.sizeE18)>0n?'Long':'Short')+'</td><td>'+Math.abs(Number(BigInt(p.sizeE18))/1e18).toLocaleString(undefined,{maximumFractionDigits:4})+'</td><td>$'+(Number(BigInt(p.entryPriceE18))/1e18).toLocaleString(undefined,{maximumFractionDigits:4})+'</td><td>'+displayUsdG(BigInt(p.marginUsdg))+' USDG</td></tr>';}).join('')+'</tbody></table></div>':'<div class="empty-state"><h3>No on-chain positions</h3><p>Your connected wallet has no open FloatSheets positions in configured markets.</p></div>'); } catch(error) { target.innerHTML='<p class="order-error">Unable to read on-chain positions. '+(error instanceof Error?error.message:'')+'</p>'; }
+      try { const positions=(await Promise.all(markets.map(async function(m){return {market:m,position:await walletApi().position(m.symbol)};}))).filter(function(item){return item.position&&BigInt(item.position.sizeE18)!==0n;}); if(request!==walletRequest)return; target.innerHTML='<div class="metric-grid"><div class="metric featured"><small>Wallet USDG balance</small><strong>'+balance+'</strong><div class="metric-note"><span class="asset-ref"><img src="/usdg_logo.png" alt="USDG">USDG</span> · wallet balance</div></div><div class="metric"><small>Open on-chain positions</small><strong>'+positions.length+'</strong><div class="metric-note">across configured markets</div></div></div>'+(positions.length?'<div class="table-scroll"><table><thead><tr><th>Market</th><th>Direction</th><th>Base size</th><th>Entry price</th><th>Margin</th></tr></thead><tbody>'+positions.map(function(item){const p=item.position;return '<tr><td>'+item.market.symbol+'</td><td class="'+(BigInt(p.sizeE18)>0n?'positive':'negative')+'">'+(BigInt(p.sizeE18)>0n?'Long':'Short')+'</td><td>'+Math.abs(Number(BigInt(p.sizeE18))/1e18).toLocaleString(undefined,{maximumFractionDigits:4})+'</td><td>$'+(Number(BigInt(p.entryPriceE18))/1e18).toLocaleString(undefined,{maximumFractionDigits:4})+'</td><td>'+displayUsdG(BigInt(p.marginUsdg))+' USDG</td></tr>';}).join('')+'</tbody></table></div>':'<div class="empty-state"><h3>No on-chain positions</h3><p>Your connected wallet has no open FloatSheets positions in configured markets.</p></div>'); } catch(error) { target.innerHTML=''; showActionModal('Portfolio unavailable',error instanceof Error?error.message:'Your positions could not be loaded.'); }
     }
   }
 
@@ -195,11 +195,11 @@
       const assets=BigInt(vault.assets),shares=BigInt(vault.shares),totalShares=BigInt(vault.totalShares),available=BigInt(vault.availableLiquidity);
       const ownership=totalShares===0n?'0.00':(Number(shares)*100/Number(totalShares)).toFixed(2);
       const shareValue=shares*(assets+1n)/(totalShares+1000000n);
-      target.innerHTML='<div class="metric-grid"><div class="metric featured"><small>Vault assets</small><strong>'+displayUsdG(assets)+'</strong><div class="metric-note"><span class="asset-ref"><img src="/usdg_logo.png" alt="USDG">USDG</span> · shared liquidity</div></div><div class="metric"><small>Your vault value</small><strong>'+displayUsdG(shareValue)+'</strong><div class="metric-note"><span class="asset-ref"><img src="/usdg_logo.png" alt="USDG">USDG</span> · '+ownership+'% of vault</div></div><div class="metric"><small>Available liquidity</small><strong>'+displayUsdG(available)+'</strong><div class="metric-note">USDG available for markets</div></div></div><div class="field"><label for="live-vault-deposit">USDG to deposit</label><div class="input-wrap"><input id="live-vault-deposit" inputmode="decimal" value="10" aria-label="USDG to deposit"><span>USDG</span></div></div><button class="primary-btn" id="submit-vault-deposit" type="button">Add liquidity</button>'+(shares>0n?'<button class="secondary-btn" id="submit-vault-withdraw" type="button">Withdraw all liquidity</button>':'')+'<p class="order-error" id="live-vault-error" hidden></p>';
-      const input=target.querySelector('#live-vault-deposit'),deposit=target.querySelector('#submit-vault-deposit'),withdraw=target.querySelector('#submit-vault-withdraw'),error=target.querySelector('#live-vault-error');
-      deposit?.addEventListener('click',async function(){try{const amount=rawUsdG(input.value);if(amount===0n)throw new Error('Enter a USDG amount greater than zero.');deposit.disabled=true;error.hidden=true;const allowance=await wallet.vaultAllowance();if(allowance<amount){deposit.textContent='Confirm USDG approval…';const approval=await wallet.buildTransaction('vault-approve',{amountUsdg:amount.toString()});await wallet.send(approval.transaction);}deposit.textContent='Confirm deposit…';const tx=await wallet.buildTransaction('vault-deposit',{amountUsdg:amount.toString()});await wallet.send(tx.transaction);render();}catch(reason){deposit.disabled=false;deposit.textContent='Add liquidity';error.textContent=reason instanceof Error?reason.message:'Liquidity could not be added.';error.hidden=false;}});
-      withdraw?.addEventListener('click',async function(){try{withdraw.disabled=true;error.hidden=true;withdraw.textContent='Confirm withdrawal…';const tx=await wallet.buildTransaction('vault-withdraw',{shares:shares.toString()});await wallet.send(tx.transaction);render();}catch(reason){withdraw.disabled=false;withdraw.textContent='Withdraw all liquidity';error.textContent=reason instanceof Error?reason.message:'Liquidity could not be withdrawn.';error.hidden=false;}});
-    } catch(error) { target.innerHTML='<p class="order-error">Unable to read the vault. '+(error instanceof Error?error.message:'')+'</p>'; }
+      target.innerHTML='<div class="metric-grid"><div class="metric featured"><small>Vault assets</small><strong>'+displayUsdG(assets)+'</strong><div class="metric-note"><span class="asset-ref"><img src="/usdg_logo.png" alt="USDG">USDG</span> · shared liquidity</div></div><div class="metric"><small>Your vault value</small><strong>'+displayUsdG(shareValue)+'</strong><div class="metric-note"><span class="asset-ref"><img src="/usdg_logo.png" alt="USDG">USDG</span> · '+ownership+'% of vault</div></div><div class="metric"><small>Available liquidity</small><strong>'+displayUsdG(available)+'</strong><div class="metric-note">USDG available for markets</div></div></div><div class="field"><label for="live-vault-deposit">USDG to deposit</label><div class="input-wrap"><input id="live-vault-deposit" inputmode="decimal" value="10" aria-label="USDG to deposit"><span>USDG</span></div></div><button class="primary-btn" id="submit-vault-deposit" type="button">Add liquidity</button>'+(shares>0n?'<button class="secondary-btn" id="submit-vault-withdraw" type="button">Withdraw all liquidity</button>':'');
+      const input=target.querySelector('#live-vault-deposit'),deposit=target.querySelector('#submit-vault-deposit'),withdraw=target.querySelector('#submit-vault-withdraw');
+      deposit?.addEventListener('click',async function(){try{const amount=rawUsdG(input.value);if(amount===0n)throw new Error('Enter a USDG amount greater than zero.');deposit.disabled=true;const allowance=await wallet.vaultAllowance();if(allowance<amount){deposit.textContent='Confirm USDG approval…';const approval=await wallet.buildTransaction('vault-approve',{amountUsdg:amount.toString()});await wallet.send(approval.transaction);}deposit.textContent='Confirm deposit…';const tx=await wallet.buildTransaction('vault-deposit',{amountUsdg:amount.toString()});const hash=await wallet.send(tx.transaction);render();showActionModal('Liquidity added','Your USDG was added to the vault on Robinhood Chain. Transaction: '+hash);}catch(reason){deposit.disabled=false;deposit.textContent='Add liquidity';showActionModal('Could not add liquidity',reason instanceof Error?reason.message:'Liquidity could not be added.');}});
+      withdraw?.addEventListener('click',async function(){try{withdraw.disabled=true;withdraw.textContent='Confirm withdrawal…';const tx=await wallet.buildTransaction('vault-withdraw',{shares:shares.toString()});const hash=await wallet.send(tx.transaction);render();showActionModal('Liquidity withdrawn','Your vault withdrawal was confirmed on Robinhood Chain. Transaction: '+hash);}catch(reason){withdraw.disabled=false;withdraw.textContent='Withdraw all liquidity';showActionModal('Could not withdraw liquidity',reason instanceof Error?reason.message:'Liquidity could not be withdrawn.');}});
+    } catch(error) { target.innerHTML=''; showActionModal('Vault unavailable',error instanceof Error?error.message:'Vault data could not be loaded.'); }
   }
 
   function removeSimulationControls(){
