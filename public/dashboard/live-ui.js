@@ -225,6 +225,16 @@
       target.innerHTML='<p>Loading your positions.</p>';
       try { const positions=(await Promise.all(markets.map(async function(m){return {market:m,position:await walletApi().position(m.symbol)};}))).filter(function(item){return item.position&&BigInt(item.position.sizeE18)!==0n;}); if(request!==walletRequest)return; target.innerHTML='<div class="metric-grid"><div class="metric featured"><small>Wallet USDG balance</small><strong>'+balance+'</strong><div class="metric-note"><span class="asset-ref"><img src="/usdg_logo.png" alt="USDG">USDG</span> · wallet balance</div></div><div class="metric"><small>Open on-chain positions</small><strong>'+positions.length+'</strong><div class="metric-note">across configured markets</div></div></div>'+(positions.length?'<div class="table-scroll"><table><thead><tr><th>Market</th><th>Direction</th><th>Base size</th><th>Entry price</th><th>Margin</th></tr></thead><tbody>'+positions.map(function(item){const p=item.position;return '<tr><td>'+item.market.symbol+'</td><td class="'+(BigInt(p.sizeE18)>0n?'positive':'negative')+'">'+(BigInt(p.sizeE18)>0n?'Long':'Short')+'</td><td>'+Math.abs(Number(BigInt(p.sizeE18))/1e18).toLocaleString(undefined,{maximumFractionDigits:4})+'</td><td>$'+(Number(BigInt(p.entryPriceE18))/1e18).toLocaleString(undefined,{maximumFractionDigits:4})+'</td><td>'+displayUsdG(BigInt(p.marginUsdg))+' USDG</td></tr>';}).join('')+'</tbody></table></div>':'<div class="empty-state"><h3>No on-chain positions</h3><p>Your connected wallet has no open FloatSheets positions in configured markets.</p></div>'); } catch(error) { target.innerHTML=''; showActionModal('Portfolio unavailable',error instanceof Error?error.message:'Your positions could not be loaded.'); }
     }
+    const tradePositionsTarget=root.querySelector('#wallet-trade-positions');
+    if(details&&tradePositionsTarget){
+      tradePositionsTarget.innerHTML='<div class="panel-head"><h2>Open position</h2></div><div class="panel-body"><p>Loading your '+details+' position.</p></div>';
+      try {
+        const position=await walletApi().position(details);
+        if(request!==walletRequest||!position)return;
+        const size=BigInt(position.sizeE18),margin=BigInt(position.marginUsdg);
+        tradePositionsTarget.innerHTML='<div class="panel-head"><h2>Open position</h2></div>'+(size!==0n?'<div class="table-scroll"><table><thead><tr><th>Market</th><th>Direction</th><th>Base size</th><th>Entry price</th><th>Margin</th></tr></thead><tbody><tr><td>'+details+'</td><td class="'+(size>0n?'positive':'negative')+'">'+(size>0n?'Long':'Short')+'</td><td>'+Math.abs(Number(size)/1e18).toLocaleString(undefined,{maximumFractionDigits:4})+'</td><td>$'+(Number(BigInt(position.entryPriceE18))/1e18).toLocaleString(undefined,{maximumFractionDigits:4})+'</td><td>'+displayUsdG(margin)+' USDG</td></tr></tbody></table></div>':'<div class="empty-state"><h3>No open '+details+' position</h3><p>Open a position to see it here.</p></div>');
+      } catch(error) { tradePositionsTarget.innerHTML=''; console.warn('FloatSheets trade position read failed',error); }
+    }
   }
 
   function vaultPanel(){
@@ -273,6 +283,7 @@
       selected=markets.find(function(m){return m.symbol===detailSymbol})||selected;
       const back=document.createElement('a'); back.className='market-back'; back.href='/dashboard/'; back.textContent='← All markets'; root.prepend(back);
       root.querySelector('.markets-panel')?.remove();
+      Array.from(root.querySelectorAll('.markets-panel')).find(function(panel){return panel.querySelector('h2')?.textContent?.trim().startsWith('Open positions');})?.setAttribute('id','wallet-trade-positions');
     }
     if(view==='portfolio') root.innerHTML='<div class="page-heading"><div><h1>Portfolio.</h1><p>Your positions and available USDG.</p></div></div><section class="panel live-only-panel"><h2>'+ (walletState()?.connected?'Your portfolio':'Connect your wallet') +'</h2><div id="wallet-portfolio"><p>'+ (walletState()?.connected?'Loading your positions.':'Connect on Robinhood Chain to see your USDG and positions.') +'</p></div></section>';
     if(view==='oracle') root.innerHTML='<div class="page-heading"><div><h1>Prices &amp; risk.</h1><p>See current prices and whether each market is open for trading.</p></div></div><section class="panel markets-panel"><div class="panel-head"><h2>Market status</h2><span class="pill">LIVE DATA</span></div><div class="table-scroll"><table><thead><tr><th>Market</th><th>Price</th><th>Price range</th><th>Leverage</th><th>Status</th></tr></thead><tbody>'+markets.map(function(m){return '<tr><td>'+m.symbol+'</td><td>$'+money(m.price)+'</td><td>±'+money(m.band*100)+'%</td><td>'+m.max+'×</td><td>'+stateBadge(m.state)+'</td></tr>';}).join('')+'</tbody></table></div></section>';
@@ -370,6 +381,6 @@
   window.__FLOATSHEETS_DASHBOARD_WALLET_LISTENER__=function(){if(!root.querySelector('.live-trade-ticket[data-submitting="true"]'))render();};
   window.addEventListener('floatsheets-wallet-state',window.__FLOATSHEETS_DASHBOARD_WALLET_LISTENER__);
   if(window.__FLOATSHEETS_TRANSACTION_LISTENER__) window.removeEventListener('floatsheets-transaction-confirmed',window.__FLOATSHEETS_TRANSACTION_LISTENER__);
-  window.__FLOATSHEETS_TRANSACTION_LISTENER__=function(event){const detail=event.detail||{};if(detail.action&&detail.action!=='trade-quote')recordActivity(detail.action,detail);};
+  window.__FLOATSHEETS_TRANSACTION_LISTENER__=function(event){const detail=event.detail||{};if(detail.action&&detail.action!=='trade-quote')recordActivity(detail.action,detail);setTimeout(function(){if(!root.querySelector('.live-trade-ticket[data-submitting="true"]'))render();},0);};
   window.addEventListener('floatsheets-transaction-confirmed',window.__FLOATSHEETS_TRANSACTION_LISTENER__);
 })();
