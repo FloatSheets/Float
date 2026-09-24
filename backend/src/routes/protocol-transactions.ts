@@ -15,6 +15,7 @@ import { signPriceAttestation, signTradeQuote } from "../signing/signer";
 import type { PriceAttestation, TradeQuote } from "../signing/types";
 import type { RpcTransport } from "../chain/rpc";
 import { readClearingMarket, readClearingPosition, readOraclePrice } from "../chain/protocol-read";
+import type { OraclePublisher } from "../oracle/publisher";
 
 const address = z.string().regex(/^0x[0-9a-fA-F]{40}$/);
 const uint = z.string().regex(/^\d+$/);
@@ -78,7 +79,12 @@ function protocolError(response: Response, error: unknown): void {
   response.status(400).json({ error: error instanceof Error ? error.message : "invalid request" });
 }
 
-export function createProtocolTransactionsRouter(config: AppConfig, database?: Pool, rpc?: RpcTransport): Router {
+export function createProtocolTransactionsRouter(
+  config: AppConfig,
+  database?: Pool,
+  rpc?: RpcTransport,
+  oraclePublisher?: Pick<OraclePublisher, "ensureFreshMarket">
+): Router {
   const router = Router();
   const masterAdmin = requireMasterAdmin(config);
 
@@ -120,6 +126,8 @@ export function createProtocolTransactionsRouter(config: AppConfig, database?: P
       if (quoteRows.rows[0]?.count !== "10" || (quoteRows.rows[0].max_degradation ?? Infinity) > marketRow.max_half_spread_bps) throw new Error("market quote quality is outside its configured band");
       const onchainMarket = await readClearingMarket(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, expectedMarketId);
       if (onchainMarket.state !== 1) throw new Error("on-chain market is not active");
+      if (!oraclePublisher) throw new Error("oracle publisher is unavailable");
+      await oraclePublisher.ensureFreshMarket(symbol);
       const oraclePrice = await readOraclePrice(rpc, config.FLOAT_ORACLE_ADDRESS as Address, expectedMarketId);
       const now = BigInt(Math.floor(Date.now() / 1000));
       const expiry = bigint(input.expiry as string);
@@ -177,6 +185,8 @@ export function createProtocolTransactionsRouter(config: AppConfig, database?: P
       const onchainMarket = await readClearingMarket(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, id);
       if (onchainMarket.state !== 1) throw new Error("on-chain market is not active");
       if (requestedNotional > onchainMarket.maxPositionNotionalUsdg) throw new Error("quote notional exceeds on-chain market limit");
+      if (!oraclePublisher) throw new Error("oracle publisher is unavailable");
+      await oraclePublisher.ensureFreshMarket(symbol);
       const oraclePrice = await readOraclePrice(rpc, config.FLOAT_ORACLE_ADDRESS as Address, id);
       const now = BigInt(Math.floor(Date.now() / 1_000));
       if (oraclePrice.sequence === 0n || now > oraclePrice.timestamp + BigInt(config.ORACLE_PRICE_MAX_AGE_SECONDS)) throw new Error("on-chain oracle price is stale");
@@ -237,6 +247,8 @@ export function createProtocolTransactionsRouter(config: AppConfig, database?: P
       if (!marketRow.observed_at || (Date.now() - marketRow.observed_at.getTime()) / 1_000 > config.ORACLE_PRICE_MAX_AGE_SECONDS) throw new Error("market snapshot is stale");
       const onchainMarket = await readClearingMarket(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, id);
       if (onchainMarket.state === 0) throw new Error("on-chain market is unavailable");
+      if (!oraclePublisher) throw new Error("oracle publisher is unavailable");
+      await oraclePublisher.ensureFreshMarket(symbol);
       const oraclePrice = await readOraclePrice(rpc, config.FLOAT_ORACLE_ADDRESS as Address, id);
       const now = BigInt(Math.floor(Date.now() / 1_000));
       if (oraclePrice.sequence === 0n || now > oraclePrice.timestamp + BigInt(config.ORACLE_PRICE_MAX_AGE_SECONDS)) throw new Error("on-chain oracle price is stale");

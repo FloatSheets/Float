@@ -148,9 +148,11 @@ test("builds a trader quote and execution transaction without exposing the quote
         : encodeFunctionResult({ abi: clearingAbi, functionName: "markets", result: [1, 5_000000000000000000n, 1_000n, 100n, 50n, 50_000_000000n] });
     }
   };
+  const refreshedMarkets: string[] = [];
+  const oraclePublisher = { ensureFreshMarket: async (symbol: string) => { refreshedMarkets.push(symbol); } };
   const quoteApp = express();
   quoteApp.use(express.json());
-  quoteApp.use("/v1/protocol/transactions", createProtocolTransactionsRouter(config, database, rpc));
+  quoteApp.use("/v1/protocol/transactions", createProtocolTransactionsRouter(config, database, rpc, oraclePublisher));
   const quoteServer = await listening(quoteApp);
   try {
     const response = await request(quoteServer).post("/v1/protocol/transactions/trade-quote").send({
@@ -164,6 +166,7 @@ test("builds a trader quote and execution transaction without exposing the quote
     expect(response.body.quote.feeUsdg).toBe("600000");
     expect(response.body.signature).toMatch(/^0x[0-9a-f]{130}$/);
     expect(response.body.transaction.to).toBe(config.FLOAT_CLEARING_HOUSE_ADDRESS);
+    expect(refreshedMarkets).toEqual(["HIMS"]);
 
     const closeResponse = await request(quoteServer).post("/v1/protocol/transactions/close-quote").send({
       market: "HIMS", trader: "0x1111111111111111111111111111111111111111"
@@ -171,6 +174,7 @@ test("builds a trader quote and execution transaction without exposing the quote
     expect(closeResponse.status).toBe(200);
     expect(closeResponse.body.quote.sizeDeltaE18).toBe("-10000000000000000000");
     expect(closeResponse.body.transaction.to).toBe(config.FLOAT_CLEARING_HOUSE_ADDRESS);
+    expect(refreshedMarkets).toEqual(["HIMS", "HIMS"]);
   } finally {
     await new Promise<void>((resolve, reject) => quoteServer.close((error) => error ? reject(error) : resolve()));
   }

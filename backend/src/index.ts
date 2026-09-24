@@ -17,13 +17,12 @@ const port = Number(process.env.PORT ?? 3001);
 const rpc = createRpcTransport(config.RHC_RPC_URL);
 
 await migrate();
+const monitor = new MarketMonitor(db, rpc, config.UNISWAP_TWAP_WINDOW_SECONDS);
+const oraclePublisher = new OraclePublisher(db, rpc, config);
 app.use("/v1/markets", createMarketsRouter(db, config.ORACLE_PRICE_MAX_AGE_SECONDS));
 app.use("/ready", createReadinessRouter(db));
 app.use("/v1/protocol", createProtocolRouter(config));
-app.use("/v1/protocol/transactions", createProtocolTransactionsRouter(config, db, rpc));
-
-const monitor = new MarketMonitor(db, rpc, config.UNISWAP_TWAP_WINDOW_SECONDS);
-const oraclePublisher = new OraclePublisher(db, rpc, config);
+app.use("/v1/protocol/transactions", createProtocolTransactionsRouter(config, db, rpc, oraclePublisher));
 let lastOraclePublishAt = 0;
 
 async function refreshMarkets(): Promise<void> {

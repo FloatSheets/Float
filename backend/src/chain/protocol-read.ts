@@ -5,6 +5,7 @@ import type { RpcTransport } from "./rpc";
 const oracleAbi = parseAbi(["function getPrice(bytes32) view returns (uint256,uint256,uint256,uint256,uint64,uint64,bool)"]);
 const clearingAbi = parseAbi([
   "function markets(bytes32) view returns (uint8,uint64,uint64,uint64,uint64,uint128)",
+  "function marketExposure(bytes32) view returns (uint256 longBaseE18,uint256 shortBaseE18)",
   "function getPosition(address,bytes32) view returns (int256,uint256,uint256)"
 ]);
 
@@ -13,6 +14,7 @@ export type OraclePrice = {
   timestamp: bigint; sequence: bigint; circuitBroken: boolean;
 };
 export type ClearingPosition = { sizeE18: bigint; entryPriceE18: bigint; marginUsdg: bigint };
+export type ClearingExposure = { longBaseE18: bigint; shortBaseE18: bigint };
 export type ClearingMarket = {
   state: number; maxLeverageE18: bigint; maintenanceMarginBps: bigint; maxExecutionDeviationBps: bigint;
   maxOracleConfidenceBps: bigint; maxPositionNotionalUsdg: bigint;
@@ -30,6 +32,13 @@ export async function readClearingPosition(rpc: RpcTransport, clearingHouse: Add
   const result = await rpc.call({ to: clearingHouse, data });
   const [sizeE18, entryPriceE18, marginUsdg] = decodeFunctionResult({ abi: clearingAbi, functionName: "getPosition", data: result });
   return { sizeE18, entryPriceE18, marginUsdg };
+}
+
+export async function readClearingExposure(rpc: RpcTransport, clearingHouse: Address, id: Hex): Promise<ClearingExposure> {
+  const data = encodeFunctionData({ abi: clearingAbi, functionName: "marketExposure", args: [id] });
+  const result = await rpc.call({ to: clearingHouse, data });
+  const [longBaseE18, shortBaseE18] = decodeFunctionResult({ abi: clearingAbi, functionName: "marketExposure", data: result });
+  return { longBaseE18, shortBaseE18 };
 }
 
 export async function readClearingMarket(rpc: RpcTransport, clearingHouse: Address, id: Hex): Promise<ClearingMarket> {
