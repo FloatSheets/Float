@@ -78,3 +78,16 @@
 .dashboard-dark .candle-change.is-up{color:#25d88c}.dashboard-dark .candle-change.is-down{color:#ff7965}
 .dashboard-dark .candle-risk{color:#ff9c95}
 @media(max-width:600px){.chart-wrap.candlestick-chart{margin:8px}.candlestick-chart canvas{height:270px}.candle-ohlc{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 8px}.candle-ohlc span{overflow-wrap:anywhere}.chart-toolbar{flex-wrap:wrap;gap:8px}.candlestick-chart .candle-header{min-height:132px}}
+
+/* USDG amount entry: a large, calm number with the settlement token in view. */
+.token-amount-field{margin:0 0 22px}.token-amount-field>label{display:block;margin-bottom:10px}
+.token-amount-shell{position:relative;overflow:hidden;border:1px solid #d9e2ef;border-radius:16px;background:#fff;padding:15px 16px 17px;transition:border-color .18s ease,box-shadow .18s ease}
+.token-amount-shell:focus-within{border-color:#153c92;box-shadow:0 0 0 3px #153c9217}
+.token-amount-token{display:inline-flex;align-items:center;gap:6px;color:#667c9e;font-size:12px;font-weight:600;letter-spacing:.02em}
+.token-amount-token img{width:18px;height:18px;border-radius:50%;object-fit:contain}
+.token-amount-value{display:flex;align-items:baseline;justify-content:center;min-width:0;margin:9px 0 4px;color:#17253b;font-variant-numeric:tabular-nums}
+.token-amount-value>span{flex:0 0 auto;color:#9ca7b7;font-size:clamp(32px,3.8vw,48px);font-weight:500;line-height:1}
+.token-amount-value input{min-width:0;width:100%;border:0!important;outline:0!important;box-shadow:none!important;background:transparent!important;padding:0!important;color:#17253b!important;text-align:center;font:inherit!important;font-size:clamp(40px,5vw,62px)!important;font-weight:550!important;letter-spacing:-.065em;line-height:1.02!important;font-variant-numeric:tabular-nums}
+.token-amount-value input::placeholder{color:#c5ccd6;opacity:1}.token-amount-equivalent{min-height:18px;color:#8d98a7;text-align:center;font-size:14px;font-weight:500;font-variant-numeric:tabular-nums}
+.dashboard-dark .token-amount-shell{background:transparent;border-color:#2a3b5b}.dashboard-dark .token-amount-shell:focus-within{border-color:#809dff;box-shadow:0 0 0 3px #809dff22}.dashboard-dark .token-amount-value,.dashboard-dark .token-amount-value input{color:#edf3ff!important}.dashboard-dark .token-amount-value>span{color:#8493aa}.dashboard-dark .token-amount-value input::placeholder{color:#526179}.dashboard-dark .token-amount-token,.dashboard-dark .token-amount-equivalent{color:#9fb2d4}
+@media(max-width:720px){.token-amount-shell{padding:14px 12px 16px;border-radius:14px}.token-amount-value input{font-size:clamp(38px,13vw,54px)!important}.token-amount-value>span{font-size:clamp(30px,10vw,42px)}.token-amount-equivalent{font-size:13px}}
