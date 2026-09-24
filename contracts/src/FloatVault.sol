@@ -20,19 +20,23 @@ contract FloatVault {
     error InsufficientShares();
     error TransferFailed();
     error InsufficientAvailableLiquidity();
-    error VaultInsolvent();
+    error ClearingHouseAlreadySet();
     error Reentrant();
 
     IERC20 public immutable asset;
     address public owner;
     address public clearingHouse;
     uint256 public totalShares;
+    uint256 public constant VIRTUAL_ASSETS = 1;
+    uint256 public constant VIRTUAL_SHARES = 1e6;
     uint256 private entered;
     mapping(address => uint256) public balanceOf;
 
     event Deposit(address indexed caller, address indexed receiver, uint256 assets, uint256 shares);
     event Withdraw(address indexed caller, address indexed receiver, uint256 assets, uint256 shares);
     event ClearingHouseUpdated(address indexed clearingHouse);
+    event Payout(address indexed receiver, uint256 assets);
+    event Collection(address indexed payer, uint256 assets);
 
     constructor(address initialOwner, address settlementAsset) {
         if (initialOwner == address(0) || settlementAsset == address(0)) revert ZeroAddress();
@@ -61,15 +65,19 @@ contract FloatVault {
 
     function setClearingHouse(address newClearingHouse) external onlyOwner {
         if (newClearingHouse == address(0)) revert ZeroAddress();
+        if (clearingHouse != address(0)) revert ClearingHouseAlreadySet();
         clearingHouse = newClearingHouse;
         emit ClearingHouseUpdated(newClearingHouse);
     }
 
     function deposit(uint256 assets, address receiver) external nonReentrant returns (uint256 shares) {
+        if (receiver == address(0)) revert ZeroAddress();
         if (assets == 0) revert ZeroAmount();
         uint256 assetsBefore = totalAssets();
-        if (totalShares != 0 && assetsBefore == 0) revert VaultInsolvent();
-        shares = totalShares == 0 ? assets : assets * totalShares / assetsBefore;
+        // Virtual liquidity prevents a first depositor from manipulating the
+        // share price with a direct token donation. It also permits orderly
+        // recapitalization if real assets are ever exhausted.
+        shares = assets * (totalShares + VIRTUAL_SHARES) / (assetsBefore + VIRTUAL_ASSETS);
         if (shares == 0) revert ZeroAmount();
         totalShares += shares;
         balanceOf[receiver] += shares;
@@ -78,9 +86,10 @@ contract FloatVault {
     }
 
     function withdraw(uint256 shares, address receiver) external nonReentrant returns (uint256 assets) {
+        if (receiver == address(0)) revert ZeroAddress();
         if (shares == 0) revert ZeroAmount();
         if (balanceOf[msg.sender] < shares) revert InsufficientShares();
-        assets = shares * totalAssets() / totalShares;
+        assets = shares * (totalAssets() + VIRTUAL_ASSETS) / (totalShares + VIRTUAL_SHARES);
         if (clearingHouse == address(0) || assets > IFloatClearingLiquidity(clearingHouse).availableLiquidity()) {
             revert InsufficientAvailableLiquidity();
         }
@@ -91,11 +100,17 @@ contract FloatVault {
     }
 
     function payout(address receiver, uint256 assets) external nonReentrant onlyClearingHouse {
-        if (assets != 0) _safeTransfer(receiver, assets);
+        if (assets != 0) {
+            _safeTransfer(receiver, assets);
+            emit Payout(receiver, assets);
+        }
     }
 
     function collect(uint256 assets) external nonReentrant onlyClearingHouse {
-        if (assets != 0) _safeTransferFrom(msg.sender, address(this), assets);
+        if (assets != 0) {
+            _safeTransferFrom(msg.sender, address(this), assets);
+            emit Collection(msg.sender, assets);
+        }
     }
 
     function _safeTransfer(address to, uint256 amount) private {

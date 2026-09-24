@@ -27,6 +27,23 @@ contract FloatOracleTest {
         FloatOracle.Price memory price = oracle.getPrice(MARKET);
         require(price.priceE18 == a.priceE18, "price");
         require(price.sequence == 1, "sequence");
+        require(!price.circuitBroken, "breaker");
+    }
+
+    function testRecordsSpotTwapCircuitBreaker() public {
+        FloatOracle.PriceAttestation memory a = _attestation(1, uint64(block.timestamp + 60));
+        a.spotPriceE18 = 230e18;
+        oracle.publish(a, _signature(a));
+        FloatOracle.Price memory price = oracle.getPrice(MARKET);
+        require(price.circuitBroken, "breaker not set");
+        require(price.spotTwapDeviationBps > 50, "deviation");
+    }
+
+    function testRejectsZeroSpotPrice() public {
+        FloatOracle.PriceAttestation memory a = _attestation(1, uint64(block.timestamp + 60));
+        a.spotPriceE18 = 0;
+        vm.expectRevert(FloatOracle.InvalidPrice.selector);
+        oracle.publish(a, _signature(a));
     }
 
     function testRejectsReplay() public {
@@ -60,7 +77,7 @@ contract FloatOracleTest {
     }
 
     function _attestation(uint64 sequence, uint64 expiry) private view returns (FloatOracle.PriceAttestation memory) {
-        return FloatOracle.PriceAttestation(MARKET, 228e18, 50, uint64(block.timestamp), sequence, expiry);
+        return FloatOracle.PriceAttestation(MARKET, 228e18, 228e18, 50, uint64(block.timestamp), sequence, expiry);
     }
 
     function _signature(FloatOracle.PriceAttestation memory a) private returns (bytes memory) {
@@ -81,10 +98,11 @@ contract FloatOracleTest {
         bytes32 structHash = keccak256(
             abi.encode(
                 keccak256(
-                    "PriceAttestation(bytes32 marketId,uint256 priceE18,uint256 confidenceBps,uint64 timestamp,uint64 sequence,uint64 expiry)"
+                    "PriceAttestation(bytes32 marketId,uint256 priceE18,uint256 spotPriceE18,uint256 confidenceBps,uint64 timestamp,uint64 sequence,uint64 expiry)"
                 ),
                 a.marketId,
                 a.priceE18,
+                a.spotPriceE18,
                 a.confidenceBps,
                 a.timestamp,
                 a.sequence,

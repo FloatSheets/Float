@@ -2,7 +2,7 @@ import express from "express";
 import { afterAll, expect, test } from "bun:test";
 import request from "supertest";
 import type { Server } from "node:http";
-import { encodeFunctionResult, parseAbi } from "viem";
+import { encodeFunctionData, encodeFunctionResult, parseAbi } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import type { Pool } from "pg";
 
@@ -83,8 +83,8 @@ test("builds a real USDG approval transaction", async () => {
 
 test("rejects signer issuance without the master admin key", async () => {
   const response = await request(server).post("/v1/protocol/transactions/quote").send({
-    marketId: "0x" + "11".repeat(32), trader: "0x1111111111111111111111111111111111111111", isLong: true,
-    notionalUsdg: "1000000", executionPriceE18: "1000000000000000000", feeUsdg: "0", maxLeverageE18: "5000000000000000000",
+    market: "HIMS", marketId: "0x" + "11".repeat(32), trader: "0x1111111111111111111111111111111111111111",
+    sizeDeltaE18: "1000000000000000000", executionPriceE18: "1000000000000000000", feeUsdg: "0", maxLeverageE18: "5000000000000000000",
     oracleSequence: "1", nonce: "1", expiry: "2000000000"
   });
   expect(response.status).toBe(401);
@@ -93,26 +93,41 @@ test("rejects signer issuance without the master admin key", async () => {
 test("signs an oracle attestation only with the master admin key", async () => {
   const response = await request(server).post("/v1/protocol/transactions/oracle-attestation")
     .set("x-master-admin-key", config.MASTER_ADMIN_KEY)
-    .send({ marketId: "0x" + "11".repeat(32), priceE18: "1000000000000000000", confidenceBps: "50", timestamp: "1900000000", sequence: "1", expiry: "1900000060" });
+    .send({ marketId: "0x" + "11".repeat(32), priceE18: "1000000000000000000", spotPriceE18: "1000000000000000000", confidenceBps: "50", timestamp: "1900000000", sequence: "1", expiry: "1900000060" });
   expect(response.status).toBe(200);
   expect(response.body.signature).toMatch(/^0x[0-9a-f]{130}$/);
   expect(response.body.transaction.to).toBe(config.FLOAT_ORACLE_ADDRESS);
 });
 
 test("builds a trader quote and execution transaction without exposing the quote signer", async () => {
-  const clearingAbi = parseAbi(["function markets(bytes32) view returns (uint8,uint64,uint64,uint64,uint64,uint128)"]);
-  const oracleAbi = parseAbi(["function getPrice(bytes32) view returns (uint256,uint256,uint64,uint64)"]);
+  const clearingAbi = parseAbi([
+    "function markets(bytes32) view returns (uint8,uint64,uint64,uint64,uint64,uint128)",
+    "function getPosition(address,bytes32) view returns (int256,uint256,uint256)"
+  ]);
+  const oracleAbi = parseAbi(["function getPrice(bytes32) view returns (uint256,uint256,uint256,uint256,uint64,uint64,bool)"]);
   const database = {
-    query: async (sql: string) => {
-      if (sql.includes("FROM markets")) return { rows: [{ id: "market-1", status: "active", max_ticket_usdg: "50000", max_half_spread_bps: 100, observed_at: new Date(), oracle_tradable: true }] };
-      if (sql.includes("SELECT notional_usdg")) return { rows: [{ notional_usdg: "1000", execution_degradation_bps: 25 }] };
+    query: async (sql: string, args?: unknown[]) => {
+      if (sql.includes("FROM public.markets")) return { rows: [{ id: "market-1", status: "active", max_ticket_usdg: "50000", max_half_spread_bps: 100, observed_at: new Date(), oracle_tradable: true }] };
+      if (sql.includes("SELECT notional_usdg")) {
+        expect(args?.[2]).toBe("1000.000000");
+        return { rows: [{ notional_usdg: "1000", execution_degradation_bps: 25 }] };
+      }
       throw new Error(`unexpected query: ${sql}`);
     }
   } as unknown as Pool;
   const rpc: RpcTransport = {
-    call: async ({ to }) => to.toLowerCase() === config.FLOAT_CLEARING_HOUSE_ADDRESS.toLowerCase()
-      ? encodeFunctionResult({ abi: clearingAbi, functionName: "markets", result: [1, 5_000000000000000000n, 1_000n, 100n, 50n, 50_000_000000n] })
-      : encodeFunctionResult({ abi: oracleAbi, functionName: "getPrice", result: [100_000000000000000000n, 25n, BigInt(Math.floor(Date.now() / 1000)), 9n] })
+    call: async ({ to, data }) => {
+      if (to.toLowerCase() !== config.FLOAT_CLEARING_HOUSE_ADDRESS.toLowerCase()) {
+        return encodeFunctionResult({ abi: oracleAbi, functionName: "getPrice", result: [100_000000000000000000n, 100_000000000000000000n, 25n, 0n, BigInt(Math.floor(Date.now() / 1000)), 9n, false] });
+      }
+      const positionSelector = "0x" + encodeFunctionData({
+        abi: clearingAbi, functionName: "getPosition",
+        args: ["0x1111111111111111111111111111111111111111", (`0x${"00".repeat(32)}`) as `0x${string}`]
+      }).slice(2, 10);
+      return data.startsWith(positionSelector)
+        ? encodeFunctionResult({ abi: clearingAbi, functionName: "getPosition", result: [10_000000000000000000n, 100_000000000000000000n, 5_000_000000n] })
+        : encodeFunctionResult({ abi: clearingAbi, functionName: "markets", result: [1, 5_000000000000000000n, 1_000n, 100n, 50n, 50_000_000000n] });
+    }
   };
   const quoteApp = express();
   quoteApp.use(express.json());
@@ -126,9 +141,17 @@ test("builds a trader quote and execution transaction without exposing the quote
     expect(response.status).toBe(200);
     expect(response.body.quote.trader).toBe("0x1111111111111111111111111111111111111111");
     expect(response.body.quote.executionPriceE18).toBe("100250000000000000000");
+    expect(BigInt(response.body.quote.sizeDeltaE18)).toBeGreaterThan(0n);
     expect(response.body.quote.feeUsdg).toBe("600000");
     expect(response.body.signature).toMatch(/^0x[0-9a-f]{130}$/);
     expect(response.body.transaction.to).toBe(config.FLOAT_CLEARING_HOUSE_ADDRESS);
+
+    const closeResponse = await request(quoteServer).post("/v1/protocol/transactions/close-quote").send({
+      market: "HIMS", trader: "0x1111111111111111111111111111111111111111"
+    });
+    expect(closeResponse.status).toBe(200);
+    expect(closeResponse.body.quote.sizeDeltaE18).toBe("-10000000000000000000");
+    expect(closeResponse.body.transaction.to).toBe(config.FLOAT_CLEARING_HOUSE_ADDRESS);
   } finally {
     await new Promise<void>((resolve, reject) => quoteServer.close((error) => error ? reject(error) : resolve()));
   }

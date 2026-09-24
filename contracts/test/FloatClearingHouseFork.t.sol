@@ -32,6 +32,7 @@ contract FloatClearingHouseForkTest {
     FloatOracle private oracle;
     FloatVault private vault;
     FloatClearingHouse private clearing;
+    uint256 private lpShares;
 
     function setUp() public {
         vm.createSelectFork(vm.envString("RHC_RPC_URL"));
@@ -58,7 +59,7 @@ contract FloatClearingHouseForkTest {
         vm.prank(NVDA_USDG_POOL);
         require(usdg.transfer(address(this), 1_100_000 * USDG_UNIT), "fork USDG transfer");
         usdg.approve(address(vault), type(uint256).max);
-        vault.deposit(1_000_000 * USDG_UNIT, address(this));
+        lpShares = vault.deposit(1_000_000 * USDG_UNIT, address(this));
         require(usdg.transfer(TRADER, 50_000 * USDG_UNIT), "trader funding");
         vm.prank(TRADER);
         usdg.approve(address(clearing), type(uint256).max);
@@ -69,8 +70,8 @@ contract FloatClearingHouseForkTest {
         _execute(_quote(true, 50_000 * USDG_UNIT, 1));
 
         uint256 available = clearing.availableLiquidity();
-        require(available < 951_000 * USDG_UNIT, "gross OI was not reserved");
-        require(available > 949_000 * USDG_UNIT, "unexpected reserve");
+        require(available < 901_000 * USDG_UNIT, "50% utilization reserve was not enforced");
+        require(available > 899_000 * USDG_UNIT, "unexpected reserve");
     }
 
     function testBlocksLpWithdrawalOfReservedLiquidity() public {
@@ -78,7 +79,7 @@ contract FloatClearingHouseForkTest {
         _execute(_quote(true, 50_000 * USDG_UNIT, 1));
 
         vm.expectRevert(FloatVault.InsufficientAvailableLiquidity.selector);
-        vault.withdraw(960_000 * USDG_UNIT, address(this));
+        vault.withdraw(lpShares * 96 / 100, address(this));
     }
 
     function testReservesGrossOpenInterestEvenWhenLongAndShortExposureOffsets() public {
@@ -94,8 +95,8 @@ contract FloatClearingHouseForkTest {
         clearing.execute(shortQuote, _quoteSignature(shortQuote));
 
         uint256 available = clearing.availableLiquidity();
-        require(available < 926_000 * USDG_UNIT, "netting released settlement liquidity");
-        require(available > 924_000 * USDG_UNIT, "unexpected gross reserve");
+        require(available < 851_000 * USDG_UNIT, "netting released settlement liquidity");
+        require(available > 849_000 * USDG_UNIT, "unexpected gross reserve");
     }
 
     function testCloseOnlyAllowsReductionButNotRiskIncrease() public {
@@ -151,6 +152,9 @@ contract FloatClearingHouseForkTest {
         (uint256 longBaseE18, uint256 shortBaseE18) = clearing.marketExposure(MARKET);
         require(position.sizeE18 == 0 && position.marginUsdg == 0, "position not cleared");
         require(longBaseE18 == 0 && shortBaseE18 == 0, "exposure not cleared");
+        require(clearing.claimableBalance(KEEPER) > 0, "keeper reward not credited");
+        vm.prank(KEEPER);
+        clearing.claim(KEEPER);
         require(usdg.balanceOf(KEEPER) > keeperBefore, "keeper not rewarded");
     }
 
@@ -216,10 +220,11 @@ contract FloatClearingHouseForkTest {
         return FloatClearingHouse.TradeQuote({
             marketId: MARKET,
             trader: trader,
-            isLong: isLong,
-            notionalUsdg: notional,
+            sizeDeltaE18: isLong
+                ? int256(notional * 1e12 * E18 / (228 * E18))
+                : -int256(notional * 1e12 * E18 / (228 * E18)),
             executionPriceE18: 228 * E18,
-            feeUsdg: 100 * USDG_UNIT,
+            feeUsdg: notional * 6 / 10_000,
             maxLeverageE18: 5 * E18,
             oracleSequence: nonce == 1 ? 1 : 1,
             nonce: nonce,
@@ -229,7 +234,7 @@ contract FloatClearingHouseForkTest {
 
     function _publish(uint64 sequence, uint256 price, uint256 confidence) private {
         FloatOracle.PriceAttestation memory attestation = FloatOracle.PriceAttestation(
-            MARKET, price, confidence, uint64(block.timestamp), sequence, uint64(block.timestamp + 60)
+            MARKET, price, price, confidence, uint64(block.timestamp), sequence, uint64(block.timestamp + 60)
         );
         bytes32 domain = keccak256(
             abi.encode(
@@ -243,10 +248,11 @@ contract FloatClearingHouseForkTest {
         bytes32 structHash = keccak256(
             abi.encode(
                 keccak256(
-                    "PriceAttestation(bytes32 marketId,uint256 priceE18,uint256 confidenceBps,uint64 timestamp,uint64 sequence,uint64 expiry)"
+                    "PriceAttestation(bytes32 marketId,uint256 priceE18,uint256 spotPriceE18,uint256 confidenceBps,uint64 timestamp,uint64 sequence,uint64 expiry)"
                 ),
                 attestation.marketId,
                 attestation.priceE18,
+                attestation.spotPriceE18,
                 attestation.confidenceBps,
                 attestation.timestamp,
                 attestation.sequence,
@@ -271,12 +277,11 @@ contract FloatClearingHouseForkTest {
         bytes32 structHash = keccak256(
             abi.encode(
                 keccak256(
-                    "TradeQuote(bytes32 marketId,address trader,bool isLong,uint256 notionalUsdg,uint256 executionPriceE18,uint256 feeUsdg,uint256 maxLeverageE18,uint64 oracleSequence,uint64 nonce,uint64 expiry)"
+                    "TradeQuote(bytes32 marketId,address trader,int256 sizeDeltaE18,uint256 executionPriceE18,uint256 feeUsdg,uint256 maxLeverageE18,uint64 oracleSequence,uint64 nonce,uint64 expiry)"
                 ),
                 quote.marketId,
                 quote.trader,
-                quote.isLong,
-                quote.notionalUsdg,
+                quote.sizeDeltaE18,
                 quote.executionPriceE18,
                 quote.feeUsdg,
                 quote.maxLeverageE18,

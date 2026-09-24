@@ -15,4 +15,4 @@ test("reports ready only when deployed PostgreSQL is reachable", async () => {
   expect(response.status).toBe(200);
   expect(response.body.status).toBe("ready");
   expect(new Date(response.body.timestamp).toISOString()).toBe(response.body.timestamp);
-});
+}, 60_000);

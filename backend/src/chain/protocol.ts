@@ -4,13 +4,13 @@ import type { TradeQuote } from "../signing/types";
 
 const erc20Abi = parseAbi(["function approve(address spender,uint256 amount)"]);
 const oracleAbi = parseAbi([
-  "function publish((bytes32 marketId,uint256 priceE18,uint256 confidenceBps,uint64 timestamp,uint64 sequence,uint64 expiry) attestation,bytes signature)",
+  "function publish((bytes32 marketId,uint256 priceE18,uint256 spotPriceE18,uint256 confidenceBps,uint64 timestamp,uint64 sequence,uint64 expiry) attestation,bytes signature)",
   "function setMarketEnabled(bytes32 marketId,bool enabled)"
 ]);
 const clearingAbi = parseAbi([
   "function depositMargin(bytes32 marketId,uint256 assets)",
   "function withdrawMargin(bytes32 marketId,uint256 assets)",
-  "function execute((bytes32 marketId,address trader,bool isLong,uint256 notionalUsdg,uint256 executionPriceE18,uint256 feeUsdg,uint256 maxLeverageE18,uint64 oracleSequence,uint64 nonce,uint64 expiry) quote,bytes signature)",
+  "function execute((bytes32 marketId,address trader,int256 sizeDeltaE18,uint256 executionPriceE18,uint256 feeUsdg,uint256 maxLeverageE18,uint64 oracleSequence,uint64 nonce,uint64 expiry) quote,bytes signature)",
   "function liquidate(address trader,bytes32 marketId)",
   "function setMarket(bytes32 marketId,(uint8 state,uint64 maxLeverageE18,uint64 maintenanceMarginBps,uint64 maxExecutionDeviationBps,uint64 maxOracleConfidenceBps,uint128 maxPositionNotionalUsdg) market)"
 ]);
@@ -43,8 +43,8 @@ export function liquidate(clearingHouse: Address, trader: Address, id: Hex): Pro
   return tx(clearingHouse, encodeFunctionData({ abi: clearingAbi, functionName: "liquidate", args: [trader, id] }));
 }
 
-export function publishOracle(oracle: Address, attestation: readonly [Hex, bigint, bigint, bigint, bigint, bigint], signature: Hex): ProtocolTransaction {
-  return tx(oracle, encodeFunctionData({ abi: oracleAbi, functionName: "publish", args: [{ marketId: attestation[0], priceE18: attestation[1], confidenceBps: attestation[2], timestamp: attestation[3], sequence: attestation[4], expiry: attestation[5] }, signature] }));
+export function publishOracle(oracle: Address, attestation: readonly [Hex, bigint, bigint, bigint, bigint, bigint, bigint], signature: Hex): ProtocolTransaction {
+  return tx(oracle, encodeFunctionData({ abi: oracleAbi, functionName: "publish", args: [{ marketId: attestation[0], priceE18: attestation[1], spotPriceE18: attestation[2], confidenceBps: attestation[3], timestamp: attestation[4], sequence: attestation[5], expiry: attestation[6] }, signature] }));
 }
 
 export function enableMarket(oracle: Address, id: Hex, enabled: boolean): ProtocolTransaction {

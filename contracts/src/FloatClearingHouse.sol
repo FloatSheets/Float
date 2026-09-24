@@ -6,9 +6,12 @@ import {IERC20, FloatVault} from "./FloatVault.sol";
 interface IFloatOracle {
     struct Price {
         uint256 priceE18;
+        uint256 spotPriceE18;
         uint256 confidenceBps;
+        uint256 spotTwapDeviationBps;
         uint64 timestamp;
         uint64 sequence;
+        bool circuitBroken;
     }
     function getPrice(bytes32 marketId) external view returns (Price memory);
 }
@@ -37,6 +40,9 @@ contract FloatClearingHouse {
     error PositionNotLiquidatable();
     error TransferFailed();
     error TooManyMarkets();
+    error InvalidRiskParameters();
+    error FeeTooHigh();
+    error NothingToClaim();
 
     uint256 public constant E18 = 1e18;
     uint256 public constant USDG_TO_E18 = 1e12;
@@ -46,12 +52,15 @@ contract FloatClearingHouse {
     uint256 public constant MARKET_SKEW_BPS = 1_000;
     uint256 public constant LIQUIDATION_PENALTY_BPS = 500;
     uint256 public constant LIQUIDATOR_REWARD_BPS = 250;
+    uint256 public constant MIN_LIQUIDATOR_REWARD_USDG = 1e6;
+    uint256 public constant MIN_LIQUIDATOR_REWARD_NOTIONAL_BPS = 10;
+    uint256 public constant MAX_TRADE_FEE_BPS = 100;
     uint256 public constant MAX_MARKETS = 10;
     uint256 private constant MAX_INT256 = 0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff;
     bytes32 private constant DOMAIN_TYPEHASH =
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
     bytes32 private constant QUOTE_TYPEHASH = keccak256(
-        "TradeQuote(bytes32 marketId,address trader,bool isLong,uint256 notionalUsdg,uint256 executionPriceE18,uint256 feeUsdg,uint256 maxLeverageE18,uint64 oracleSequence,uint64 nonce,uint64 expiry)"
+        "TradeQuote(bytes32 marketId,address trader,int256 sizeDeltaE18,uint256 executionPriceE18,uint256 feeUsdg,uint256 maxLeverageE18,uint64 oracleSequence,uint64 nonce,uint64 expiry)"
     );
     bytes32 private constant NAME_HASH = keccak256("FloatSheetsClearing");
     bytes32 private constant VERSION_HASH = keccak256("1");
@@ -86,8 +95,7 @@ contract FloatClearingHouse {
     struct TradeQuote {
         bytes32 marketId;
         address trader;
-        bool isLong;
-        uint256 notionalUsdg;
+        int256 sizeDeltaE18;
         uint256 executionPriceE18;
         uint256 feeUsdg;
         uint256 maxLeverageE18;
@@ -108,6 +116,8 @@ contract FloatClearingHouse {
     mapping(bytes32 => MarketExposure) public marketExposure;
     mapping(address => mapping(bytes32 => Position)) private positions;
     mapping(address => mapping(uint64 => bool)) public quoteUsed;
+    mapping(address => uint64) public minimumValidNonce;
+    mapping(address => uint256) public claimableBalance;
     bytes32[] private marketIds;
     mapping(bytes32 => bool) private registeredMarket;
 
@@ -128,7 +138,20 @@ contract FloatClearingHouse {
         uint256 penaltyUsdg,
         address liquidator
     );
-    event MarketUpdated(bytes32 indexed marketId, MarketState state);
+    event MarketUpdated(
+        bytes32 indexed marketId,
+        MarketState state,
+        uint64 maxLeverageE18,
+        uint64 maintenanceMarginBps,
+        uint64 maxExecutionDeviationBps,
+        uint64 maxOracleConfidenceBps,
+        uint128 maxPositionNotionalUsdg
+    );
+    event MarketDeregistered(bytes32 indexed marketId);
+    event QuoteCancelled(address indexed trader, uint64 indexed nonce);
+    event QuotesCancelledBefore(address indexed trader, uint64 indexed minimumNonce);
+    event ClaimableCredited(address indexed account, uint256 assets);
+    event Claimed(address indexed account, address indexed receiver, uint256 assets);
     event QuoteSignerUpdated(address indexed signer);
     event FeeRecipientUpdated(address indexed recipient);
     event OracleMaxAgeUpdated(uint64 age);
@@ -173,14 +196,54 @@ contract FloatClearingHouse {
             market.state == MarketState.Unset || market.maxLeverageE18 < E18 || market.maintenanceMarginBps == 0
                 || market.maintenanceMarginBps >= BPS || market.maxExecutionDeviationBps > BPS
                 || market.maxOracleConfidenceBps > BPS || market.maxPositionNotionalUsdg == 0
-        ) revert ZeroAmount();
+        ) revert InvalidRiskParameters();
+        if ((E18 * BPS) / market.maxLeverageE18 <= market.maintenanceMarginBps) {
+            revert InvalidRiskParameters();
+        }
         if (!registeredMarket[marketId]) {
             if (marketIds.length == MAX_MARKETS) revert TooManyMarkets();
             registeredMarket[marketId] = true;
             marketIds.push(marketId);
         }
         markets[marketId] = market;
-        emit MarketUpdated(marketId, market.state);
+        emit MarketUpdated(
+            marketId,
+            market.state,
+            market.maxLeverageE18,
+            market.maintenanceMarginBps,
+            market.maxExecutionDeviationBps,
+            market.maxOracleConfidenceBps,
+            market.maxPositionNotionalUsdg
+        );
+    }
+
+    function deregisterMarket(bytes32 marketId) external onlyOwner {
+        MarketExposure memory exposure = marketExposure[marketId];
+        if (!registeredMarket[marketId] || exposure.longBaseE18 != 0 || exposure.shortBaseE18 != 0) {
+            revert InvalidRiskParameters();
+        }
+        uint256 length = marketIds.length;
+        for (uint256 i; i < length; ++i) {
+            if (marketIds[i] == marketId) {
+                marketIds[i] = marketIds[length - 1];
+                marketIds.pop();
+                break;
+            }
+        }
+        delete registeredMarket[marketId];
+        delete markets[marketId];
+        emit MarketDeregistered(marketId);
+    }
+
+    function cancelQuote(uint64 nonce) external {
+        quoteUsed[msg.sender][nonce] = true;
+        emit QuoteCancelled(msg.sender, nonce);
+    }
+
+    function cancelQuotesBefore(uint64 nonce) external {
+        if (nonce <= minimumValidNonce[msg.sender]) revert InvalidRiskParameters();
+        minimumValidNonce[msg.sender] = nonce;
+        emit QuotesCancelledBefore(msg.sender, nonce);
     }
 
     function setQuoteSigner(address signer) external onlyOwner {
@@ -213,22 +276,25 @@ contract FloatClearingHouse {
         return positions[trader][marketId];
     }
 
-    /// @notice LP assets available for withdrawal after reserving 100% of gross OI at current oracle prices.
+    /// @notice LP assets available while preserving the protocol's global utilization ceiling.
     function availableLiquidity() public view returns (uint256) {
         uint256 assets = vault.totalAssets();
-        uint256 reserve = 0;
+        uint256 grossOpenInterest = 0;
         for (uint256 i; i < marketIds.length; ++i) {
             bytes32 marketId = marketIds[i];
             MarketExposure memory exposure = marketExposure[marketId];
-            uint256 price = _oraclePrice(marketId, markets[marketId]).priceE18;
-            reserve += _notionalUsdg(_asInt256(exposure.longBaseE18), price)
-            + _notionalUsdg(_asInt256(exposure.shortBaseE18), price);
+            if (exposure.longBaseE18 == 0 && exposure.shortBaseE18 == 0) continue;
+            uint256 price = _lastKnownPrice(marketId);
+            grossOpenInterest += _notionalUsdgRoundingUp(_asInt256(exposure.longBaseE18), price)
+            + _notionalUsdgRoundingUp(_asInt256(exposure.shortBaseE18), price);
         }
-        return reserve >= assets ? 0 : assets - reserve;
+        uint256 requiredAssets = _mulDivRoundingUp(grossOpenInterest, BPS, GLOBAL_UTILIZATION_BPS);
+        return requiredAssets >= assets ? 0 : assets - requiredAssets;
     }
 
     function depositMargin(bytes32 marketId, uint256 assets) external nonReentrant {
-        if (markets[marketId].state != MarketState.Active) revert MarketNotActive();
+        MarketState state = markets[marketId].state;
+        if (state != MarketState.Active && state != MarketState.CloseOnly) revert MarketNotActive();
         if (assets == 0) revert ZeroAmount();
         if (assets > MAX_INT256 || positions[msg.sender][marketId].marginUsdg > MAX_INT256 - assets) {
             revert PositionLimitExceeded();
@@ -241,7 +307,9 @@ contract FloatClearingHouse {
     function withdrawMargin(bytes32 marketId, uint256 assets) external nonReentrant {
         Market memory market = markets[marketId];
         Position storage position = positions[msg.sender][marketId];
-        if (market.state == MarketState.Unset) revert MarketNotActive();
+        // Deregistration is permitted only after exposure reaches zero. Keep
+        // unused margin withdrawable even after the market entry is removed.
+        if (market.state == MarketState.Unset && position.sizeE18 != 0) revert MarketNotActive();
         if (assets == 0 || assets > position.marginUsdg) revert InsufficientMargin();
         if (market.state == MarketState.Paused && position.sizeE18 != 0) revert MarketPaused();
         position.marginUsdg -= assets;
@@ -253,11 +321,11 @@ contract FloatClearingHouse {
     function execute(TradeQuote calldata quote, bytes calldata signature) external nonReentrant {
         Market memory market = markets[quote.marketId];
         if (market.state == MarketState.Unset) revert MarketNotActive();
-        if (quote.trader != msg.sender || quote.notionalUsdg == 0 || quote.executionPriceE18 == 0) {
+        if (quote.trader != msg.sender || quote.sizeDeltaE18 == 0 || quote.executionPriceE18 == 0) {
             revert InvalidDirection();
         }
         if (quote.expiry < block.timestamp) revert QuoteExpired();
-        if (quoteUsed[msg.sender][quote.nonce]) revert QuoteUsed();
+        if (quote.nonce < minimumValidNonce[msg.sender] || quoteUsed[msg.sender][quote.nonce]) revert QuoteUsed();
         if (quote.maxLeverageE18 != market.maxLeverageE18 || _recover(_quoteDigest(quote), signature) != quoteSigner) {
             revert InvalidQuoteSignature();
         }
@@ -267,28 +335,37 @@ contract FloatClearingHouse {
             ? (quote.executionPriceE18 - oraclePrice.priceE18) * BPS / oraclePrice.priceE18
             : (oraclePrice.priceE18 - quote.executionPriceE18) * BPS / oraclePrice.priceE18;
         if (deviation > market.maxExecutionDeviationBps) revert ExecutionPriceOutOfBounds();
-        uint256 baseDelta = quote.notionalUsdg * USDG_TO_E18 * E18 / quote.executionPriceE18;
-        if (baseDelta > MAX_INT256) revert PositionLimitExceeded();
-        int256 signedDelta = quote.isLong ? _asInt256(baseDelta) : -_asInt256(baseDelta);
         Position storage position = positions[msg.sender][quote.marketId];
-        int256 nextSize = position.sizeE18 + signedDelta;
-        if (market.state == MarketState.CloseOnly && !_isRiskReducing(position.sizeE18, signedDelta)) {
+        int256 nextSize = position.sizeE18 + quote.sizeDeltaE18;
+        bool riskReducing = _isRiskReducing(position.sizeE18, quote.sizeDeltaE18);
+        if ((market.state == MarketState.CloseOnly || oraclePrice.circuitBroken) && !riskReducing) {
             revert MarketNotActive();
         }
-        if (market.state == MarketState.Paused && !_isRiskReducing(position.sizeE18, signedDelta)) {
+        if (market.state == MarketState.Paused && !riskReducing) {
             revert MarketPaused();
         }
+        uint256 tradedNotional = _notionalUsdgRoundingUp(quote.sizeDeltaE18, quote.executionPriceE18);
+        if (quote.feeUsdg > tradedNotional * MAX_TRADE_FEE_BPS / BPS) revert FeeTooHigh();
         quoteUsed[msg.sender][quote.nonce] = true;
         _updateExposure(quote.marketId, position.sizeE18, nextSize);
-        _applyTrade(position, signedDelta, quote.executionPriceE18);
-        if (quote.feeUsdg > position.marginUsdg) revert InsufficientMargin();
-        position.marginUsdg -= quote.feeUsdg;
-        _safeTransfer(feeRecipient, quote.feeUsdg);
-        uint256 notional = _notionalUsdg(position.sizeE18, quote.executionPriceE18);
-        if (notional > market.maxPositionNotionalUsdg) revert PositionLimitExceeded();
-        _enforceExposureLimits(quote.marketId, quote.executionPriceE18);
-        _requireInitialMargin(position, quote.executionPriceE18, market);
-        emit TradeExecuted(msg.sender, quote.marketId, signedDelta, quote.executionPriceE18, quote.feeUsdg);
+        _applyTrade(position, quote.sizeDeltaE18, quote.executionPriceE18, nextSize == 0);
+        uint256 chargedFee = quote.feeUsdg;
+        // A reduction must never be blocked solely because realized losses
+        // consumed the remaining margin before the fee is charged. Treat the
+        // signed fee as a maximum and collect only what remains.
+        if (chargedFee > position.marginUsdg) {
+            if (!riskReducing) revert InsufficientMargin();
+            chargedFee = position.marginUsdg;
+        }
+        position.marginUsdg -= chargedFee;
+        if (chargedFee != 0) _safeTransfer(feeRecipient, chargedFee);
+        if (!riskReducing) {
+            uint256 notional = _notionalUsdg(position.sizeE18, quote.executionPriceE18);
+            if (notional > market.maxPositionNotionalUsdg) revert PositionLimitExceeded();
+            _enforceExposureLimits(quote.marketId, quote.executionPriceE18);
+            _requireInitialMargin(position, quote.executionPriceE18, market);
+        }
+        emit TradeExecuted(msg.sender, quote.marketId, quote.sizeDeltaE18, quote.executionPriceE18, chargedFee);
     }
 
     function liquidate(address trader, bytes32 marketId) external nonReentrant {
@@ -297,10 +374,23 @@ contract FloatClearingHouse {
         if (position.sizeE18 == 0) revert PositionNotLiquidatable();
         uint256 price = _currentPrice(marketId, market);
         if (_meetsMaintenanceMargin(position, price, market)) revert PositionNotLiquidatable();
+        uint256 positionNotional = _notionalUsdgRoundingUp(position.sizeE18, price);
         int256 pnl = _pnlUsdg(position.sizeE18, position.entryPriceE18, price);
         _updateExposure(marketId, position.sizeE18, 0);
-        uint256 penalty = _settleMargin(trader, marketId, position, pnl, msg.sender);
+        (uint256 penalty, uint256 liquidatorReward, uint256 returned) = _settleMargin(position, pnl, positionNotional);
+        delete positions[trader][marketId];
+        _creditClaimable(msg.sender, liquidatorReward);
+        _creditClaimable(trader, returned);
         emit PositionLiquidated(trader, marketId, price, pnl, penalty, msg.sender);
+    }
+
+    function claim(address receiver) external nonReentrant returns (uint256 assets) {
+        if (receiver == address(0)) revert ZeroAddress();
+        assets = claimableBalance[msg.sender];
+        if (assets == 0) revert NothingToClaim();
+        claimableBalance[msg.sender] = 0;
+        _safeTransfer(receiver, assets);
+        emit Claimed(msg.sender, receiver, assets);
     }
 
     function _updateExposure(bytes32 marketId, int256 previousSize, int256 nextSize) private {
@@ -317,10 +407,10 @@ contract FloatClearingHouse {
         for (uint256 i; i < marketIds.length; ++i) {
             bytes32 marketId = marketIds[i];
             MarketExposure memory exposure = marketExposure[marketId];
-            uint256 price =
-                marketId == tradedMarketId ? executionPrice : _oraclePrice(marketId, markets[marketId]).priceE18;
-            uint256 longOi = _notionalUsdg(_asInt256(exposure.longBaseE18), price);
-            uint256 shortOi = _notionalUsdg(_asInt256(exposure.shortBaseE18), price);
+            if (exposure.longBaseE18 == 0 && exposure.shortBaseE18 == 0) continue;
+            uint256 price = marketId == tradedMarketId ? executionPrice : _lastKnownPrice(marketId);
+            uint256 longOi = _notionalUsdgRoundingUp(_asInt256(exposure.longBaseE18), price);
+            uint256 shortOi = _notionalUsdgRoundingUp(_asInt256(exposure.shortBaseE18), price);
             uint256 marketOi = longOi + shortOi;
             if (marketOi > assets * MARKET_OPEN_INTEREST_BPS / BPS) revert OpenInterestLimitExceeded();
             uint256 skew = longOi > shortOi ? longOi - shortOi : shortOi - longOi;
@@ -334,7 +424,7 @@ contract FloatClearingHouse {
         return size != 0 && ((size > 0 && delta < 0) || (size < 0 && delta > 0)) && _abs(delta) <= _abs(size);
     }
 
-    function _applyTrade(Position storage p, int256 delta, uint256 price) private {
+    function _applyTrade(Position storage p, int256 delta, uint256 price, bool allowBadDebt) private {
         int256 oldSize = p.sizeE18;
         if (oldSize == 0 || (oldSize > 0) == (delta > 0)) {
             uint256 oldAbs = _abs(oldSize);
@@ -345,54 +435,57 @@ contract FloatClearingHouse {
         }
         uint256 closed = _abs(oldSize) < _abs(delta) ? _abs(oldSize) : _abs(delta);
         int256 pnl = _pnlUsdg(oldSize > 0 ? _asInt256(closed) : -_asInt256(closed), p.entryPriceE18, price);
-        _applyPnl(p, pnl);
+        _applyPnl(p, pnl, allowBadDebt);
         p.sizeE18 = oldSize + delta;
         if (p.sizeE18 == 0) p.entryPriceE18 = 0;
         else if ((p.sizeE18 > 0) != (oldSize > 0)) p.entryPriceE18 = price;
     }
 
-    function _applyPnl(Position storage p, int256 pnl) private {
+    function _applyPnl(Position storage p, int256 pnl, bool allowBadDebt) private {
         if (pnl >= 0) {
             uint256 profit = _abs(pnl);
             vault.payout(address(this), profit);
             p.marginUsdg += profit;
         } else {
             uint256 loss = _abs(pnl);
-            if (loss > p.marginUsdg) revert InsufficientMargin();
-            p.marginUsdg -= loss;
-            _safeApprove(address(vault), loss);
-            vault.collect(loss);
-        }
-    }
-
-    function _settleMargin(address trader, bytes32 marketId, Position storage p, int256 pnl, address liquidator)
-        private
-        returns (uint256 penalty)
-    {
-        if (pnl >= 0) {
-            uint256 profit = _abs(pnl);
-            vault.payout(address(this), profit);
-            p.marginUsdg += profit;
-        } else {
-            uint256 loss = _abs(pnl);
+            if (loss > p.marginUsdg && !allowBadDebt) revert InsufficientMargin();
             uint256 collected = loss > p.marginUsdg ? p.marginUsdg : loss;
+            p.marginUsdg -= collected;
             if (collected != 0) {
                 _safeApprove(address(vault), collected);
                 vault.collect(collected);
             }
-            p.marginUsdg -= collected;
+        }
+    }
+
+    function _settleMargin(Position storage p, int256 pnl, uint256 positionNotional)
+        private
+        returns (uint256 penalty, uint256 liquidatorReward, uint256 returned)
+    {
+        uint256 lossCollected = 0;
+        if (pnl >= 0) {
+            uint256 profit = _abs(pnl);
+            vault.payout(address(this), profit);
+            p.marginUsdg += profit;
+        } else {
+            uint256 loss = _abs(pnl);
+            lossCollected = loss > p.marginUsdg ? p.marginUsdg : loss;
+            p.marginUsdg -= lossCollected;
         }
         penalty = p.marginUsdg * LIQUIDATION_PENALTY_BPS / BPS;
-        uint256 liquidatorReward = p.marginUsdg * LIQUIDATOR_REWARD_BPS / BPS;
-        if (liquidatorReward != 0) _safeTransfer(liquidator, liquidatorReward);
-        uint256 vaultPenalty = penalty - liquidatorReward;
-        if (vaultPenalty != 0) {
-            _safeApprove(address(vault), vaultPenalty);
-            vault.collect(vaultPenalty);
+        uint256 marginFundedReward = p.marginUsdg * LIQUIDATOR_REWARD_BPS / BPS;
+        uint256 minimumReward = positionNotional * MIN_LIQUIDATOR_REWARD_NOTIONAL_BPS / BPS;
+        if (minimumReward > MIN_LIQUIDATOR_REWARD_USDG) minimumReward = MIN_LIQUIDATOR_REWARD_USDG;
+        liquidatorReward = marginFundedReward > minimumReward ? marginFundedReward : minimumReward;
+        uint256 vaultPenalty = penalty - marginFundedReward;
+        uint256 totalCollection = lossCollected + vaultPenalty;
+        if (totalCollection != 0) {
+            _safeApprove(address(vault), totalCollection);
+            vault.collect(totalCollection);
         }
-        uint256 returned = p.marginUsdg - penalty;
-        delete positions[trader][marketId];
-        if (returned != 0) _safeTransfer(trader, returned);
+        uint256 rewardSubsidy = liquidatorReward - marginFundedReward;
+        if (rewardSubsidy != 0) vault.payout(address(this), rewardSubsidy);
+        returned = p.marginUsdg - penalty;
     }
 
     function _requireInitialMargin(Position storage p, uint256 price, Market memory m) private view {
@@ -429,6 +522,12 @@ contract FloatClearingHouse {
         if (price.confidenceBps > market.maxOracleConfidenceBps) revert OracleConfidenceTooLow();
     }
 
+    function _lastKnownPrice(bytes32 marketId) private view returns (uint256 priceE18) {
+        IFloatOracle.Price memory price = oracle.getPrice(marketId);
+        if (price.priceE18 == 0) revert StaleOraclePrice();
+        return price.priceE18;
+    }
+
     function _pnlUsdg(int256 size, uint256 entry, uint256 price) private pure returns (int256) {
         int256 priceDelta = price >= entry ? _asInt256(price - entry) : -_asInt256(entry - price);
         return size * priceDelta / _asInt256(E18) / _asInt256(USDG_TO_E18);
@@ -436,6 +535,21 @@ contract FloatClearingHouse {
 
     function _notionalUsdg(int256 size, uint256 price) private pure returns (uint256) {
         return _abs(size) * price / E18 / USDG_TO_E18;
+    }
+
+    function _notionalUsdgRoundingUp(int256 size, uint256 price) private pure returns (uint256) {
+        return _mulDivRoundingUp(_abs(size), price, E18 * USDG_TO_E18);
+    }
+
+    function _mulDivRoundingUp(uint256 x, uint256 y, uint256 denominator) private pure returns (uint256) {
+        uint256 product = x * y;
+        return product == 0 ? 0 : (product - 1) / denominator + 1;
+    }
+
+    function _creditClaimable(address account, uint256 assets) private {
+        if (assets == 0) return;
+        claimableBalance[account] += assets;
+        emit ClaimableCredited(account, assets);
     }
 
     function _abs(int256 value) private pure returns (uint256) {
@@ -458,8 +572,7 @@ contract FloatClearingHouse {
                         QUOTE_TYPEHASH,
                         q.marketId,
                         q.trader,
-                        q.isLong,
-                        q.notionalUsdg,
+                        q.sizeDeltaE18,
                         q.executionPriceE18,
                         q.feeUsdg,
                         q.maxLeverageE18,
@@ -487,7 +600,7 @@ contract FloatClearingHouse {
             v := byte(0, calldataload(add(signature.offset, 64)))
         }
         if (v < 27) v += 27;
-        if (v != 27 && v != 28 || uint256(s) > 0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0) {
+        if ((v != 27 && v != 28) || uint256(s) > 0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0) {
             return address(0);
         }
         return ecrecover(digest, v, r, s);

@@ -48,6 +48,28 @@ export const getTradeTransaction = createServerFn({ method: "POST" })
     return (await response.json()) as JsonRecord;
   });
 
+/** Full closes use the exact on-chain base size so a position cannot leave dust or flip sides. */
+export const getCloseTransaction = createServerFn({ method: "POST" })
+  .validator((input: unknown) => {
+    if (!input || typeof input !== "object") throw new Error("Close intent is required.");
+    const value = input as JsonRecord;
+    if (typeof value["market"] !== "string" || !/^[A-Za-z0-9.-]{1,16}$/.test(value["market"])) throw new Error("A valid market is required.");
+    if (typeof value["trader"] !== "string" || !/^0x[0-9a-fA-F]{40}$/.test(value["trader"])) throw new Error("A valid trader address is required.");
+    return value;
+  })
+  .handler(async ({ data }): Promise<any> => {
+    const response = await fetch(`${apiOrigin()}/v1/protocol/transactions/close-quote`, {
+      method: "POST",
+      headers: { accept: "application/json", "content-type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({})) as { error?: string };
+      throw new Error(body.error ?? `Close request failed with ${response.status}.`);
+    }
+    return (await response.json()) as JsonRecord;
+  });
+
 /** Wallet transaction calldata is public; the wallet signs it locally. */
 export const getTransactionCalldata = createServerFn({ method: "POST" })
   .validator((input: unknown) => {

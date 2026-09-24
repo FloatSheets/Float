@@ -7,6 +7,7 @@ export const EIP712_VERSION = "1";
 export type PriceAttestation = {
   marketId: Hex;
   priceE18: bigint;
+  spotPriceE18: bigint;
   confidenceBps: bigint;
   timestamp: bigint;
   sequence: bigint;
@@ -16,8 +17,7 @@ export type PriceAttestation = {
 export type TradeQuote = {
   marketId: Hex;
   trader: Address;
-  isLong: boolean;
-  notionalUsdg: bigint;
+  sizeDeltaE18: bigint;
   executionPriceE18: bigint;
   feeUsdg: bigint;
   maxLeverageE18: bigint;
@@ -29,7 +29,7 @@ export type TradeQuote = {
 export const priceAttestationTypes = {
   PriceAttestation: [
     { name: "marketId", type: "bytes32" }, { name: "priceE18", type: "uint256" },
-    { name: "confidenceBps", type: "uint256" }, { name: "timestamp", type: "uint64" },
+    { name: "spotPriceE18", type: "uint256" }, { name: "confidenceBps", type: "uint256" }, { name: "timestamp", type: "uint64" },
     { name: "sequence", type: "uint64" }, { name: "expiry", type: "uint64" }
   ]
 } as const;
@@ -37,7 +37,7 @@ export const priceAttestationTypes = {
 export const tradeQuoteTypes = {
   TradeQuote: [
     { name: "marketId", type: "bytes32" }, { name: "trader", type: "address" },
-    { name: "isLong", type: "bool" }, { name: "notionalUsdg", type: "uint256" },
+    { name: "sizeDeltaE18", type: "int256" },
     { name: "executionPriceE18", type: "uint256" }, { name: "feeUsdg", type: "uint256" },
     { name: "maxLeverageE18", type: "uint256" }, { name: "oracleSequence", type: "uint64" },
     { name: "nonce", type: "uint64" }, { name: "expiry", type: "uint64" }

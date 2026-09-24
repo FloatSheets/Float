@@ -5,7 +5,7 @@ import {Script} from "forge-std/Script.sol";
 import {FloatOracle} from "../src/FloatOracle.sol";
 import {FloatClearingHouse} from "../src/FloatClearingHouse.sol";
 
-/// @notice Configures the confirmed v1 markets and publishes initial TWAP marks.
+/// @notice Configures the confirmed v2 markets and publishes initial TWAP/spot marks.
 /// Prices are supplied as 18-decimal integers in PRICE_<SYMBOL>_E18 environment variables.
 contract ConfigureFloatMarkets is Script {
     uint256 private constant E18 = 1e18;
@@ -46,20 +46,24 @@ contract ConfigureFloatMarkets is Script {
     ) private {
         bytes32 id = keccak256(bytes(symbol));
         oracle.setMarketEnabled(id, true);
-        clearing.setMarket(id, FloatClearingHouse.Market({
-            state: FloatClearingHouse.MarketState(state),
-            maxLeverageE18: uint64(leverage * E18),
-            maintenanceMarginBps: MAINTENANCE_MARGIN_BPS,
-            maxExecutionDeviationBps: uint64(executionDeviation),
-            maxOracleConfidenceBps: MAX_ORACLE_CONFIDENCE_BPS,
-            maxPositionNotionalUsdg: uint128(maxPosition * USDG_UNIT)
-        }));
+        clearing.setMarket(
+            id,
+            FloatClearingHouse.Market({
+                state: FloatClearingHouse.MarketState(state),
+                maxLeverageE18: uint64(leverage * E18),
+                maintenanceMarginBps: MAINTENANCE_MARGIN_BPS,
+                maxExecutionDeviationBps: uint64(executionDeviation),
+                maxOracleConfidenceBps: MAX_ORACLE_CONFIDENCE_BPS,
+                maxPositionNotionalUsdg: uint128(maxPosition * USDG_UNIT)
+            })
+        );
 
         FloatOracle.Price memory current = oracle.getPrice(id);
         uint64 previousSequence = current.sequence;
         FloatOracle.PriceAttestation memory attestation = FloatOracle.PriceAttestation({
             marketId: id,
             priceE18: priceE18,
+            spotPriceE18: priceE18,
             confidenceBps: MAX_ORACLE_CONFIDENCE_BPS,
             timestamp: uint64(block.timestamp),
             sequence: previousSequence + 1,
@@ -69,19 +73,34 @@ contract ConfigureFloatMarkets is Script {
     }
 
     function _publish(FloatOracle oracle, uint256 signerKey, FloatOracle.PriceAttestation memory attestation) private {
-        bytes32 structHash = keccak256(abi.encode(
-            keccak256("PriceAttestation(bytes32 marketId,uint256 priceE18,uint256 confidenceBps,uint64 timestamp,uint64 sequence,uint64 expiry)"),
-            attestation.marketId, attestation.priceE18, attestation.confidenceBps, attestation.timestamp, attestation.sequence, attestation.expiry
-        ));
+        bytes32 structHash = keccak256(
+            abi.encode(
+                keccak256(
+                    "PriceAttestation(bytes32 marketId,uint256 priceE18,uint256 spotPriceE18,uint256 confidenceBps,uint64 timestamp,uint64 sequence,uint64 expiry)"
+                ),
+                attestation.marketId,
+                attestation.priceE18,
+                attestation.spotPriceE18,
+                attestation.confidenceBps,
+                attestation.timestamp,
+                attestation.sequence,
+                attestation.expiry
+            )
+        );
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", _domain(address(oracle)), structHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerKey, digest);
         oracle.publish(attestation, abi.encodePacked(r, s, v));
     }
 
     function _domain(address verifyingContract) private view returns (bytes32) {
-        return keccak256(abi.encode(
-            keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
-            keccak256("FloatSheetsOracle"), keccak256("1"), block.chainid, verifyingContract
-        ));
+        return keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256("FloatSheetsOracle"),
+                keccak256("1"),
+                block.chainid,
+                verifyingContract
+            )
+        );
     }
 }

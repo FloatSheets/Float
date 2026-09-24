@@ -2,10 +2,17 @@ import { decodeFunctionResult, encodeFunctionData, parseAbi, type Address, type 
 
 import type { RpcTransport } from "./rpc";
 
-const oracleAbi = parseAbi(["function getPrice(bytes32) view returns (uint256,uint256,uint64,uint64)"]);
-const clearingAbi = parseAbi(["function markets(bytes32) view returns (uint8,uint64,uint64,uint64,uint64,uint128)"]);
+const oracleAbi = parseAbi(["function getPrice(bytes32) view returns (uint256,uint256,uint256,uint256,uint64,uint64,bool)"]);
+const clearingAbi = parseAbi([
+  "function markets(bytes32) view returns (uint8,uint64,uint64,uint64,uint64,uint128)",
+  "function getPosition(address,bytes32) view returns (int256,uint256,uint256)"
+]);
 
-export type OraclePrice = { priceE18: bigint; confidenceBps: bigint; timestamp: bigint; sequence: bigint };
+export type OraclePrice = {
+  priceE18: bigint; spotPriceE18: bigint; confidenceBps: bigint; spotTwapDeviationBps: bigint;
+  timestamp: bigint; sequence: bigint; circuitBroken: boolean;
+};
+export type ClearingPosition = { sizeE18: bigint; entryPriceE18: bigint; marginUsdg: bigint };
 export type ClearingMarket = {
   state: number; maxLeverageE18: bigint; maintenanceMarginBps: bigint; maxExecutionDeviationBps: bigint;
   maxOracleConfidenceBps: bigint; maxPositionNotionalUsdg: bigint;
@@ -14,8 +21,15 @@ export type ClearingMarket = {
 export async function readOraclePrice(rpc: RpcTransport, oracle: Address, id: Hex): Promise<OraclePrice> {
   const data = encodeFunctionData({ abi: oracleAbi, functionName: "getPrice", args: [id] });
   const result = await rpc.call({ to: oracle, data });
-  const [priceE18, confidenceBps, timestamp, sequence] = decodeFunctionResult({ abi: oracleAbi, functionName: "getPrice", data: result });
-  return { priceE18, confidenceBps, timestamp: BigInt(timestamp), sequence: BigInt(sequence) };
+  const [priceE18, spotPriceE18, confidenceBps, spotTwapDeviationBps, timestamp, sequence, circuitBroken] = decodeFunctionResult({ abi: oracleAbi, functionName: "getPrice", data: result });
+  return { priceE18, spotPriceE18, confidenceBps, spotTwapDeviationBps, timestamp: BigInt(timestamp), sequence: BigInt(sequence), circuitBroken };
+}
+
+export async function readClearingPosition(rpc: RpcTransport, clearingHouse: Address, trader: Address, id: Hex): Promise<ClearingPosition> {
+  const data = encodeFunctionData({ abi: clearingAbi, functionName: "getPosition", args: [trader, id] });
+  const result = await rpc.call({ to: clearingHouse, data });
+  const [sizeE18, entryPriceE18, marginUsdg] = decodeFunctionResult({ abi: clearingAbi, functionName: "getPosition", data: result });
+  return { sizeE18, entryPriceE18, marginUsdg };
 }
 
 export async function readClearingMarket(rpc: RpcTransport, clearingHouse: Address, id: Hex): Promise<ClearingMarket> {

@@ -8,19 +8,23 @@ contract FloatOracle {
     error AttestationExpired();
     error InvalidTimestamp();
     error InvalidSequence();
+    error InvalidPrice();
     error ZeroAddress();
 
     bytes32 private constant DOMAIN_TYPEHASH =
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
     bytes32 private constant PRICE_TYPEHASH = keccak256(
-        "PriceAttestation(bytes32 marketId,uint256 priceE18,uint256 confidenceBps,uint64 timestamp,uint64 sequence,uint64 expiry)"
+        "PriceAttestation(bytes32 marketId,uint256 priceE18,uint256 spotPriceE18,uint256 confidenceBps,uint64 timestamp,uint64 sequence,uint64 expiry)"
     );
     bytes32 private constant NAME_HASH = keccak256("FloatSheetsOracle");
     bytes32 private constant VERSION_HASH = keccak256("1");
+    uint256 public constant MAX_SPOT_TWAP_DEVIATION_BPS = 50;
+    uint256 private constant BPS = 10_000;
 
     struct PriceAttestation {
         bytes32 marketId;
         uint256 priceE18;
+        uint256 spotPriceE18;
         uint256 confidenceBps;
         uint64 timestamp;
         uint64 sequence;
@@ -29,9 +33,12 @@ contract FloatOracle {
 
     struct Price {
         uint256 priceE18;
+        uint256 spotPriceE18;
         uint256 confidenceBps;
+        uint256 spotTwapDeviationBps;
         uint64 timestamp;
         uint64 sequence;
+        bool circuitBroken;
     }
 
     address public owner;
@@ -39,7 +46,15 @@ contract FloatOracle {
     mapping(bytes32 => bool) public marketEnabled;
     mapping(bytes32 => Price) private prices;
 
-    event PricePublished(bytes32 indexed marketId, uint256 priceE18, uint64 sequence, uint64 timestamp);
+    event PricePublished(
+        bytes32 indexed marketId,
+        uint256 priceE18,
+        uint256 spotPriceE18,
+        uint256 spotTwapDeviationBps,
+        bool circuitBroken,
+        uint64 sequence,
+        uint64 timestamp
+    );
     event SignerUpdated(address indexed signer);
     event MarketUpdated(bytes32 indexed marketId, bool enabled);
 
@@ -74,6 +89,7 @@ contract FloatOracle {
         if (attestation.expiry < block.timestamp) revert AttestationExpired();
         if (attestation.timestamp > block.timestamp) revert InvalidTimestamp();
         if (attestation.sequence <= prices[attestation.marketId].sequence) revert InvalidSequence();
+        if (attestation.priceE18 == 0 || attestation.spotPriceE18 == 0) revert InvalidPrice();
         bytes32 digest = keccak256(
             abi.encodePacked(
                 "\x19\x01",
@@ -83,6 +99,7 @@ contract FloatOracle {
                         PRICE_TYPEHASH,
                         attestation.marketId,
                         attestation.priceE18,
+                        attestation.spotPriceE18,
                         attestation.confidenceBps,
                         attestation.timestamp,
                         attestation.sequence,
@@ -92,9 +109,28 @@ contract FloatOracle {
             )
         );
         if (_recover(digest, signature) != signer) revert InvalidSignature();
-        prices[attestation.marketId] =
-            Price(attestation.priceE18, attestation.confidenceBps, attestation.timestamp, attestation.sequence);
-        emit PricePublished(attestation.marketId, attestation.priceE18, attestation.sequence, attestation.timestamp);
+        uint256 deviation = attestation.spotPriceE18 > attestation.priceE18
+            ? (attestation.spotPriceE18 - attestation.priceE18) * BPS / attestation.priceE18
+            : (attestation.priceE18 - attestation.spotPriceE18) * BPS / attestation.priceE18;
+        bool circuitBroken = deviation > MAX_SPOT_TWAP_DEVIATION_BPS;
+        prices[attestation.marketId] = Price(
+            attestation.priceE18,
+            attestation.spotPriceE18,
+            attestation.confidenceBps,
+            deviation,
+            attestation.timestamp,
+            attestation.sequence,
+            circuitBroken
+        );
+        emit PricePublished(
+            attestation.marketId,
+            attestation.priceE18,
+            attestation.spotPriceE18,
+            deviation,
+            circuitBroken,
+            attestation.sequence,
+            attestation.timestamp
+        );
     }
 
     function _domainSeparator() private view returns (bytes32) {

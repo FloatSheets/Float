@@ -13,10 +13,10 @@ export function createMarketsRouter(database: Pool, maxPriceAgeSeconds = 120): R
                 m.min_half_spread_bps, m.max_half_spread_bps,
                 s.observed_at, s.liquidity, s.usdg_balance, s.twap_price_usdg, s.spot_price_usdg,
                 s.spot_twap_deviation_bps, s.oracle_tradable
-         FROM markets m
+         FROM public.markets m
          LEFT JOIN LATERAL (
            SELECT observed_at, liquidity, usdg_balance, twap_price_usdg, spot_price_usdg,
-                  spot_twap_deviation_bps, oracle_tradable FROM pool_snapshots
+                  spot_twap_deviation_bps, oracle_tradable FROM public.pool_snapshots
            WHERE market_id = m.id ORDER BY observed_at DESC LIMIT 1
          ) s ON true
          ORDER BY m.symbol`
@@ -35,7 +35,7 @@ export function createMarketsRouter(database: Pool, maxPriceAgeSeconds = 120): R
       const result = await database.query(
         `SELECT s.observed_at, s.twap_price_usdg, s.spot_price_usdg,
                 s.spot_twap_deviation_bps, s.oracle_tradable
-         FROM pool_snapshots s JOIN markets m ON m.id=s.market_id
+         FROM public.pool_snapshots s JOIN public.markets m ON m.id=s.market_id
          WHERE m.symbol=$1 AND s.observed_at >= now() - ($2::text || ' seconds')::interval
          ORDER BY s.observed_at ASC LIMIT 500`,
         [request.params.symbol.toUpperCase(), String(seconds)]
@@ -50,7 +50,7 @@ export function createMarketsRouter(database: Pool, maxPriceAgeSeconds = 120): R
       const result = await database.query(
         `SELECT symbol, status, settlement_asset, uniswap_v3_pool_address, uniswap_v3_fee_tier,
                 max_leverage, max_ticket_usdg, min_half_spread_bps, max_half_spread_bps
-         FROM markets WHERE symbol=$1`, [request.params.symbol.toUpperCase()]
+         FROM public.markets WHERE symbol=$1`, [request.params.symbol.toUpperCase()]
       );
       if (!result.rowCount) return response.status(404).json({ error: "market not found" });
       response.json({ market: result.rows[0] });
@@ -63,9 +63,9 @@ export function createMarketsRouter(database: Pool, maxPriceAgeSeconds = 120): R
     try {
       const result = await database.query(
         `SELECT q.observed_at, q.notional_usdg, q.direction, q.execution_degradation_bps, q.quoted_output
-         FROM quote_samples q JOIN markets m ON m.id = q.market_id
+         FROM public.quote_samples q JOIN public.markets m ON m.id = q.market_id
          WHERE m.symbol = $1 AND q.observed_at = (
-           SELECT q2.observed_at FROM quote_samples q2
+           SELECT q2.observed_at FROM public.quote_samples q2
            WHERE q2.market_id = m.id
            GROUP BY q2.observed_at
            HAVING count(*) = 10
@@ -88,15 +88,15 @@ export function createMarketsRouter(database: Pool, maxPriceAgeSeconds = 120): R
         observed_at: Date | null; usdg_balance: string | null; oracle_tradable: boolean | null;
       }>(
         `SELECT m.id, m.status, m.max_half_spread_bps, s.observed_at, s.usdg_balance, s.oracle_tradable
-         FROM markets m LEFT JOIN LATERAL (
-           SELECT observed_at, usdg_balance, oracle_tradable FROM pool_snapshots WHERE market_id=m.id ORDER BY observed_at DESC LIMIT 1
+         FROM public.markets m LEFT JOIN LATERAL (
+           SELECT observed_at, usdg_balance, oracle_tradable FROM public.pool_snapshots WHERE market_id=m.id ORDER BY observed_at DESC LIMIT 1
          ) s ON true WHERE m.symbol=$1`, [symbol]
       );
       const row = market.rows[0];
       if (!row) return response.status(404).json({ error: "market not found" });
       const quotes = await database.query<{ execution_degradation_bps: number }>(
-        `SELECT execution_degradation_bps FROM quote_samples WHERE market_id=$1 AND observed_at=(
-           SELECT q2.observed_at FROM quote_samples q2
+        `SELECT execution_degradation_bps FROM public.quote_samples WHERE market_id=$1 AND observed_at=(
+           SELECT q2.observed_at FROM public.quote_samples q2
            WHERE q2.market_id=$1
            GROUP BY q2.observed_at
            HAVING count(*) = 10

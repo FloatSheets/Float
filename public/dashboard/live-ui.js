@@ -144,6 +144,24 @@
     });
   }
 
+  function installClosePosition(position){
+    const ticket=root.querySelector('.live-trade-ticket');
+    if(!ticket||!position||BigInt(position.sizeE18)===0n||ticket.querySelector('#close-live-position'))return;
+    const button=document.createElement('button');
+    button.id='close-live-position';button.type='button';button.className='secondary-btn';button.textContent='Close current position';
+    const error=ticket.querySelector('#live-trade-error');
+    button.addEventListener('click',async function(){
+      try{
+        const wallet=walletApi();if(!wallet?.connected)throw new Error('Connect a Robinhood Chain wallet first.');
+        button.disabled=true;button.textContent='Getting closing price…';if(error)error.hidden=true;
+        const quote=await wallet.buildTransaction('close-quote',{market:selected.symbol});
+        button.textContent='Confirm close…';const hash=await wallet.send(quote.transaction);
+        button.textContent='Position closed';if(error){error.textContent='Confirmed on Robinhood Chain: '+hash;error.hidden=false;}render();
+      }catch(reason){button.disabled=false;button.textContent='Close current position';if(error){error.textContent=reason instanceof Error?reason.message:'Position could not be closed.';error.hidden=false;}}
+    });
+    ticket.insertBefore(button,error||null);
+  }
+
   let walletRequest = 0;
   async function renderWalletContext(){
     const wallet=walletState(), request=++walletRequest;
@@ -153,7 +171,7 @@
     if(details){
       const grid=root.querySelector('.metric-grid');
       if(grid) grid.innerHTML='<div class="metric featured"><small>Wallet USDG balance</small><strong>'+balance+'</strong><div class="metric-note"><span class="asset-ref"><img src="/usdg_logo.png" alt="USDG">USDG</span> · available to use</div></div><div class="metric"><small>Margin in this market</small><strong id="wallet-market-margin">…</strong><div class="metric-note">'+details+' only</div></div><div class="metric"><small>Your position</small><strong id="wallet-market-size">…</strong><div class="metric-note">current size</div></div><div class="metric"><small>Settlement</small><strong>USDG</strong><div class="metric-note">Robinhood Chain</div></div>';
-      try { const position=await walletApi().position(details); if(request!==walletRequest||!position)return; const margin=root.querySelector('#wallet-market-margin'),size=root.querySelector('#wallet-market-size'); if(margin)margin.textContent=displayUsdG(BigInt(position.marginUsdg)); if(size)size.textContent=(Number(BigInt(position.sizeE18))/1e18).toLocaleString(undefined,{maximumFractionDigits:4}); } catch(error) { console.warn('FloatSheets position read failed',error); }
+      try { const position=await walletApi().position(details); if(request!==walletRequest||!position)return; const margin=root.querySelector('#wallet-market-margin'),size=root.querySelector('#wallet-market-size'); if(margin)margin.textContent=displayUsdG(BigInt(position.marginUsdg)); if(size)size.textContent=(Number(BigInt(position.sizeE18))/1e18).toLocaleString(undefined,{maximumFractionDigits:4}); installClosePosition(position); } catch(error) { console.warn('FloatSheets position read failed',error); }
     }
     if(location.hash.slice(1)==='portfolio'){
       const target=root.querySelector('#wallet-portfolio'); if(!target)return;
