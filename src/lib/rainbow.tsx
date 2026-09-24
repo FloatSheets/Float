@@ -3,7 +3,7 @@ import { getDefaultConfig } from "@rainbow-me/rainbowkit";
 import { http, useAccount, usePublicClient, useReadContract, useSendTransaction, WagmiProvider } from "wagmi";
 import { waitForTransactionReceipt } from "wagmi/actions";
 import { defineChain, formatUnits, keccak256, parseAbi, parseAbiItem, stringToHex, type Address, type Hex } from "viem";
-import { replayAccount, unrealizedPnl, type AccountEvent } from './pnl';
+import { replayAccount, unrealizedPnl, liquidationPrice, type AccountEvent } from './pnl';
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
@@ -12,6 +12,7 @@ import { getCloseTransaction, getProtocol, getTradeTransaction, getTransactionCa
 const DEFAULT_USDG_ADDRESS = "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168" as const;
 const erc20Abi = parseAbi(["function allowance(address owner,address spender) view returns (uint256)", "function balanceOf(address account) view returns (uint256)"]);
 const clearingAbi = parseAbi(["function getPosition(address trader,bytes32 marketId) view returns (int256 sizeE18,uint256 entryPriceE18,uint256 marginUsdg)"]);
+const marketRiskAbi = parseAbi(['function markets(bytes32) view returns (uint8 state,uint64 maxLeverageE18,uint64 maintenanceMarginBps,uint64 maxExecutionDeviationBps,uint64 maxOracleConfidenceBps,uint128 maxPositionNotionalUsdg)']);
 const clearingLiquidityAbi = parseAbi(["function availableLiquidity() view returns (uint256)"]);
 const oracleAbi = parseAbi(["function getPrice(bytes32) view returns (uint256,uint256,uint256,uint256,uint64,uint64,bool)"]);
 const vaultAbi = parseAbi([
@@ -154,14 +155,18 @@ export function RainbowWalletBridge() {
             const replayed = history.markets.get(id.toLowerCase()) ?? { size: 0n, entry: 0n, margin: 0n };
             if (replayed.size !== p[0] || replayed.entry !== p[1] || replayed.margin !== p[2]) throw new Error('Trading history is still syncing. Please try again.');
           }
-          let pnl = 0n, stale = false;
+          let pnl = 0n, stale = false, liquidationPriceE18: string | null = null;
           if (p[0] !== 0n) {
-            const mark = await publicClient.readContract({ address: protocolAddresses.oracle, abi: oracleAbi, functionName: 'getPrice', args: [id], blockNumber: block.number });
+            const [mark, risk] = await Promise.all([
+              publicClient.readContract({ address: protocolAddresses.oracle, abi: oracleAbi, functionName: 'getPrice', args: [id], blockNumber: block.number }),
+              publicClient.readContract({ address: protocolAddresses.clearingHouse, abi: marketRiskAbi, functionName: 'markets', args: [id], blockNumber: block.number }),
+            ]);
+            liquidationPriceE18 = liquidationPrice(p[0], p[1], p[2], risk[2])?.toString() ?? null;
             if (mark[0] === 0n) throw new Error('A price is not available yet.');
             pnl = unrealizedPnl(p[0], p[1], mark[0]);
             stale = block.timestamp > mark[4] + 120n || mark[6];
           }
-          return { symbol, sizeE18: p[0].toString(), entryPriceE18: p[1].toString(), marginUsdg: p[2].toString(), pnlUsdg: pnl.toString(), stale };
+          return { symbol, sizeE18: p[0].toString(), entryPriceE18: p[1].toString(), marginUsdg: p[2].toString(), pnlUsdg: pnl.toString(), liquidationPriceE18, stale };
         }));
         return {
           positions, address, blockNumber: block.number.toString(),

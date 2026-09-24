@@ -287,6 +287,7 @@
       const snapshot = await walletApi().pnlSnapshot(portfolio ? markets.map(m=>m.symbol) : [details], portfolio);
       if(request !== walletRequest || !root.isConnected || walletState()?.address?.toLowerCase() !== wallet.address.toLowerCase() || !walletState()?.connected) return;
       lastPnlSnapshot = {key:accountKey,snapshot};
+      if(!portfolio) activeChart?.setPosition(snapshot.positions.find(p=>p.symbol===details));
       root.querySelector('#pnl-wallet-balance').textContent = balance;
       paintPnl(snapshot,portfolio);
       const open = snapshot.positions.filter(p=>BigInt(p.sizeE18)!==0n);
@@ -311,6 +312,7 @@
       root.querySelector('#pnl-percent').textContent='—';
       root.querySelector('#pnl-caption').textContent='Update unavailable · retrying';
       lastPnlSnapshot = null;
+      activeChart?.setPosition(null);
       console.warn('FloatSheets account refresh failed',error);
     }
   }
@@ -386,7 +388,10 @@
   function scheduleChartRefresh(){
     clearInterval(window.__FLOATSHEETS_CHART_REFRESH_TIMER__);
     const onMarketPage=Boolean(location.pathname.match(/^\/dashboard\/[A-Za-z0-9.-]+\/?$/));
-    if(onMarketPage) window.__FLOATSHEETS_CHART_REFRESH_TIMER__=setInterval(function(){ drawChart(); },30_000);
+    if(onMarketPage) window.__FLOATSHEETS_CHART_REFRESH_TIMER__=setInterval(function(){
+      if(!root.isConnected){clearInterval(window.__FLOATSHEETS_CHART_REFRESH_TIMER__);activeChart?.destroy();return;}
+      if(!document.hidden)drawChart();
+    },30_000);
   }
   function scheduleWalletRefresh(){
     clearInterval(window.__FLOATSHEETS_WALLET_REFRESH_TIMER__);
@@ -398,45 +403,51 @@
       try { await renderWalletContext(); } finally { refreshing=false; }
     },15_000);
   }
+  let activeChart = null, chartKey = '', chartAbort = null;
+  if(window.__FLOATSHEETS_CHART_DISPOSE__)window.removeEventListener('floatsheets-dashboard-dispose',window.__FLOATSHEETS_CHART_DISPOSE__);
+  window.__FLOATSHEETS_CHART_DISPOSE__=function(){
+    ++chartRequest;++walletRequest;chartAbort?.abort();activeChart?.destroy();activeChart=null;
+    clearInterval(window.__FLOATSHEETS_CHART_REFRESH_TIMER__);
+    clearInterval(window.__FLOATSHEETS_WALLET_REFRESH_TIMER__);
+  };
+  window.addEventListener('floatsheets-dashboard-dispose',window.__FLOATSHEETS_CHART_DISPOSE__);
   drawChart = async function drawLiveChart(){
     const canvas=document.getElementById('price-chart');
     if(!canvas) return;
     const requestId=++chartRequest;
+    if(activeChart?.canvas!==canvas){
+      activeChart?.destroy();
+      activeChart=globalThis.FloatSheetsMarketChart.create(canvas);
+      chartKey='';
+    }
+    const key=selected.symbol+':'+timeframe;
+    if(chartKey!==key){activeChart.setData({candles:[]},timeframe);chartKey=key;}
+    activeChart.loading();
+    const wallet=walletState(), snapshot=lastPnlSnapshot;
+    const accountKey=wallet?.address?.toLowerCase()+':'+selected.symbol;
+    activeChart.setPosition(wallet?.connected && snapshot?.key===accountKey ? snapshot.snapshot.positions.find(p=>p.symbol===selected.symbol) : null);
     const api=window.__FLOATSHEETS_API_URL__;
-    if(!api) return;
+    if(!api){activeChart.unavailable();return;}
+    chartAbort?.abort();
+    chartAbort=new AbortController();
+    const controller=chartAbort;
+    const timeout=setTimeout(()=>controller.abort(),15000);
     try {
-      const response=await fetch(api.replace(/\/$/,'')+'/v1/markets/'+encodeURIComponent(selected.symbol)+'/history?range='+encodeURIComponent(timeframe),{headers:{accept:'application/json'}});
-      if(!response.ok) throw new Error('history unavailable');
+      const response=await fetch(api.replace(/\/$/,'')+'/v1/markets/'+encodeURIComponent(selected.symbol)+'/history?range='+encodeURIComponent(timeframe)+'&format=candles',{headers:{accept:'application/json'},signal:chartAbort.signal});
+      if(!response.ok) throw new Error('History unavailable');
       const payload=await response.json();
-      if(requestId!==chartRequest||!Array.isArray(payload.points)||!payload.points.length) return;
-      const points=payload.points.map(function(point){return {time:new Date(point.observed_at),price:Number(point.twap_price_usdg ?? point.spot_price_usdg),deviation:Number(point.spot_twap_deviation_bps||0)/10000};}).filter(function(point){return Number.isFinite(point.price)&&point.price>0&&!Number.isNaN(point.time.getTime());});
-      if(!points.length) return;
-      // Candles are calculated only from persisted oracle snapshots. They are
-      // not market-data placeholders: each open/high/low/close is a recorded
-      // USDG midpoint within the selected time bucket.
-      const bucketMs={"1H":5*60e3,"4H":15*60e3,"1D":60*60e3,"1W":6*60*60e3,"1M":24*60*60e3}[timeframe]||60*60e3;
-      const candles=[];
-      points.forEach(function(point){
-        const bucket=Math.floor(point.time.getTime()/bucketMs)*bucketMs;
-        const candle=candles[candles.length-1];
-        if(!candle||candle.bucket!==bucket) candles.push({bucket:bucket,time:point.time,open:point.price,high:point.price,low:point.price,close:point.price,deviation:point.deviation});
-        else { candle.high=Math.max(candle.high,point.price); candle.low=Math.min(candle.low,point.price); candle.close=point.price; candle.deviation=Math.max(candle.deviation,point.deviation); }
-      });
-      const box=canvas.getBoundingClientRect(),dpr=devicePixelRatio||1,w=box.width,h=box.height,left=12,right=56,top=25,bottom=35;
-      const ctx=canvas.getContext('2d'); if(!ctx) return; canvas.width=w*dpr; canvas.height=h*dpr; ctx.setTransform(dpr,0,0,dpr,0,0);
-      const prices=candles.flatMap(function(candle){return [candle.high,candle.low];}),min=Math.min.apply(null,prices),max=Math.max.apply(null,prices),pad=Math.max((max-min)*.12,max*.0005),lo=min-pad,hi=max+pad;
-      const X=function(i){return left+(i/Math.max(1,candles.length-1))*(w-left-right);},Y=function(price){return top+(hi-price)/(hi-lo)*(h-top-bottom);};
-      ctx.clearRect(0,0,w,h);ctx.font='10px Arial';ctx.textAlign='left';
-      for(let i=0;i<5;i++){const y=top+i*(h-top-bottom)/4;ctx.strokeStyle=document.body.classList.contains('dashboard-dark')?'#273754':'#edf1f7';ctx.beginPath();ctx.moveTo(left,y);ctx.lineTo(w-right,y);ctx.stroke();ctx.fillStyle=document.body.classList.contains('dashboard-dark')?'#9aacd0':'#8d9ab2';ctx.fillText((hi-i*(hi-lo)/4).toFixed(2),w-right+10,y+4);}
-      const slot=(w-left-right)/Math.max(1,candles.length),body=Math.max(2,Math.min(14,slot*.58));
-      candles.forEach(function(candle,i){const x=X(i),up=candle.close>=candle.open,color=up?'#1f9d70':'#db5b66',high=Y(candle.high),low=Y(candle.low),open=Y(candle.open),close=Y(candle.close);ctx.strokeStyle=color;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x,high);ctx.lineTo(x,low);ctx.stroke();ctx.fillStyle=color;ctx.fillRect(x-body/2,Math.min(open,close),body,Math.max(1,Math.abs(close-open)));});
-      ctx.fillStyle=document.body.classList.contains('dashboard-dark')?'#9aacd0':'#8d9ab2';for(let i=0;i<5;i++){const candle=candles[Math.min(candles.length-1,Math.round(i*(candles.length-1)/4))];ctx.fillText(candle.time.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}),X(Math.min(candles.length-1,Math.round(i*(candles.length-1)/4))),h-10);}
-      canvas.onmousemove=function(event){const rect=canvas.getBoundingClientRect(),index=Math.max(0,Math.min(candles.length-1,Math.round((event.clientX-rect.left-left)/(w-left-right)*(candles.length-1)))),candle=candles[index],tip=document.querySelector('.chart-tooltip');if(!tip)return;tip.style.display='block';tip.style.left=Math.min(w-190,Math.max(0,event.clientX-rect.left+10))+'px';tip.textContent=candle.time.toLocaleString()+' · O $'+money(candle.open,4)+' H $'+money(candle.high,4)+' L $'+money(candle.low,4)+' C $'+money(candle.close,4);};canvas.onmouseleave=function(){const tip=document.querySelector('.chart-tooltip');if(tip)tip.style.display='none';};
-    } catch(error) { console.warn('FloatSheets historical chart unavailable',error); }
+      if(requestId!==chartRequest || !canvas.isConnected) return;
+      activeChart.setData(payload,timeframe);
+    } catch(error) {
+      if(requestId===chartRequest && canvas.isConnected)activeChart.unavailable();
+    } finally {clearTimeout(timeout);}
   };
 
   render=function(){
     ++walletRequest;
+    ++chartRequest;
+    chartAbort?.abort();
+    activeChart?.destroy();activeChart=null;
     if(!window.__FLOATSHEETS_LIVE_MARKETS__){ root.innerHTML='<section class="panel live-only-panel"><h2>Loading markets</h2><p>Getting the latest prices and market status.</p></section>'; return; }
     // Set the selected live market before the legacy renderer creates its
     // chart and trade panel. This avoids briefly building a transaction for

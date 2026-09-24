@@ -4,6 +4,21 @@ export function unrealizedPnl(size: bigint, entry: bigint, mark: bigint) {
   return size * (mark - entry) / 10n ** 30n;
 }
 
+/** Indicative mark where equity equals maintenance, using the current post-fee
+ * margin and on-chain maintenance ratio. Contract USDG rounding and oracle
+ * availability affect actual liquidation; this is not an execution guarantee. */
+export function liquidationPrice(size: bigint, entry: bigint, margin: bigint, maintenanceBps: bigint): bigint | null {
+  if (size === 0n) return null;
+  if (entry <= 0n || margin < 0n || maintenanceBps <= 0n || maintenanceBps >= 10000n) {
+    throw new Error('Invalid liquidation inputs');
+  }
+  const quantity = abs(size);
+  const collateral = margin * 10n ** 30n;
+  const numerator = quantity * entry + (size > 0n ? -collateral : collateral);
+  if (numerator <= 0n) return null; // Fully collateralized long: no positive boundary.
+  return numerator * 10000n / (quantity * (10000n + (size > 0n ? -maintenanceBps : maintenanceBps)));
+}
+
 export type AccountEvent = {
   eventName: string;
   args: { marketId: string; assets?: bigint; sizeDeltaE18?: bigint; executionPriceE18?: bigint; feeUsdg?: bigint; pnlUsdg?: bigint; penaltyUsdg?: bigint };

@@ -113,6 +113,7 @@ export function FloatSheetsPage({ page }: { page: FloatPage }) {
 
     return () => {
       active = false;
+      if (page.route === '/dashboard/') window.dispatchEvent(new Event('floatsheets-dashboard-dispose'));
       removeWalletButton?.();
       delete (window as Window & { __FLOATSHEETS_INSTALL_WALLET__?: () => void }).__FLOATSHEETS_INSTALL_WALLET__;
       clearTimeout(fadeTimer);

@@ -60,3 +60,21 @@
 @media(prefers-reduced-motion:reduce){.dashboard-page *{animation:none!important;transition:none!important}}
 .metric-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.metric{min-width:0}.pnl-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;flex-wrap:wrap}.pnl-heading small{margin-bottom:12px}.pnl-toggle{display:flex;gap:2px;max-width:100%;margin-bottom:12px;border:1px solid #cad5e8;border-radius:6px;padding:2px}.pnl-toggle button{background:transparent;border:0;border-radius:4px;color:inherit;font:inherit;font-size:12px;padding:5px 8px;cursor:pointer}.pnl-toggle button[aria-pressed=true]{background:#153c92;color:white}.pnl-toggle button:focus-visible{outline:2px solid #547fe0;outline-offset:2px}.metric .pnl-value{display:flex;flex-wrap:wrap;max-width:100%;gap:0;font:inherit;font-size:clamp(18px,2.1vw,31px);letter-spacing:-.06em;line-height:1.2;font-variant-numeric:tabular-nums}.metric .pnl-value span{display:block;margin:0;padding:0;font:inherit;color:inherit;line-height:1;transform:none}.metric .pnl-value .pnl-reel{position:relative;flex:0 0 auto;height:1em;overflow:hidden}.metric .pnl-value .pnl-reel-strip{display:block}.metric .pnl-value .pnl-reel-strip>span{height:1em}.metric .pnl-note{flex-wrap:wrap;align-items:center;gap:6px}.metric .pnl-note>span{margin:0;line-height:1.35;overflow-wrap:anywhere}.pnl-caption{font-size:11px;color:#7587a5;line-height:1.5;margin-top:7px;overflow-wrap:anywhere}.dashboard-dark .pnl-caption{color:#9fb2d4}.dashboard-dark .pnl-toggle{border-color:#3c5687}.dashboard-dark .pnl-toggle button[aria-pressed=true]{background:#29477b}.metric .pnl-value.positive{color:#16835f}.metric .pnl-value.negative{color:#c13d4f}.dashboard-dark .metric .pnl-value.positive{color:#4adea0}.dashboard-dark .metric .pnl-value.negative{color:#fb8090}@media(max-width:720px){.metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.pnl-card{grid-column:1/-1}.metric .pnl-value{font-size:clamp(20px,5.6vw,31px)}}@media(max-width:360px){.metric-grid{grid-template-columns:minmax(0,1fr)}}
 .workspace-banner{display:flex;align-items:center;border-bottom:1px solid #dce3f0}.workspace-banner .preview-description{display:inline}.workspace-banner button{margin-left:auto;background:transparent;border:0;color:var(--blue);white-space:nowrap}
+
+/* Price + OHLC live outside the plot, so hover details never cover the price. */
+.chart-wrap.candlestick-chart{height:auto;min-width:0;margin:16px;position:relative}
+.candlestick-chart .candle-header{display:grid;gap:8px;padding:4px 8px 14px;min-height:112px}
+.candle-price{font-size:clamp(28px,4vw,42px);line-height:1.1;font-weight:600;overflow-wrap:anywhere;color:var(--blue)}
+.candle-change{font-size:12px;line-height:1.5;overflow-wrap:anywhere}
+.candle-ohlc{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:12px;line-height:1.5;color:var(--muted)}
+.candle-ohlc b{font-weight:600;color:var(--blue)}
+.candle-change.is-up{color:#087d4e}.candle-change.is-down{color:#bf3a29}
+.candlestick-chart canvas{display:block;width:100%;height:320px;touch-action:pan-y;font-family:inherit}
+.candlestick-chart canvas:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+.candle-status,.candle-risk{font-size:11px;line-height:1.6;color:var(--muted);padding:6px 8px 0;overflow-wrap:anywhere}
+.candle-risk:empty{display:none}.candle-risk{color:#b3362c}
+.dashboard-dark .candlestick-chart{background:#10151e;border-radius:8px;padding:8px}
+.dashboard-dark .candle-price,.dashboard-dark .candle-ohlc b{color:#edf3ff}
+.dashboard-dark .candle-change.is-up{color:#25d88c}.dashboard-dark .candle-change.is-down{color:#ff7965}
+.dashboard-dark .candle-risk{color:#ff9c95}
+@media(max-width:600px){.chart-wrap.candlestick-chart{margin:8px}.candlestick-chart canvas{height:270px}.candle-ohlc{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 8px}.candle-ohlc span{overflow-wrap:anywhere}.chart-toolbar{flex-wrap:wrap;gap:8px}.candlestick-chart .candle-header{min-height:132px}}
