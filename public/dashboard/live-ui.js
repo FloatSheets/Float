@@ -131,18 +131,33 @@
     collateral.addEventListener('input',update); leverage.addEventListener('input',update); update();
     submit.addEventListener('click',async function(){
       let marginDeposited=false;
+      let marginAlreadyHeld=false;
+      let margin=0n;
       try {
         const wallet=walletApi(); if(!wallet?.connected) throw new Error('Connect a Robinhood Chain wallet first.');
-        const margin=rawUsdG(collateral.value),lev=BigInt(leverage.value),notional=margin*lev*10000n/(10000n+lev*6n);
+        margin=rawUsdG(collateral.value);
+        const lev=BigInt(leverage.value);
+        let notional=margin*lev*10000n/(10000n+lev*6n);
         if(margin===0n||notional===0n) throw new Error('Margin is too small for this leverage.');
         ticket.dataset.submitting='true'; submit.disabled=true;
-        const allowance=await wallet.allowance();
-        if(allowance<margin){submit.textContent='Confirm USDG approval…';const approval=await wallet.buildTransaction('approve',{amountUsdg:margin.toString()});await wallet.send(approval.transaction);}
-        submit.textContent='Confirm margin deposit…';const deposit=await wallet.buildTransaction('deposit',{market:selected.symbol,amountUsdg:margin.toString()});await wallet.send(deposit.transaction);marginDeposited=true;
+        const existingPosition=await wallet.position(selected.symbol);
+        const heldMargin=existingPosition&&BigInt(existingPosition.sizeE18)===0n?BigInt(existingPosition.marginUsdg):0n;
+        if(heldMargin>0n){
+          // A previous quote can fail after its separate margin transaction
+          // confirms. Never ask the user to deposit that margin again.
+          margin=heldMargin;
+          notional=margin*lev*10000n/(10000n+lev*6n);
+          marginAlreadyHeld=true;
+          submit.textContent='Using available margin…';
+        } else {
+          const allowance=await wallet.allowance();
+          if(allowance<margin){submit.textContent='Confirm USDG approval…';const approval=await wallet.buildTransaction('approve',{amountUsdg:margin.toString()});await wallet.send(approval.transaction);}
+          submit.textContent='Confirm margin deposit…';const deposit=await wallet.buildTransaction('deposit',{market:selected.symbol,amountUsdg:margin.toString()});await wallet.send(deposit.transaction);marginDeposited=true;
+        }
         submit.textContent='Requesting live quote…';const quote=await wallet.buildTransaction('trade-quote',{market:selected.symbol,isLong:isLong,notionalUsdg:notional.toString()});
         submit.textContent='Confirm trade…';const hash=await wallet.send(quote.transaction);
         delete ticket.dataset.submitting; render(); showActionModal('Position opened','Your '+selected.symbol+' position was confirmed on Robinhood Chain. Transaction: '+hash);
-      } catch(reason) { delete ticket.dataset.submitting; submit.disabled=false; submit.textContent='Open '+(isLong?'long':'short')+' position'; const message=reason instanceof Error?reason.message:'Trade could not be submitted.'; if(marginDeposited) void offerMarginRecovery(selected.symbol,margin,message); else showActionModal('Could not open position',message); }
+      } catch(reason) { delete ticket.dataset.submitting; submit.disabled=false; submit.textContent='Open '+(isLong?'long':'short')+' position'; const message=reason instanceof Error?reason.message:'Trade could not be submitted.'; if(marginDeposited||marginAlreadyHeld) void offerMarginRecovery(selected.symbol,margin,message); else showActionModal('Could not open position',message); }
     });
   }
 
