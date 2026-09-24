@@ -210,30 +210,108 @@
   }
 
   let walletRequest = 0;
+  let portfolioPnlMode = localStorage.getItem('floatsheets-portfolio-pnl') === 'realized' ? 'realized' : 'unrealized';
+  let lastPnlSnapshot = null;
+  const pnlDisplay = window.FloatSheetsPnlDisplay;
+
+  function pnlCard(portfolio){
+    return '<div class="metric pnl-card"><div class="pnl-heading"><small id="pnl-label">Unrealized PnL</small>'+(portfolio?'<div class="pnl-toggle" role="group" aria-label="Profit and loss view"><button type="button" data-pnl-mode="unrealized">uPnL</button><button type="button" data-pnl-mode="realized">PnL</button></div>':'')+'</div><strong id="wallet-market-pnl" class="pnl-value" role="img" aria-label="Loading profit and loss">…</strong><div class="metric-note pnl-note"><span class="asset-ref"><img src="/usdg_logo.png" alt="">USDG</span><span id="pnl-percent">—</span></div><div class="pnl-caption" id="pnl-caption"></div></div>';
+  }
+
+  function rollValue(element, value){
+    if(element.dataset.value === value) return;
+    const previous = element.dataset.value;
+    element.dataset.value = value;
+    element.setAttribute('aria-label', value + ' USDG');
+    const animate = previous && !document.body.classList.contains('reduce-dash-motion') && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    element.replaceChildren();
+    Array.from(value).forEach(function(character, index){
+      const slot = document.createElement('span'); slot.className = 'pnl-reel'; slot.setAttribute('aria-hidden','true');
+      if(!/\d/.test(character) || !animate || previous[index] === character){
+        slot.textContent = character;
+      } else {
+        const oldDigit = /\d/.test(previous[index] || '') ? Number(previous[index]) : 0;
+        const steps = 10 + (Number(character) - oldDigit + 10) % 10;
+        const strip = document.createElement('span'); strip.className = 'pnl-reel-strip';
+        for(let n=0;n<=steps;n++){const digit=document.createElement('span');digit.textContent=String((oldDigit+n)%10);strip.append(digit);}
+        slot.append(strip);
+        const animation = strip.animate([{transform:'translateY(0)'},{transform:'translateY(-'+steps+'em)'}], {duration:550+index*18,easing:'cubic-bezier(.18,.7,.25,1)',fill:'forwards'});
+        animation.onfinish=function(){if(slot.isConnected)slot.replaceChildren(document.createTextNode(character));};
+      }
+      element.append(slot);
+    });
+  }
+
+  function paintPnl(snapshot, portfolio){
+    const realized = portfolio && portfolioPnlMode === 'realized';
+    const raw = BigInt(realized ? snapshot.realizedUsdg : snapshot.unrealizedUsdg);
+    const denominator = realized ? snapshot.depositedUsdg : snapshot.activeMarginUsdg;
+    const value = root.querySelector('#wallet-market-pnl');
+    if(!value) return;
+    root.querySelector('#pnl-label').textContent = realized ? 'Realized PnL' : 'Unrealized PnL';
+    value.classList.toggle('positive', raw > 0n); value.classList.toggle('negative', raw < 0n);
+    rollValue(value, pnlDisplay.signedDecimal(raw));
+    const percent = root.querySelector('#pnl-percent');
+    percent.textContent = '('+pnlDisplay.percentage(raw, denominator)+')';
+    percent.title = realized ? 'Return on total margin deposited across your markets.' : 'Return on the current margin backing your open positions.';
+    root.querySelector('#pnl-caption').textContent = realized ? 'After trading fees · all markets' : (snapshot.stale ? 'Last available price · update delayed' : 'Before closing fees');
+    root.querySelectorAll('[data-pnl-mode]').forEach(function(button){button.setAttribute('aria-pressed',String((button.dataset.pnlMode === 'realized') === realized));});
+  }
+
   async function renderWalletContext(){
-    const wallet=walletState(), request=++walletRequest;
+    const wallet = walletState(), request = ++walletRequest;
     if(!wallet?.connected) return;
-    const details=location.pathname.match(/^\/dashboard\/([A-Za-z0-9.-]+)\/?$/)?.[1]?.toUpperCase();
-    const balance=displayUsdG(rawUsdG(wallet.usdgBalance||'0'));
-    if(details){
-      const grid=root.querySelector('.metric-grid');
-      if(grid) grid.innerHTML='<div class="metric featured"><small>Wallet USDG balance</small><strong>'+balance+'</strong><div class="metric-note"><span class="asset-ref"><img src="/usdg_logo.png" alt="USDG">USDG</span> · available to use</div></div><div class="metric"><small>Margin in this market</small><strong id="wallet-market-margin">…</strong><div class="metric-note">'+details+' only</div></div><div class="metric"><small>Your position</small><strong id="wallet-market-size">…</strong><div class="metric-note">current size</div></div><div class="metric"><small>Unrealized PnL</small><strong id="wallet-market-pnl">…</strong><div class="metric-note">live price</div></div>';
-      try { const results=await Promise.all([walletApi().position(details),walletApi().marketPrice(details)]),position=results[0],price=results[1]; if(request!==walletRequest||!position)return; const margin=root.querySelector('#wallet-market-margin'),size=root.querySelector('#wallet-market-size'),pnl=root.querySelector('#wallet-market-pnl'); if(margin)margin.textContent=displayUsdG(BigInt(position.marginUsdg)); if(size)size.textContent=(Number(BigInt(position.sizeE18))/1e18).toLocaleString(undefined,{maximumFractionDigits:4}); if(pnl){const rawPnl=BigInt(position.sizeE18)*(BigInt(price?.priceE18||'0')-BigInt(position.entryPriceE18))/1000000000000000000000000000000n;pnl.textContent=(rawPnl>=0n?'+':'−')+displayUsdG(rawPnl>=0n?rawPnl:-rawPnl);pnl.classList.toggle('positive',rawPnl>0n);pnl.classList.toggle('negative',rawPnl<0n);} installClosePosition(position); installMarginRecovery(position); } catch(error) { console.warn('FloatSheets position read failed',error); }
+    const view = location.hash.slice(1) || 'trade';
+    const portfolio = view === 'portfolio';
+    const details = view === 'trade' ? location.pathname.match(/^\/dashboard\/([A-Za-z0-9.-]+)\/?$/)?.[1]?.toUpperCase() : null;
+    if(!portfolio && !details) return;
+    const balance = displayUsdG(rawUsdG(wallet.usdgBalance || '0'));
+    const accountKey = wallet.address.toLowerCase() + ':' + (portfolio ? 'portfolio' : details);
+    const target = portfolio ? root.querySelector('#wallet-portfolio') : root.querySelector('.metric-grid');
+    if(!target) return;
+    if(target.dataset.account !== accountKey){
+      target.dataset.account = accountKey;
+      const walletCard = '<div class="metric featured"><small>Wallet USDG balance</small><strong id="pnl-wallet-balance">'+balance+'</strong><div class="metric-note"><span class="asset-ref"><img src="/usdg_logo.png" alt="">USDG</span> · available to use</div></div>';
+      target.innerHTML = portfolio
+        ? '<div class="metric-grid">'+walletCard+'<div class="metric"><small>Open positions</small><strong id="portfolio-position-count">…</strong><div class="metric-note">across your markets</div></div>'+pnlCard(true)+'</div><div id="portfolio-position-table"></div>'
+        : walletCard+'<div class="metric"><small>Margin in this market</small><strong id="wallet-market-margin">…</strong><div class="metric-note">'+details+' only</div></div><div class="metric"><small>Your position</small><strong id="wallet-market-size">…</strong><div class="metric-note">current size</div></div>'+pnlCard(false);
+      target.querySelectorAll('[data-pnl-mode]').forEach(function(button){
+        button.addEventListener('click',function(){
+          portfolioPnlMode = button.dataset.pnlMode;
+          localStorage.setItem('floatsheets-portfolio-pnl',portfolioPnlMode);
+          if(lastPnlSnapshot?.key === accountKey) paintPnl(lastPnlSnapshot.snapshot,true);
+        });
+      });
     }
-    if(location.hash.slice(1)==='portfolio'){
-      const target=root.querySelector('#wallet-portfolio'); if(!target)return;
-      target.innerHTML='<p>Loading your positions.</p>';
-      try { const positions=(await Promise.all(markets.map(async function(m){return {market:m,position:await walletApi().position(m.symbol)};}))).filter(function(item){return item.position&&BigInt(item.position.sizeE18)!==0n;}); if(request!==walletRequest)return; target.innerHTML='<div class="metric-grid"><div class="metric featured"><small>Wallet USDG balance</small><strong>'+balance+'</strong><div class="metric-note"><span class="asset-ref"><img src="/usdg_logo.png" alt="USDG">USDG</span> · wallet balance</div></div><div class="metric"><small>Open on-chain positions</small><strong>'+positions.length+'</strong><div class="metric-note">across configured markets</div></div></div>'+(positions.length?'<div class="table-scroll"><table><thead><tr><th>Market</th><th>Direction</th><th>Base size</th><th>Entry price</th><th>Margin</th></tr></thead><tbody>'+positions.map(function(item){const p=item.position;return '<tr><td>'+item.market.symbol+'</td><td class="'+(BigInt(p.sizeE18)>0n?'positive':'negative')+'">'+(BigInt(p.sizeE18)>0n?'Long':'Short')+'</td><td>'+Math.abs(Number(BigInt(p.sizeE18))/1e18).toLocaleString(undefined,{maximumFractionDigits:4})+'</td><td>$'+(Number(BigInt(p.entryPriceE18))/1e18).toLocaleString(undefined,{maximumFractionDigits:4})+'</td><td>'+displayUsdG(BigInt(p.marginUsdg))+' USDG</td></tr>';}).join('')+'</tbody></table></div>':'<div class="empty-state"><h3>No on-chain positions</h3><p>Your connected wallet has no open FloatSheets positions in configured markets.</p></div>'); } catch(error) { target.innerHTML=''; showActionModal('Portfolio unavailable',error instanceof Error?error.message:'Your positions could not be loaded.'); }
-    }
-    const tradePositionsTarget=root.querySelector('#wallet-trade-positions');
-    if(details&&tradePositionsTarget){
-      tradePositionsTarget.innerHTML='<div class="panel-head"><h2>Open position</h2></div><div class="panel-body"><p>Loading your '+details+' position.</p></div>';
-      try {
-        const position=await walletApi().position(details);
-        if(request!==walletRequest||!position)return;
-        const size=BigInt(position.sizeE18),margin=BigInt(position.marginUsdg);
-        tradePositionsTarget.innerHTML='<div class="panel-head"><h2>Open position</h2></div>'+(size!==0n?'<div class="table-scroll"><table><thead><tr><th>Market</th><th>Direction</th><th>Base size</th><th>Entry price</th><th>Margin</th></tr></thead><tbody><tr><td>'+details+'</td><td class="'+(size>0n?'positive':'negative')+'">'+(size>0n?'Long':'Short')+'</td><td>'+Math.abs(Number(size)/1e18).toLocaleString(undefined,{maximumFractionDigits:4})+'</td><td>$'+(Number(BigInt(position.entryPriceE18))/1e18).toLocaleString(undefined,{maximumFractionDigits:4})+'</td><td>'+displayUsdG(margin)+' USDG</td></tr></tbody></table></div>':'<div class="empty-state"><h3>No open '+details+' position</h3><p>Open a position to see it here.</p></div>');
-      } catch(error) { tradePositionsTarget.innerHTML=''; console.warn('FloatSheets trade position read failed',error); }
+    try {
+      const snapshot = await walletApi().pnlSnapshot(portfolio ? markets.map(m=>m.symbol) : [details], portfolio);
+      if(request !== walletRequest || !root.isConnected || walletState()?.address?.toLowerCase() !== wallet.address.toLowerCase() || !walletState()?.connected) return;
+      lastPnlSnapshot = {key:accountKey,snapshot};
+      root.querySelector('#pnl-wallet-balance').textContent = balance;
+      paintPnl(snapshot,portfolio);
+      const open = snapshot.positions.filter(p=>BigInt(p.sizeE18)!==0n);
+      const table = '<div class="table-scroll"><table><thead><tr><th>Market</th><th>Direction</th><th>Base size</th><th>Entry price</th><th>Margin</th><th>uPnL (USDG)</th></tr></thead><tbody>'+open.map(function(p){
+        return '<tr><td>'+escapeMessage(p.symbol)+'</td><td class="'+(BigInt(p.sizeE18)>0n?'positive':'negative')+'">'+(BigInt(p.sizeE18)>0n?'Long':'Short')+'</td><td>'+Math.abs(Number(p.sizeE18)/1e18).toLocaleString(undefined,{maximumFractionDigits:8})+'</td><td>$'+(Number(p.entryPriceE18)/1e18).toLocaleString(undefined,{maximumFractionDigits:4})+'</td><td>'+displayUsdG(BigInt(p.marginUsdg))+' USDG</td><td>'+pnlDisplay.signedDecimal(p.pnlUsdg)+'</td></tr>';
+      }).join('')+'</tbody></table></div>';
+      if(portfolio){
+        root.querySelector('#portfolio-position-count').textContent = String(open.length);
+        root.querySelector('#portfolio-position-table').innerHTML = open.length ? table : '<div class="empty-state"><h3>No open positions</h3><p>Your closed trades are included in realized PnL.</p></div>';
+      } else {
+        const position = snapshot.positions[0];
+        root.querySelector('#wallet-market-margin').textContent = displayUsdG(BigInt(position.marginUsdg));
+        root.querySelector('#wallet-market-size').textContent = (Number(position.sizeE18)/1e18).toLocaleString(undefined,{maximumFractionDigits:8});
+        installClosePosition(position); installMarginRecovery(position);
+        const positionsTarget = root.querySelector('#wallet-trade-positions');
+        if(positionsTarget) positionsTarget.innerHTML = '<div class="panel-head"><h2>Open position</h2></div>'+(open.length ? table : '<div class="empty-state"><h3>No open '+details+' position</h3><p>Open a position to see it here.</p></div>');
+      }
+    } catch(error) {
+      if(request !== walletRequest || !root.isConnected) return;
+      const value = root.querySelector('#wallet-market-pnl');
+      if(value){value.textContent='—';value.removeAttribute('data-value');value.setAttribute('aria-label','Profit and loss unavailable');}
+      root.querySelector('#pnl-percent').textContent='—';
+      root.querySelector('#pnl-caption').textContent='Update unavailable · retrying';
+      lastPnlSnapshot = null;
+      console.warn('FloatSheets account refresh failed',error);
     }
   }
 
@@ -312,8 +390,13 @@
   }
   function scheduleWalletRefresh(){
     clearInterval(window.__FLOATSHEETS_WALLET_REFRESH_TIMER__);
-    const onMarketPage=Boolean(location.pathname.match(/^\/dashboard\/[A-Za-z0-9.-]+\/?$/));
-    if(walletState()?.connected&&(onMarketPage||location.hash.slice(1)==='portfolio'||location.hash.slice(1)==='vault')) window.__FLOATSHEETS_WALLET_REFRESH_TIMER__=setInterval(function(){void renderWalletContext();void renderVaultContext();},15_000);
+    let refreshing=false;
+    if(walletState()?.connected) window.__FLOATSHEETS_WALLET_REFRESH_TIMER__=setInterval(async function(){
+      if(!root.isConnected){clearInterval(window.__FLOATSHEETS_WALLET_REFRESH_TIMER__);return;}
+      if(refreshing||document.hidden||root.querySelector('.live-trade-ticket[data-submitting="true"]'))return;
+      refreshing=true;
+      try { await renderWalletContext(); } finally { refreshing=false; }
+    },15_000);
   }
   drawChart = async function drawLiveChart(){
     const canvas=document.getElementById('price-chart');
@@ -353,6 +436,7 @@
   };
 
   render=function(){
+    ++walletRequest;
     if(!window.__FLOATSHEETS_LIVE_MARKETS__){ root.innerHTML='<section class="panel live-only-panel"><h2>Loading markets</h2><p>Getting the latest prices and market status.</p></section>'; return; }
     // Set the selected live market before the legacy renderer creates its
     // chart and trade panel. This avoids briefly building a transaction for
@@ -379,8 +463,8 @@
     scheduleWalletRefresh();
   };
   // Discard any local design-time account state before the first live render.
-  state={balance:0,positions:[],orders:[],activity:[],nominations:[],vault:0,staked:0,float:0,preferences:{notifications:true,reduced:false},name:'Trading account'};
-  save=function(){};
+  state={balance:0,positions:[],orders:[],activity:[],nominations:[],vault:0,staked:0,float:0,preferences:{notifications:true,reduced:localStorage.getItem('floatsheets-reduced-motion')==='true'},name:'Trading account'};
+  save=function(){localStorage.setItem('floatsheets-reduced-motion',String(Boolean(state.preferences.reduced)));};
   render();
   // Dashboard scripts are re-mounted by the SPA. Replace the prior listener
   // rather than retaining stale roots, and do not disrupt a wallet approval

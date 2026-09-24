@@ -2,7 +2,8 @@ import { ConnectButton, RainbowKitProvider, lightTheme } from "@rainbow-me/rainb
 import { getDefaultConfig } from "@rainbow-me/rainbowkit";
 import { http, useAccount, usePublicClient, useReadContract, useSendTransaction, WagmiProvider } from "wagmi";
 import { waitForTransactionReceipt } from "wagmi/actions";
-import { defineChain, formatUnits, keccak256, parseAbi, stringToHex, type Address, type Hex } from "viem";
+import { defineChain, formatUnits, keccak256, parseAbi, parseAbiItem, stringToHex, type Address, type Hex } from "viem";
+import { replayAccount, unrealizedPnl, type AccountEvent } from './pnl';
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
@@ -126,6 +127,50 @@ export function RainbowWalletBridge() {
         const marketId = keccak256(stringToHex(symbol.trim().toUpperCase()));
         const result = await publicClient.readContract({ address: protocolAddresses.oracle, abi: oracleAbi, functionName: "getPrice", args: [marketId] });
         return { priceE18: result[0].toString(), timestamp: result[4].toString(), circuitBroken: result[6] };
+      },
+      async pnlSnapshot(symbols: string[], includeHistory = false) {
+        if (!connected || !address || !publicClient || !protocolAddresses) throw new Error('Connect your wallet and wait for trading settings to load.');
+        const block = await publicClient.getBlock();
+        let history: ReturnType<typeof replayAccount> | undefined;
+        if (includeHistory) {
+          const events = [
+            parseAbiItem('event MarginDeposited(address indexed trader, bytes32 indexed marketId, uint256 assets)'),
+            parseAbiItem('event MarginWithdrawn(address indexed trader, bytes32 indexed marketId, uint256 assets)'),
+            parseAbiItem('event TradeExecuted(address indexed trader, bytes32 indexed marketId, int256 sizeDeltaE18, uint256 executionPriceE18, uint256 feeUsdg)'),
+            parseAbiItem('event PositionLiquidated(address indexed trader, bytes32 indexed marketId, uint256 priceE18, int256 pnlUsdg, uint256 penaltyUsdg, address liquidator)'),
+          ] as const;
+          const groups = await Promise.all(events.map(event => publicClient.getLogs({
+            address: protocolAddresses.clearingHouse, event, args: { trader: address }, fromBlock: 0n, toBlock: block.number, strict: true,
+          })));
+          const logs = groups.flat().filter(log => !log.removed).sort((a, b) =>
+            a.blockNumber === b.blockNumber ? a.logIndex - b.logIndex : a.blockNumber < b.blockNumber ? -1 : 1);
+          history = replayAccount(logs as AccountEvent[]);
+        }
+        const ids = new Map(symbols.map(symbol => [keccak256(stringToHex(symbol.toUpperCase())), symbol]));
+        for (const id of history?.markets.keys() ?? []) if (!ids.has(id as Hex)) ids.set(id as Hex, id.slice(0, 10));
+        const positions = await Promise.all([...ids].map(async ([id, symbol]) => {
+          const p = await publicClient.readContract({ address: protocolAddresses.clearingHouse, abi: clearingAbi, functionName: 'getPosition', args: [address, id], blockNumber: block.number });
+          if (history) {
+            const replayed = history.markets.get(id.toLowerCase()) ?? { size: 0n, entry: 0n, margin: 0n };
+            if (replayed.size !== p[0] || replayed.entry !== p[1] || replayed.margin !== p[2]) throw new Error('Trading history is still syncing. Please try again.');
+          }
+          let pnl = 0n, stale = false;
+          if (p[0] !== 0n) {
+            const mark = await publicClient.readContract({ address: protocolAddresses.oracle, abi: oracleAbi, functionName: 'getPrice', args: [id], blockNumber: block.number });
+            if (mark[0] === 0n) throw new Error('A price is not available yet.');
+            pnl = unrealizedPnl(p[0], p[1], mark[0]);
+            stale = block.timestamp > mark[4] + 120n || mark[6];
+          }
+          return { symbol, sizeE18: p[0].toString(), entryPriceE18: p[1].toString(), marginUsdg: p[2].toString(), pnlUsdg: pnl.toString(), stale };
+        }));
+        return {
+          positions, address, blockNumber: block.number.toString(),
+          unrealizedUsdg: positions.reduce((sum, p) => sum + BigInt(p.pnlUsdg), 0n).toString(),
+          activeMarginUsdg: positions.reduce((sum, p) => sum + (BigInt(p.sizeE18) !== 0n ? BigInt(p.marginUsdg) : 0n), 0n).toString(),
+          realizedUsdg: history?.realized.toString() ?? null,
+          depositedUsdg: history?.deposits.toString() ?? null,
+          stale: positions.some(p => p.stale),
+        };
       }
     };
     window.dispatchEvent(new CustomEvent("floatsheets-wallet-state", { detail: state }));
