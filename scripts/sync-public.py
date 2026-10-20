@@ -13,24 +13,16 @@ PUBLIC_BRANCH = "public-main"
 PUBLIC_REMOTE = "public-origin"
 PUBLIC_NAME = "FloatSheets"
 PUBLIC_EMAIL = "floatsheetsrh@atomicmail.io"
+EXCLUDED_PATH = b".lovable"
+PUSH_BATCH_SIZE = 12
 
 
 def run(*args: str, input_data: bytes | None = None) -> bytes:
-    command = list(args)
-    if len(command) > 1 and command[1] == "push":
-        command[1:1] = [
-            "-c",
-            "credential.helper=",
-            "-c",
-            "core.askPass=",
-            "-c",
-            "credential.interactive=never",
-        ]
     environment = os.environ.copy()
     environment["GIT_TERMINAL_PROMPT"] = "0"
     environment["GCM_INTERACTIVE"] = "never"
     completed = subprocess.run(
-        command,
+        list(args),
         input=input_data,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -63,6 +55,17 @@ def scrub_commit_message(payload: bytes) -> bytes:
     return re.sub(rb"(?im)^co-authored-by:[^\r\n]*(?:\r?\n|$)", b"", payload)
 
 
+def excluded_path_command(line: bytes) -> bool:
+    """Exclude Lovable project metadata from every public commit tree."""
+    if not line.startswith((b"M ", b"D ", b"R ", b"C ")):
+        return False
+    # The .lovable path has no spaces, so fast-export writes it without quoting.
+    return any(
+        path == EXCLUDED_PATH or path.startswith(EXCLUDED_PATH + b"/")
+        for path in line.strip().split()[1:]
+    )
+
+
 def rewrite_export(stream: bytes) -> bytes:
     """Rewrite fast-export headers while copying opaque data payloads unchanged."""
     output = bytearray()
@@ -75,6 +78,8 @@ def rewrite_export(stream: bytes) -> bytes:
             break
         line = stream[cursor : newline + 1]
         cursor = newline + 1
+        if excluded_path_command(line):
+            continue
         if line == b"blob\n":
             record_kind = b"blob"
         elif line.startswith(b"commit "):
@@ -116,7 +121,35 @@ def main() -> None:
     exported = run("git", "fast-export", "--show-original-ids", SOURCE_BRANCH)
     run("git", "fast-import", "--force", input_data=rewrite_export(exported))
     public_commit = run("git", "rev-parse", f"refs/heads/{PUBLIC_BRANCH}").decode().strip()
-    run("git", "push", PUBLIC_REMOTE, f"{PUBLIC_BRANCH}:main", "--force")
+
+    run(
+        "git",
+        "fetch",
+        "--no-tags",
+        PUBLIC_REMOTE,
+        "+refs/heads/main:refs/remotes/public-origin/main",
+    )
+    commits = run("git", "rev-list", "--reverse", "--first-parent", PUBLIC_BRANCH).decode().splitlines()
+    remote_tip = run(
+        "git", "rev-parse", "--verify", "refs/remotes/public-origin/main"
+    ).decode().strip()
+    if remote_tip in commits:
+        next_index = commits.index(remote_tip) + 1
+        force_first_push = False
+    else:
+        # Replace the unrelated initial public history once; later batches
+        # advance normally from the synchronized mirror.
+        next_index = 0
+        force_first_push = True
+
+    first_push = True
+    while next_index < len(commits):
+        batch = commits[next_index : next_index + PUSH_BATCH_SIZE]
+        options = ("--force",) if first_push and force_first_push else ()
+        run("git", "push", PUBLIC_REMOTE, f"{batch[-1]}:refs/heads/main", *options)
+        next_index += len(batch)
+        first_push = False
+
     print(f"Published sanitized {PUBLIC_BRANCH} to {PUBLIC_REMOTE}/main.")
     print(f"Private source commit: {source_commit}")
     print(f"Synchronized public commit: {public_commit}")
