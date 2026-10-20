@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   test:
+    if: github.repository == 'floatsheets/float'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -43,7 +44,7 @@ jobs:
 
   build-push:
     needs: test
-    if: github.event_name == 'push'
+    if: github.repository == 'floatsheets/float' && github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -57,12 +58,12 @@ jobs:
           context: ./backend
           push: true
           tags: |
-            ghcr.io/notadeveloper7/floatsheets-backend:latest
-            ghcr.io/notadeveloper7/floatsheets-backend:${{ github.sha }}
+            ghcr.io/floatsheets/float-backend:latest
+            ghcr.io/floatsheets/float-backend:${{ github.sha }}
 
   release:
     needs: build-push
-    if: github.event_name == 'push'
+    if: github.repository == 'floatsheets/float' && github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -82,7 +83,7 @@ jobs:
 
   deploy:
     needs: build-push
-    if: github.event_name == 'push'
+    if: github.repository == 'floatsheets/float' && github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - name: Trigger Render deployment when configured

@@ -1,4 +1,4 @@
-![CI](https://github.com/notadeveloper7/floatsheets/actions/workflows/backend.yml/badge.svg)
+![CI](https://github.com/floatsheets/float/actions/workflows/backend.yml/badge.svg)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)
 ![Bun](https://img.shields.io/badge/Bun-1.4-000000?logo=bun&logoColor=white)
@@ -85,7 +85,7 @@ Use a Render **Native Environment** service rooted at `backend`:
 
 Set `DATABASE_URL`, `DATABASE_PASSWORD`, `RHC_ID`, `RHC_RPC_URL`, `PROTOCOL_FEE_WALLET`, `FRONTEND_URL`, `NODE_ENV=production`, and Render’s `PORT`. The API applies migrations during startup.
 
-The GitHub workflow also publishes `ghcr.io/notadeveloper7/floatsheets-backend:latest` and a SHA-tagged image. If Render is configured to pull the GHCR image instead, provide registry credentials when the package is private. Set `RENDER_DEPLOY_HOOK_URL` as a repository secret to have successful backend image builds trigger Render automatically.
+The public repository's GitHub workflow also publishes `ghcr.io/floatsheets/float-backend:latest` and a SHA-tagged image. If Render is configured to pull the GHCR image instead, provide registry credentials when the package is private. Set `RENDER_DEPLOY_HOOK_URL` in the public repository's Actions secrets to have successful backend image builds trigger Render automatically.
 
 ### Vercel frontend
 
