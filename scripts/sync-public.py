@@ -14,7 +14,7 @@ PUBLIC_REMOTE = "public-origin"
 PUBLIC_NAME = "FloatSheets"
 PUBLIC_EMAIL = "floatsheetsrh@atomicmail.io"
 EXCLUDED_PATH = b".lovable"
-PUSH_BATCH_SIZE = 12
+PUSH_BATCH_SIZE = 4
 
 
 def run(*args: str, input_data: bytes | None = None) -> bytes:
@@ -133,22 +133,34 @@ def main() -> None:
     remote_tip = run(
         "git", "rev-parse", "--verify", "refs/remotes/public-origin/main"
     ).decode().strip()
-    if remote_tip in commits:
-        next_index = commits.index(remote_tip) + 1
-        force_first_push = False
-    else:
-        # Replace the unrelated initial public history once; later batches
-        # advance normally from the synchronized mirror.
-        next_index = 0
-        force_first_push = True
-
-    first_push = True
+    next_index = commits.index(remote_tip) + 1 if remote_tip in commits else 0
+    batch_size = PUSH_BATCH_SIZE
     while next_index < len(commits):
-        batch = commits[next_index : next_index + PUSH_BATCH_SIZE]
-        options = ("--force",) if first_push and force_first_push else ()
-        run("git", "push", PUBLIC_REMOTE, f"{batch[-1]}:refs/heads/main", *options)
+        batch = commits[next_index : next_index + batch_size]
+        options = ("--force",) if remote_tip not in commits else ()
+        try:
+            run("git", "push", PUBLIC_REMOTE, f"{batch[-1]}:refs/heads/main", *options)
+        except SystemExit:
+            # Retry oversized requests with smaller batches. Refresh the remote
+            # tip first because a timed-out HTTP response may follow a completed push.
+            run(
+                "git",
+                "fetch",
+                "--no-tags",
+                PUBLIC_REMOTE,
+                "+refs/heads/main:refs/remotes/public-origin/main",
+            )
+            remote_tip = run(
+                "git", "rev-parse", "--verify", "refs/remotes/public-origin/main"
+            ).decode().strip()
+            if remote_tip in commits:
+                next_index = commits.index(remote_tip) + 1
+            if batch_size == 1:
+                raise
+            batch_size = max(1, batch_size // 2)
+            continue
         next_index += len(batch)
-        first_push = False
+        remote_tip = batch[-1]
 
     print(f"Published sanitized {PUBLIC_BRANCH} to {PUBLIC_REMOTE}/main.")
     print(f"Private source commit: {source_commit}")
