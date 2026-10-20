@@ -5,8 +5,7 @@ import { expect, test } from "bun:test";
 import request from "supertest";
 
 import { db } from "../src/db";
-import { createRpcTransport } from '../src/chain/rpc';
-import { loadConfig } from '../src/config';
+import { toFunctionSelector } from 'viem';
 import { createMarketsRouter } from "../src/routes/markets";
 
 const app = express();
@@ -50,11 +49,20 @@ test("reports a live risk state for NVDA", async () => {
   expect(response.body.snapshot_age_seconds).toBeNumber();
 }, 60_000);
 
-test('reads the current on-chain oracle confidence and trade gate for NVDA', async () => {
-  const config=loadConfig();
+test('reads oracle confidence and trade gate for NVDA from the chain transport', async () => {
+  const word = (value: bigint) => value.toString(16).padStart(64, '0');
+  const now = BigInt(Math.floor(Date.now() / 1_000));
+  const rpc = {
+    async call({ data }: { to: `0x${string}`; data: `0x${string}` }) {
+      if (data.slice(0, 10) === toFunctionSelector('getPrice(bytes32)')) {
+        return `0x${[100n, 101n, 10n, 1n, now, 5n, 0n].map(word).join('')}` as `0x${string}`;
+      }
+      return `0x${[1n, 10n, 100n, 100n, 50n, 1000n].map(word).join('')}` as `0x${string}`;
+    }
+  };
   const liveApp=express();
-  liveApp.use('/v1/markets',createMarketsRouter(db,config.ORACLE_PRICE_MAX_AGE_SECONDS,{
-    rpc:createRpcTransport(config.RHC_RPC_URL),clearingHouse:config.FLOAT_CLEARING_HOUSE_ADDRESS as `0x${string}`,oracle:config.FLOAT_ORACLE_ADDRESS as `0x${string}`
+  liveApp.use('/v1/markets',createMarketsRouter(db,120,{
+    rpc,clearingHouse:"0xb91fE7c85E6645D2134f1C313Ea787812d43bfa8",oracle:"0x841E9EBb75Da9F3B4045434cB38F4892f37F4Afd"
   }));
   const response=await request(liveApp).get('/v1/markets/NVDA/live');
   expect(response.status).toBe(200);

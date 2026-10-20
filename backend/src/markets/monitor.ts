@@ -22,6 +22,16 @@ export class MarketMonitor {
   private refreshing = false;
   constructor(private readonly database: Pool, private readonly rpc: RpcTransport, private readonly twapWindowSeconds: number) {}
 
+  async refreshSymbol(symbol: string): Promise<void> {
+    const { rows } = await this.database.query<Market>(
+      "SELECT id, symbol, uniswap_v3_pool_address, uniswap_v3_fee_tier FROM public.markets WHERE symbol=$1 AND status != 'disabled'",
+      [symbol.toUpperCase()]
+    );
+    const market = rows[0];
+    if (!market) throw new Error(`Enabled market ${symbol.toUpperCase()} was not found`);
+    await this.refreshMarket(market);
+  }
+
   async refreshAll(): Promise<void> {
     if (this.refreshing) return;
     this.refreshing = true;
