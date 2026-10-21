@@ -6,7 +6,7 @@ import {FloatOracle} from "../src/FloatOracle.sol";
 import {FloatVault} from "../src/FloatVault.sol";
 import {FloatClearingHouse} from "../src/FloatClearingHouse.sol";
 
-/// @notice Deploys the remediated FloatSheets v2 contracts to Robinhood Chain.
+/// @notice Deploys a new FloatSheets Jasper contract set to Robinhood Chain.
 ///
 /// Required environment variables:
 /// - USDG_ADDRESS

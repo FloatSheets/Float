@@ -5,7 +5,11 @@ import type { TradeQuote } from "../signing/types";
 const erc20Abi = parseAbi(["function approve(address spender,uint256 amount)"]);
 const vaultAbi = parseAbi([
   "function deposit(uint256 assets,address receiver) returns (uint256 shares)",
-  "function withdraw(uint256 shares,address receiver) returns (uint256 assets)"
+  "function withdraw(uint256 shares,address receiver) returns (uint256 assets)",
+  "function settleQueue()",
+  "function startNextQueueEpoch()",
+  "function claimDeposit(uint64 epoch) returns (uint256 shares)",
+  "function claimWithdrawal(uint64 epoch,address receiver) returns (uint256 assets)"
 ]);
 const oracleAbi = parseAbi([
   "function publish((bytes32 marketId,uint256 priceE18,uint256 spotPriceE18,uint256 confidenceBps,uint64 timestamp,uint64 sequence,uint64 expiry) attestation,bytes signature)",
@@ -43,6 +47,22 @@ export function depositVault(vault: Address, assets: bigint, receiver: Address):
 
 export function withdrawVault(vault: Address, shares: bigint, receiver: Address): ProtocolTransaction {
   return tx(vault, encodeFunctionData({ abi: vaultAbi, functionName: "withdraw", args: [shares, receiver] }));
+}
+
+export function settleVaultQueue(vault: Address): ProtocolTransaction {
+  return tx(vault, encodeFunctionData({ abi: vaultAbi, functionName: "settleQueue" }));
+}
+
+export function startVaultQueueEpoch(vault: Address): ProtocolTransaction {
+  return tx(vault, encodeFunctionData({ abi: vaultAbi, functionName: "startNextQueueEpoch" }));
+}
+
+export function claimVaultDeposit(vault: Address, epoch: bigint): ProtocolTransaction {
+  return tx(vault, encodeFunctionData({ abi: vaultAbi, functionName: "claimDeposit", args: [epoch] }));
+}
+
+export function claimVaultWithdrawal(vault: Address, epoch: bigint, receiver: Address): ProtocolTransaction {
+  return tx(vault, encodeFunctionData({ abi: vaultAbi, functionName: "claimWithdrawal", args: [epoch, receiver] }));
 }
 
 export function withdrawMargin(clearingHouse: Address, id: Hex, amount: bigint): ProtocolTransaction {

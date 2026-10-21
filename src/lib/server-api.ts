@@ -1,10 +1,10 @@
 import { createServerFn } from "@tanstack/react-start";
 
 type JsonRecord = Record<string, unknown>;
-type ContractVersion = "meadow" | "legacy-orion";
+type ContractVersion = "jasper" | "meadow" | "legacy-orion";
 
 function versionOf(value: unknown): ContractVersion {
-  return value === "legacy-orion" ? "legacy-orion" : "meadow";
+  return value === "legacy-orion" ? "legacy-orion" : value === "meadow" ? "meadow" : "jasper";
 }
 
 function apiOrigin() {
@@ -13,7 +13,7 @@ function apiOrigin() {
   return origin.replace(/\/$/, "");
 }
 
-async function getJson<T extends JsonRecord>(path: string, version: ContractVersion = "meadow"): Promise<T> {
+async function getJson<T extends JsonRecord>(path: string, version: ContractVersion = "jasper"): Promise<T> {
   const response = await fetch(`${apiOrigin()}${path}`, { headers: { accept: "application/json", "x-floatsheets-contract-version": version } });
   if (!response.ok) throw new Error(`FloatSheets API returned ${response.status} for ${path}.`);
   return (await response.json()) as T;
@@ -126,7 +126,9 @@ export const getTransactionCalldata = createServerFn({ method: "POST" })
     const value = input as JsonRecord;
     const action = value["action"];
     if (action !== "approve" && action !== "deposit" && action !== "withdraw" && action !== "liquidate"
-      && action !== "vault-approve" && action !== "vault-deposit" && action !== "vault-withdraw") {
+      && action !== "vault-approve" && action !== "vault-deposit" && action !== "vault-withdraw"
+      && action !== "vault-settle-queue" && action !== "vault-start-next-epoch"
+      && action !== "vault-claim-deposit" && action !== "vault-claim-withdrawal") {
       throw new Error("Unsupported wallet transaction.");
     }
     return value;

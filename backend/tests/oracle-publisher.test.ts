@@ -46,6 +46,6 @@ test("does not spend publisher gas on inactive markets", async () => {
 
   // Scheduled checks inspect exposure once per deployment, then skip oracle
   // reads and transaction submission for both zero-exposure markets.
-  expect(exposureCalls).toBe(2);
+  expect(exposureCalls).toBe(3);
   expect(unexpectedCalls).toBe(0);
 });

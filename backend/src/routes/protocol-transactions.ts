@@ -8,7 +8,7 @@ import type { Pool } from "pg";
 import { contractConfigForVersion, type AppConfig } from "../config";
 import { contractVersionFromRequest } from "../contract-version";
 import {
-  approveUsdG, claimDeferredPayout, claimProtocolBalance, configureMarket, depositMargin, depositVault, enableMarket, liquidate, marketId, withdrawMargin, withdrawVault
+  approveUsdG, claimDeferredPayout, claimProtocolBalance, claimVaultDeposit, claimVaultWithdrawal, configureMarket, depositMargin, depositVault, enableMarket, liquidate, marketId, settleVaultQueue, startVaultQueueEpoch, withdrawMargin, withdrawVault
 } from "../chain/protocol";
 import { publishOracle, executeTrade } from "../chain/protocol";
 import { requireMasterAdmin } from "../auth/master-admin";
@@ -118,6 +118,7 @@ export function createProtocolTransactionsRouter(
 ): Router {
   const router = Router();
   const versions = {
+    jasper: createProtocolTransactionsRouterForConfig(contractConfigForVersion(config, "jasper"), database, rpc, oraclePublisher),
     meadow: createProtocolTransactionsRouterForConfig(contractConfigForVersion(config, "meadow"), database, rpc, oraclePublisher),
     "legacy-orion": createProtocolTransactionsRouterForConfig(contractConfigForVersion(config, "legacy-orion"), database, rpc, oraclePublisher)
   };
@@ -461,6 +462,28 @@ function createProtocolTransactionsRouterForConfig(
       const body = z.object({ shares: uint, receiver: address }).parse(request.body);
       if (bigint(body.shares) === 0n) throw new Error("shares must be greater than zero");
       response.json({ transaction: withdrawVault(config.FLOAT_VAULT_ADDRESS as Address, bigint(body.shares), body.receiver as Address) });
+    } catch (error) { protocolError(response, error); }
+  });
+
+  router.post("/vault-settle-queue", (_request, response) => {
+    response.json({ transaction: settleVaultQueue(config.FLOAT_VAULT_ADDRESS as Address) });
+  });
+
+  router.post("/vault-start-next-epoch", (_request, response) => {
+    response.json({ transaction: startVaultQueueEpoch(config.FLOAT_VAULT_ADDRESS as Address) });
+  });
+
+  router.post("/vault-claim-deposit", (request, response) => {
+    try {
+      const body = z.object({ epoch: uint }).parse(request.body);
+      response.json({ transaction: claimVaultDeposit(config.FLOAT_VAULT_ADDRESS as Address, bigint(body.epoch)) });
+    } catch (error) { protocolError(response, error); }
+  });
+
+  router.post("/vault-claim-withdrawal", (request, response) => {
+    try {
+      const body = z.object({ epoch: uint, receiver: address }).parse(request.body);
+      response.json({ transaction: claimVaultWithdrawal(config.FLOAT_VAULT_ADDRESS as Address, bigint(body.epoch), body.receiver as Address) });
     } catch (error) { protocolError(response, error); }
   });
 

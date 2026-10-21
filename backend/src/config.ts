@@ -2,7 +2,7 @@ import { z } from "zod";
 import { privateKeyToAccount } from "viem/accounts";
 
 const address = z.string().regex(/^0x[a-fA-F0-9]{40}$/, "must be an EVM address");
-export const contractVersionSchema = z.enum(["meadow", "legacy-orion"]);
+export const contractVersionSchema = z.enum(["jasper", "meadow", "legacy-orion"]);
 export type ContractVersion = z.infer<typeof contractVersionSchema>;
 
 const schema = z.object({
@@ -13,6 +13,9 @@ const schema = z.object({
   MEADOW_FLOAT_CLEARING_HOUSE_ADDRESS: address.default("0xc1AfA648C30090Aa8fDd3fbca384bd65b52B58Dd"),
   MEADOW_FLOAT_ORACLE_ADDRESS: address.default("0x7Fda40E8FD27cA067C9Ee23EA0Fd0cb8Bb786A8a"),
   MEADOW_FLOAT_VAULT_ADDRESS: address.default("0xb74eD266A95d8393cDaF2Fa6cADd98b5a1D91875"),
+  JASPER_FLOAT_CLEARING_HOUSE_ADDRESS: address.optional(),
+  JASPER_FLOAT_ORACLE_ADDRESS: address.optional(),
+  JASPER_FLOAT_VAULT_ADDRESS: address.optional(),
   LEGACY_ORION_FLOAT_CLEARING_HOUSE_ADDRESS: address.optional(),
   LEGACY_ORION_FLOAT_ORACLE_ADDRESS: address.optional(),
   LEGACY_ORION_FLOAT_VAULT_ADDRESS: address.optional(),
@@ -42,6 +45,20 @@ const schema = z.object({
 export type AppConfig = z.infer<typeof schema>;
 
 export function contractConfigForVersion(config: AppConfig, version: ContractVersion): AppConfig {
+  if (version === "jasper") {
+    const clearingHouse = config.JASPER_FLOAT_CLEARING_HOUSE_ADDRESS ?? (config.NODE_ENV === "test" ? config.MEADOW_FLOAT_CLEARING_HOUSE_ADDRESS : undefined);
+    const oracle = config.JASPER_FLOAT_ORACLE_ADDRESS ?? (config.NODE_ENV === "test" ? config.MEADOW_FLOAT_ORACLE_ADDRESS : undefined);
+    const vault = config.JASPER_FLOAT_VAULT_ADDRESS ?? (config.NODE_ENV === "test" ? config.MEADOW_FLOAT_VAULT_ADDRESS : undefined);
+    if (!clearingHouse || !oracle || !vault) {
+      throw new Error("Jasper contract addresses are not configured");
+    }
+    return {
+      ...config,
+      FLOAT_CLEARING_HOUSE_ADDRESS: clearingHouse,
+      FLOAT_ORACLE_ADDRESS: oracle,
+      FLOAT_VAULT_ADDRESS: vault
+    };
+  }
   if (version === "meadow") {
     return {
       ...config,

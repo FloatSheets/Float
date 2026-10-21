@@ -55,7 +55,7 @@ export class OraclePublisher {
     );
     // One publisher wallet serves both contracts. Send in sequence so concurrent
     // writes cannot race for the same account nonce.
-    for (const row of rows) for (const version of ["meadow", "legacy-orion"] as const) {
+    for (const row of rows) for (const version of ["jasper", "meadow", "legacy-orion"] as const) {
       try {
         const versionConfig = contractConfigForVersion(this.config, version);
         const exposure = await readClearingExposure(this.rpc, versionConfig.FLOAT_CLEARING_HOUSE_ADDRESS as Address, marketId(row.symbol));

@@ -75,12 +75,15 @@ contract FloatSecurityTest is Test {
         _configure(MARKET_B, FloatClearingHouse.MarketState.Active);
         oracle.setMarketEnabled(MARKET_A, true);
         oracle.setMarketEnabled(MARKET_B, true);
-        _publish(MARKET_A, 1, 100 * E18, 100 * E18);
-        _publish(MARKET_B, 1, 200 * E18, 200 * E18);
-
         token.mint(address(this), 1_000_000 * USDG);
         token.approve(address(vault), type(uint256).max);
-        lpShares = vault.deposit(1_000_000 * USDG, address(this));
+        vault.deposit(1_000_000 * USDG, address(this));
+        vm.warp(block.timestamp + vault.QUEUE_EPOCH_DURATION());
+        vault.settleQueue();
+        lpShares = vault.claimDeposit(vault.queueEpoch());
+        vault.startNextQueueEpoch();
+        _publish(MARKET_A, 1, 100 * E18, 100 * E18);
+        _publish(MARKET_B, 1, 200 * E18, 200 * E18);
         token.mint(TRADER, 100_000 * USDG);
         vm.prank(TRADER);
         token.approve(address(clearing), type(uint256).max);
@@ -95,6 +98,20 @@ contract FloatSecurityTest is Test {
 
     function activePositionCount() external pure returns (uint256) {
         return 0;
+    }
+
+    function unrealizedPnlUsdg() external pure returns (int256) {
+        return 0;
+    }
+
+    function _settleVaultQueue() private {
+        vm.warp(block.timestamp + vault.QUEUE_EPOCH_DURATION());
+        vault.settleQueue();
+        if (vault.queuedDepositOf(vault.queueEpoch(), address(this)) != 0) vault.claimDeposit(vault.queueEpoch());
+        if (vault.queuedWithdrawalOf(vault.queueEpoch(), address(this)) != 0) {
+            vault.claimWithdrawal(vault.queueEpoch(), address(this));
+        }
+        vault.startNextQueueEpoch();
     }
 
     function testFirstDepositorDonationCannotStealVictimDeposit() public {
@@ -112,9 +129,23 @@ contract FloatSecurityTest is Test {
         vm.stopPrank();
         vm.startPrank(victim);
         localToken.approve(address(localVault), type(uint256).max);
-        uint256 victimShares = localVault.deposit(100 * USDG, victim);
-        uint256 recovered = localVault.withdraw(victimShares, victim);
+        localVault.deposit(100 * USDG, victim);
         vm.stopPrank();
+        vm.warp(block.timestamp + localVault.QUEUE_EPOCH_DURATION());
+        localVault.settleQueue();
+        uint64 localEpoch = localVault.queueEpoch();
+        vm.prank(attacker);
+        localVault.claimDeposit(localEpoch);
+        vm.prank(victim);
+        uint256 victimShares = localVault.claimDeposit(localEpoch);
+        localVault.startNextQueueEpoch();
+        vm.prank(victim);
+        localVault.withdraw(victimShares, victim);
+        vm.warp(block.timestamp + localVault.QUEUE_EPOCH_DURATION());
+        localVault.settleQueue();
+        localEpoch = localVault.queueEpoch();
+        vm.prank(victim);
+        uint256 recovered = localVault.claimWithdrawal(localEpoch, victim);
         assertGe(recovered, 99 * USDG);
     }
 
@@ -138,10 +169,16 @@ contract FloatSecurityTest is Test {
         localToken.mint(address(this), 100 * USDG);
         localToken.approve(address(localVault), type(uint256).max);
         localVault.deposit(100 * USDG, address(this));
+        vm.warp(block.timestamp + localVault.QUEUE_EPOCH_DURATION());
+        localVault.settleQueue();
+        localVault.claimDeposit(localVault.queueEpoch());
+        localVault.startNextQueueEpoch();
         localVault.payout(address(0xdead), 100 * USDG);
         localToken.mint(address(this), 50 * USDG);
-        uint256 newShares = localVault.deposit(50 * USDG, address(this));
-        assertGt(newShares, 0);
+        localVault.deposit(50 * USDG, address(this));
+        vm.warp(block.timestamp + localVault.QUEUE_EPOCH_DURATION());
+        localVault.settleQueue();
+        assertGt(localVault.claimDeposit(localVault.queueEpoch()), 0);
         assertEq(localVault.totalAssets(), 50 * USDG);
     }
 
@@ -236,25 +273,94 @@ contract FloatSecurityTest is Test {
     function testVaultWithdrawalPreservesFiftyPercentUtilizationLimit() public {
         _depositMargin(20_000 * USDG);
         _execute(_quote(MARKET_A, TRADER, int256(500 * E18), 100 * E18, 1, 1, 0));
-        assertApproxEqAbs(clearing.availableLiquidity(), 900_000 * USDG, 2);
-        vm.expectRevert(FloatVault.LiquidityLocked.selector);
+        assertApproxEqAbs(clearing.availableLiquidity(), 987_500 * USDG, 2);
         vault.withdraw(lpShares * 91 / 100, address(this));
+        _settleVaultQueue();
+        assertGt(token.balanceOf(address(this)), 0);
     }
 
-    function testLpEntryAndExitAreLockedWhileAnyTraderPositionIsOpen() public {
+    function testVaultNavReflectsUnrealizedTraderPnl() public {
+        _depositMargin(20_000 * USDG);
+        _execute(_quote(MARKET_A, TRADER, int256(500 * E18), 100 * E18, 1, 1, 0));
+        _publish(MARKET_A, 2, 110 * E18, 110 * E18);
+        assertEq(vault.totalAssets(), 995_000 * USDG);
+        _publish(MARKET_A, 3, 90 * E18, 90 * E18);
+        assertEq(vault.totalAssets(), 1_005_000 * USDG);
+    }
+
+    function testUnrealizedLossRecognitionIsCappedByOpenTraderMargin() public {
+        _depositMargin(20_000 * USDG);
+        _execute(_quote(MARKET_A, TRADER, int256(500 * E18), 100 * E18, 1, 1, 0));
+        vm.prank(TRADER);
+        clearing.withdrawMargin(MARKET_A, 10_000 * USDG);
+        _publish(MARKET_A, 2, 70 * E18, 70 * E18);
+        assertEq(vault.totalAssets(), 1_010_000 * USDG);
+    }
+
+    function testCrowdedSideBorrowFeeAccruesToInsurance() public {
+        _depositMargin(20_000 * USDG);
+        _execute(_quote(MARKET_A, TRADER, int256(500 * E18), 100 * E18, 1, 1, 0));
+        vm.warp(block.timestamp + 1 hours);
+        _publish(MARKET_A, 2, 100 * E18, 100 * E18);
+        _execute(_quote(MARKET_A, TRADER, -int256(500 * E18), 100 * E18, 2, 2, 0));
+        assertEq(vault.insuranceAssets(), 50 * USDG);
+    }
+
+    function testInsuranceIsUsedBeforeRecordingSeniorPayoutClaim() public {
+        MockUsdG localToken = new MockUsdG();
+        FloatVault localVault = new FloatVault(address(this), address(localToken));
+        localVault.setClearingHouse(address(this));
+        localToken.mint(address(this), 20 * USDG);
+        localToken.approve(address(localVault), type(uint256).max);
+        localVault.fundInsurance(20 * USDG);
+        assertEq(localVault.payout(address(0xCAFE), 50 * USDG), 20 * USDG);
+        assertEq(localVault.insuranceAssets(), 0);
+        assertEq(localVault.totalPayoutOwed(), 30 * USDG);
+    }
+
+    function testInsuranceAbsorbsTraderPayoutBeforeLpAssets() public {
+        MockUsdG localToken = new MockUsdG();
+        FloatVault localVault = new FloatVault(address(this), address(localToken));
+        localVault.setClearingHouse(address(this));
+        localToken.mint(address(this), 120 * USDG);
+        localToken.approve(address(localVault), type(uint256).max);
+        localVault.deposit(100 * USDG, address(this));
+        vm.warp(block.timestamp + localVault.QUEUE_EPOCH_DURATION());
+        localVault.settleQueue();
+        localVault.claimDeposit(localVault.queueEpoch());
+        localVault.startNextQueueEpoch();
+        localVault.fundInsurance(20 * USDG);
+        assertEq(localVault.payout(address(0xCAFE), 50 * USDG), 50 * USDG);
+        assertEq(localVault.insuranceAssets(), 0);
+        assertEq(localVault.totalAssets(), 70 * USDG);
+    }
+
+    function testUnclaimedEpochDoesNotBlockTheNextQueueEpoch() public {
+        token.mint(address(this), USDG);
+        vault.deposit(USDG, address(this));
+        vm.warp(block.timestamp + vault.QUEUE_EPOCH_DURATION());
+        vault.settleQueue();
+        vault.startNextQueueEpoch();
+        token.mint(address(this), USDG);
+        vault.deposit(USDG, address(this));
+        assertEq(vault.queueEpoch(), 2);
+    }
+
+    function testLpEntryAndExitCanBeQueuedWhileTraderPositionIsOpen() public {
         _depositMargin(20_000 * USDG);
         _execute(_quote(MARKET_A, TRADER, int256(500 * E18), 100 * E18, 1, 1, 0));
         assertEq(clearing.activePositionCount(), 1);
-        vm.expectRevert(FloatVault.LiquidityLocked.selector);
+        token.mint(address(this), USDG);
         vault.deposit(USDG, address(this));
-        vm.expectRevert(FloatVault.LiquidityLocked.selector);
         vault.withdraw(1, address(this));
 
         _publish(MARKET_A, 2, 100 * E18, 100 * E18);
         _execute(_quote(MARKET_A, TRADER, -int256(500 * E18), 100 * E18, 2, 2, 0));
         assertEq(clearing.activePositionCount(), 0);
         token.mint(address(this), USDG);
-        assertGt(vault.deposit(USDG, address(this)), 0);
+        vault.deposit(USDG, address(this));
+        _settleVaultQueue();
+        assertGt(vault.balanceOf(address(this)), lpShares);
     }
 
     function testExpiredPositionCanBePermissionlesslySettled() public {

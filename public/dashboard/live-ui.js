@@ -5,6 +5,13 @@
   if (!root || typeof render !== 'function') return;
   const originalRender = render;
   const icon = {USDG:'/usdg_logo.png',ETH:'/eth.jpeg'};
+  function selectedContractVersion(){
+    const selected=localStorage.getItem('floatsheets-contract-version-v1');
+    if(selected==='legacy-orion') return 'legacy-orion';
+    if(selected==='jasper') return 'jasper';
+    localStorage.setItem('floatsheets-contract-version-v1','jasper');
+    return 'jasper';
+  }
   document.body.classList.toggle('dashboard-dark',localStorage.getItem('floatsheets-dashboard-theme')==='dark');
 
   function decorateAssets(){
@@ -419,14 +426,27 @@
     if(!target||!walletState()?.connected) return;
     try {
       const wallet=walletApi(),vault=await wallet?.vault();if(!vault)return;
-      const assets=BigInt(vault.assets),shares=BigInt(vault.shares),totalShares=BigInt(vault.totalShares),available=BigInt(vault.availableLiquidity);
+      const assets=BigInt(vault.assets),shares=BigInt(vault.shares),lockedShares=BigInt(vault.lockedShares),totalShares=BigInt(vault.totalShares),available=BigInt(vault.availableLiquidity);
+      const usableShares=shares>lockedShares?shares-lockedShares:0n;
       const ownership=totalShares===0n?'0.00':(Number(shares)*100/Number(totalShares)).toFixed(2);
       const shareValue=shares*(assets+1n)/(totalShares+1000000n);
-      target.innerHTML='<div class="metric-grid"><div class="metric featured"><small>Vault assets</small><strong>'+displayUsdG(assets)+'</strong><div class="metric-note"><span class="asset-ref"><img src="/usdg_logo.png" alt="USDG">USDG</span> · shared liquidity</div></div><div class="metric"><small>Your vault value</small><strong>'+displayUsdG(shareValue)+'</strong><div class="metric-note"><span class="asset-ref"><img src="/usdg_logo.png" alt="USDG">USDG</span> · '+ownership+'% of vault</div></div><div class="metric"><small>Available liquidity</small><strong>'+displayUsdG(available)+'</strong><div class="metric-note">USDG available for markets</div></div></div>'+tokenAmountInput('live-vault-deposit','USDG to deposit')+'<button class="primary-btn" id="submit-vault-deposit" type="button">Add liquidity</button>'+(shares>0n?'<button class="secondary-btn" id="submit-vault-withdraw" type="button">Withdraw all liquidity</button>':'');
+      const now=Math.floor(Date.now()/1000),readyAt=Number(vault.epochStartedAt)+Number(vault.epochDuration),settleReady=!vault.epochSettled&&now>=readyAt;
+      const pending=(vault.requests||[]).filter(function(row){return (BigInt(row.depositAssets)>0n&&!row.depositClaimed)||(BigInt(row.withdrawalShares)>0n&&!row.withdrawalClaimed);});
+      const requestRows=pending.map(function(row){
+        const depositPending=BigInt(row.depositAssets)>0n&&!row.depositClaimed,withdrawPending=BigInt(row.withdrawalShares)>0n&&!row.withdrawalClaimed;
+        const text=(depositPending?'Deposit '+displayUsdG(BigInt(row.depositAssets))+' USDG':'')+(depositPending&&withdrawPending?' · ':'')+(withdrawPending?'Withdrawal '+(BigInt(row.withdrawalShares)/1000000000000n).toString()+' shares':'');
+        if(!row.settled)return '<div class="list-row"><div><strong>Epoch '+row.epoch+' · '+text+'</strong><p>Waiting for the daily epoch to settle.</p></div><span class="pill">QUEUED</span></div>';
+        return '<div class="list-row"><div><strong>Epoch '+row.epoch+' · '+text+'</strong><p>Settlement is complete. Claim your shares or USDG.</p></div><div>'+ (depositPending?'<button class="small-btn" data-claim-deposit="'+row.epoch+'">Claim shares</button> ':'')+(withdrawPending?'<button class="small-btn" data-claim-withdrawal="'+row.epoch+'">Claim USDG</button>':'')+'</div></div>';
+      }).join('');
+      const queueStatus='<div class="list-row"><div><strong>Daily LP epoch · '+vault.epoch+'</strong><p>'+(vault.epochSettled?'This epoch is settled. New requests start the next epoch.':settleReady?'The epoch is ready for settlement.': 'Requests settle after '+new Date(readyAt*1000).toLocaleString()+'.')+'</p></div>'+(settleReady?'<button class="small-btn" id="settle-vault-queue">Settle requests</button>':'<span class="pill">'+(vault.epochSettled?'SETTLED':'24 HOUR QUEUE')+'</span>')+'</div>';
+      target.innerHTML='<div class="metric-grid"><div class="metric featured"><small>Vault assets</small><strong>'+displayUsdG(assets)+'</strong><div class="metric-note"><span class="asset-ref"><img src="/usdg_logo.png" alt="USDG">USDG</span> · marked to open PnL</div></div><div class="metric"><small>Your vault value</small><strong>'+displayUsdG(shareValue)+'</strong><div class="metric-note"><span class="asset-ref"><img src="/usdg_logo.png" alt="USDG">USDG</span> · '+ownership+'% of vault</div></div><div class="metric"><small>Available liquidity</small><strong>'+displayUsdG(available)+'</strong><div class="metric-note">After market stress reserve</div></div><div class="metric"><small>Insurance tranche</small><strong>'+displayUsdG(BigInt(vault.insuranceAssets))+'</strong><div class="metric-note">First-loss buffer</div></div></div><p class="info-note">Deposits and withdrawals enter a daily queue and are priced at epoch settlement. Share value reflects current open trader PnL.</p>'+queueStatus+(requestRows?'<section class="queue-requests">'+requestRows+'</section>':'')+tokenAmountInput('live-vault-deposit','USDG to deposit')+'<button class="primary-btn" id="submit-vault-deposit" type="button">Queue deposit</button>'+(usableShares>0n?'<button class="secondary-btn" id="submit-vault-withdraw" type="button">Queue withdrawal of available shares</button>':'');
       const input=target.querySelector('#live-vault-deposit'),deposit=target.querySelector('#submit-vault-deposit'),withdraw=target.querySelector('#submit-vault-withdraw');
       input?.addEventListener('input',function(){paintTokenAmount(input);});paintTokenAmount(input);
-      deposit?.addEventListener('click',async function(){try{const amount=rawUsdG(input.value);if(amount===0n)throw new Error('Enter a USDG amount greater than zero.');deposit.disabled=true;const allowance=await wallet.vaultAllowance();if(allowance<amount){deposit.textContent='Confirm USDG approval…';const approval=await wallet.buildTransaction('vault-approve',{amountUsdg:amount.toString()});await wallet.send(approval.transaction);}deposit.textContent='Confirm deposit…';const tx=await wallet.buildTransaction('vault-deposit',{amountUsdg:amount.toString()});const hash=await wallet.send(tx.transaction);render();showActionModal('Liquidity added','Your USDG was added to the vault on Robinhood Chain. Transaction: '+hash);}catch(reason){deposit.disabled=false;deposit.textContent='Add liquidity';showActionModal('Could not add liquidity',reason instanceof Error?reason.message:'Liquidity could not be added.');}});
-      withdraw?.addEventListener('click',async function(){try{withdraw.disabled=true;withdraw.textContent='Confirm withdrawal…';const tx=await wallet.buildTransaction('vault-withdraw',{shares:shares.toString()});const hash=await wallet.send(tx.transaction);render();showActionModal('Liquidity withdrawn','Your vault withdrawal was confirmed on Robinhood Chain. Transaction: '+hash);}catch(reason){withdraw.disabled=false;withdraw.textContent='Withdraw all liquidity';showActionModal('Could not withdraw liquidity',reason instanceof Error?reason.message:'Liquidity could not be withdrawn.');}});
+      deposit?.addEventListener('click',async function(){try{const amount=rawUsdG(input.value);if(amount===0n)throw new Error('Enter a USDG amount greater than zero.');deposit.disabled=true;const allowance=await wallet.vaultAllowance();if(allowance<amount){deposit.textContent='Confirm USDG approval…';const approval=await wallet.buildTransaction('vault-approve',{amountUsdg:amount.toString()});await wallet.send(approval.transaction);}deposit.textContent='Confirm queue request…';const tx=await wallet.buildTransaction('vault-deposit',{amountUsdg:amount.toString()});const hash=await wallet.send(tx.transaction);render();showActionModal('Deposit queued','Your USDG deposit is queued for daily epoch settlement. Transaction: '+hash);}catch(reason){deposit.disabled=false;deposit.textContent='Queue deposit';showActionModal('Could not queue deposit',reason instanceof Error?reason.message:'Deposit could not be queued.');}});
+      withdraw?.addEventListener('click',async function(){try{withdraw.disabled=true;withdraw.textContent='Confirm queue request…';const tx=await wallet.buildTransaction('vault-withdraw',{shares:usableShares.toString()});const hash=await wallet.send(tx.transaction);render();showActionModal('Withdrawal queued','Your shares are queued for daily epoch settlement. Transaction: '+hash);}catch(reason){withdraw.disabled=false;withdraw.textContent='Queue withdrawal of available shares';showActionModal('Could not queue withdrawal',reason instanceof Error?reason.message:'Withdrawal could not be queued.');}});
+      target.querySelector('#settle-vault-queue')?.addEventListener('click',async function(event){const button=event.currentTarget;try{button.disabled=true;const tx=await wallet.buildTransaction('vault-settle-queue',{});const hash=await wallet.send(tx.transaction);render();showActionModal('LP epoch settled','Queued deposits and withdrawals were priced at the same vault NAV. Transaction: '+hash);}catch(reason){button.disabled=false;showActionModal('Could not settle LP requests',reason instanceof Error?reason.message:'Epoch settlement failed.');}});
+      target.querySelectorAll('[data-claim-deposit]').forEach(function(button){button.addEventListener('click',async function(){try{const epoch=button.getAttribute('data-claim-deposit');const tx=await wallet.buildTransaction('vault-claim-deposit',{epoch});const hash=await wallet.send(tx.transaction);render();showActionModal('Shares claimed','Your queued deposit shares were claimed. Transaction: '+hash);}catch(reason){showActionModal('Could not claim shares',reason instanceof Error?reason.message:'Share claim failed.');}});});
+      target.querySelectorAll('[data-claim-withdrawal]').forEach(function(button){button.addEventListener('click',async function(){try{const epoch=button.getAttribute('data-claim-withdrawal');const tx=await wallet.buildTransaction('vault-claim-withdrawal',{epoch,receiver:wallet.address});const hash=await wallet.send(tx.transaction);render();showActionModal('Withdrawal claimed','Your queued USDG withdrawal was claimed. Transaction: '+hash);}catch(reason){showActionModal('Could not claim withdrawal',reason instanceof Error?reason.message:'Withdrawal claim failed.');}});});
     } catch(error) { target.innerHTML=''; showActionModal('Vault unavailable',error instanceof Error?error.message:'Vault data could not be loaded.'); }
   }
 
@@ -468,12 +488,12 @@
     if(!settingsPanel) return;
     if(!document.getElementById('contract-version-select')){
       const versionRow=document.createElement('div'); versionRow.className='list-row contract-version-row';
-      versionRow.innerHTML='<div><strong>Contract version</strong><p>Choose which FloatSheets contracts power your dashboard and wallet actions.</p></div><select id="contract-version-select" aria-label="Contract version"><option value="meadow">FloatSheets Meadow · latest</option><option value="legacy-orion">FloatSheets Legacy Orion</option></select>';
+      versionRow.innerHTML='<div><strong>Contract version</strong><p>Choose which FloatSheets contracts power your dashboard and wallet actions.</p></div><select id="contract-version-select" aria-label="Contract version"><option value="jasper">FloatSheets Jasper · latest</option><option value="meadow" disabled>FloatSheets Meadow · paused</option><option value="legacy-orion">FloatSheets Legacy Orion</option></select>';
       settingsPanel.append(versionRow);
       const select=versionRow.querySelector('select');
-      select.value=localStorage.getItem('floatsheets-contract-version-v1')==='legacy-orion'?'legacy-orion':'meadow';
+      select.value=selectedContractVersion();
       select.addEventListener('change',function(){
-        const version=select.value==='legacy-orion'?'legacy-orion':'meadow';
+        const version=select.value==='legacy-orion'?'legacy-orion':'jasper';
         localStorage.setItem('floatsheets-contract-version-v1',version);
         window.dispatchEvent(new CustomEvent('floatsheets-contract-version-change',{detail:{version:version}}));
       });
@@ -491,19 +511,19 @@
   function showContractWelcome(){
     if(window.__FLOATSHEETS_WELCOME_SHOWN__||typeof modal!=='function')return;
     window.__FLOATSHEETS_WELCOME_SHOWN__=true;
-    const version=localStorage.getItem('floatsheets-contract-version-v1')==='legacy-orion'?'legacy-orion':'meadow';
-    const name=version==='meadow'?'FloatSheets Meadow':'FloatSheets Legacy Orion';
+    const version=selectedContractVersion();
+    const name=version==='jasper'?'FloatSheets Jasper':'FloatSheets Legacy Orion';
     modal('Welcome to FloatSheets.','<p>Your dashboard is using <strong>'+name+'</strong>.</p><p>You can switch contract versions any time in <strong>Settings → Contract version</strong>. The selected version controls the contracts used for your wallet, positions, oracle data, and vault.</p>','Open Settings',function(){dialog.close();location.hash='settings';});
   }
 
   function showLegacyTradingDisabled(){
-    const version=localStorage.getItem('floatsheets-contract-version-v1')==='legacy-orion'?'legacy-orion':'meadow';
+    const version=selectedContractVersion();
     const view=location.hash.slice(1)||'trade';
     if(version!=='legacy-orion'||!['trade','portfolio','oracle','listings'].includes(view))return false;
-    root.innerHTML='<section class="panel live-only-panel legacy-trading-overlay" role="status" aria-labelledby="legacy-trading-title"><div class="legacy-trading-mark" aria-hidden="true">i</div><div class="legacy-trading-copy"><span class="pill">FLOATSHEETS LEGACY ORION</span><h1 id="legacy-trading-title">Trading is disabled on Orion.</h1><p>You can still use the vault to view your liquidity and withdraw it. Switch to FloatSheets Meadow to access trading, portfolio, oracle and market listing pages.</p><div class="legacy-trading-actions"><button type="button" class="small-btn" data-switch-meadow>Switch to Meadow</button><a class="small-btn" href="#vault">Open vault</a><a class="legacy-settings-link" href="#settings">Version settings</a></div></div></section>';
-    root.querySelector('[data-switch-meadow]').addEventListener('click',function(){
-      localStorage.setItem('floatsheets-contract-version-v1','meadow');
-      window.dispatchEvent(new CustomEvent('floatsheets-contract-version-change',{detail:{version:'meadow'}}));
+    root.innerHTML='<section class="panel live-only-panel legacy-trading-overlay" role="status" aria-labelledby="legacy-trading-title"><div class="legacy-trading-mark" aria-hidden="true">i</div><div class="legacy-trading-copy"><span class="pill">FLOATSHEETS LEGACY ORION</span><h1 id="legacy-trading-title">Trading is disabled on Orion.</h1><p>You can still use the vault to view your liquidity and withdraw it. Switch to FloatSheets Jasper to access trading, portfolio, oracle and market listing pages.</p><div class="legacy-trading-actions"><button type="button" class="small-btn" data-switch-jasper>Switch to Jasper</button><a class="small-btn" href="#vault">Open vault</a><a class="legacy-settings-link" href="#settings">Version settings</a></div></div></section>';
+    root.querySelector('[data-switch-jasper]').addEventListener('click',function(){
+      localStorage.setItem('floatsheets-contract-version-v1','jasper');
+      window.dispatchEvent(new CustomEvent('floatsheets-contract-version-change',{detail:{version:'jasper'}}));
     });
     return true;
   }
@@ -579,7 +599,7 @@
     if(!detail||!api)return;
     const request=++liveTruthRequest;paintLiveMarketTruth(null);
     try {
-      const version=localStorage.getItem('floatsheets-contract-version-v1')==='legacy-orion'?'legacy-orion':'meadow';
+      const version=selectedContractVersion();
       const data=await api.getLiveMarket(detail,version);
       if(request===liveTruthRequest&&root.isConnected&&selected.symbol===detail)paintLiveMarketTruth(data);
     } catch { if(request===liveTruthRequest&&root.isConnected)paintLiveMarketTruth({state:'UNAVAILABLE'}); }
@@ -614,7 +634,7 @@
     const controller=chartAbort;
     const timeout=setTimeout(()=>controller.abort(),15000);
     try {
-      const version=localStorage.getItem('floatsheets-contract-version-v1')==='legacy-orion'?'legacy-orion':'meadow';
+      const version=selectedContractVersion();
       const historyRequest=api.getMarketHistory(selected.symbol,timeframe,version);
       const dayRequest=timeframe==='1D' ? null : api.getMarketHistory(selected.symbol,'1D',version);
       const payload=await abortable(historyRequest,controller.signal);

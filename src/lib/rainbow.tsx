@@ -17,7 +17,14 @@ const clearingLiquidityAbi = parseAbi(["function availableLiquidity() view retur
 const oracleAbi = parseAbi(["function getPrice(bytes32) view returns (uint256,uint256,uint256,uint256,uint64,uint64,bool)"]);
 const vaultAbi = parseAbi([
   "function totalAssets() view returns (uint256)", "function totalShares() view returns (uint256)",
-  "function balanceOf(address) view returns (uint256)"
+  "function balanceOf(address) view returns (uint256)",
+  "function lockedWithdrawalShares(address) view returns (uint256)",
+  "function queueEpoch() view returns (uint64)", "function queueEpochStartedAt() view returns (uint64)",
+  "function queueEpochSettled() view returns (bool)", "function QUEUE_EPOCH_DURATION() view returns (uint256)",
+  "function queuedDepositOf(uint64,address) view returns (uint256)", "function queuedWithdrawalOf(uint64,address) view returns (uint256)",
+  "function depositClaimed(uint64,address) view returns (bool)", "function withdrawalClaimed(uint64,address) view returns (bool)",
+  "function queueSettlements(uint64) view returns (uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,bool)",
+  "function insuranceAssets() view returns (uint256)"
 ]);
 
 export const robinhoodChain = defineChain({
@@ -42,7 +49,7 @@ export function RainbowProviders({ children, queryClient }: { children: ReactNod
 
 export function RainbowWalletBridge() {
   const { address, chainId, isConnected } = useAccount();
-  const [contractVersion, setContractVersion] = useState<"meadow" | "legacy-orion">("meadow");
+  const [contractVersion, setContractVersion] = useState<"jasper" | "meadow" | "legacy-orion">("jasper");
   const [protocolAddresses, setProtocolAddresses] = useState<{ usdg: Address; vault: Address; clearingHouse: Address; oracle: Address } | null>(null);
   const usdgAddress = protocolAddresses?.usdg ?? DEFAULT_USDG_ADDRESS;
   const { data: usdgBalance, refetch: refetchUsdG } = useReadContract({ address: usdgAddress, abi: erc20Abi, functionName: "balanceOf", args: [address ?? "0x0000000000000000000000000000000000000000"], query: { enabled: Boolean(address) && chainId === robinhoodChain.id } });
@@ -52,7 +59,7 @@ export function RainbowWalletBridge() {
   useEffect(() => {
     let active = true;
     let requestId = 0;
-    const loadProtocol = (version: "meadow" | "legacy-orion") => {
+    const loadProtocol = (version: "jasper" | "meadow" | "legacy-orion") => {
       const currentRequest = ++requestId;
       void getProtocol({ data: { version } }).then((protocol) => {
       if (!active || currentRequest !== requestId) return;
@@ -66,11 +73,12 @@ export function RainbowWalletBridge() {
       }).catch((error) => console.warn("FloatSheets protocol address lookup failed", error));
     };
     const saved = window.localStorage.getItem("floatsheets-contract-version-v1");
-    const initialVersion = saved === "legacy-orion" ? "legacy-orion" : "meadow";
+    const initialVersion = saved === "legacy-orion" ? "legacy-orion" : "jasper";
     setContractVersion(initialVersion);
     loadProtocol(initialVersion);
     const onVersionChange = (event: Event) => {
-      const version = (event as CustomEvent<{ version?: string }>).detail?.version === "legacy-orion" ? "legacy-orion" : "meadow";
+      const selected = (event as CustomEvent<{ version?: string }>).detail?.version;
+      const version = selected === "legacy-orion" || selected === "meadow" ? selected : "jasper";
       setContractVersion(version);
       setProtocolAddresses(null);
       loadProtocol(version);
@@ -89,7 +97,7 @@ export function RainbowWalletBridge() {
     walletWindow.__FLOATSHEETS_WALLET_STATE__ = state;
     walletWindow.__FLOATSHEETS_WALLET__ = {
       ...state,
-      async buildTransaction(action: "approve" | "deposit" | "withdraw" | "trade-quote" | "close-quote" | "vault-approve" | "vault-deposit" | "vault-withdraw", payload: Record<string, unknown>) {
+      async buildTransaction(action: "approve" | "deposit" | "withdraw" | "trade-quote" | "close-quote" | "vault-approve" | "vault-deposit" | "vault-withdraw" | "vault-settle-queue" | "vault-start-next-epoch" | "vault-claim-deposit" | "vault-claim-withdrawal", payload: Record<string, unknown>) {
         if (!connected || !address) throw new Error("Connect a wallet on Robinhood Chain first.");
         const transactionPayload = action === "vault-deposit" || action === "vault-withdraw" ? { ...payload, receiver: address } : payload;
         const result = action === "trade-quote"
@@ -127,13 +135,30 @@ export function RainbowWalletBridge() {
       async vault() {
         if (!connected || !address || !publicClient) return null;
         if (!protocolAddresses) throw new Error("Trading configuration is still loading. Please try again.");
-        const [assets, shares, totalShares, availableLiquidity] = await Promise.all([
+      const [assets, shares, totalShares, lockedShares, availableLiquidity, epoch, epochStartedAt, epochSettled, epochDuration, insuranceAssets] = await Promise.all([
           publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "totalAssets" }),
           publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "balanceOf", args: [address] }),
           publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "totalShares" }),
-          publicClient.readContract({ address: protocolAddresses.clearingHouse, abi: clearingLiquidityAbi, functionName: "availableLiquidity" })
+          publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "lockedWithdrawalShares", args: [address] }),
+          publicClient.readContract({ address: protocolAddresses.clearingHouse, abi: clearingLiquidityAbi, functionName: "availableLiquidity" }),
+          publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "queueEpoch" }),
+          publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "queueEpochStartedAt" }),
+          publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "queueEpochSettled" }),
+          publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "QUEUE_EPOCH_DURATION" }),
+          publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "insuranceAssets" })
         ]);
-        return { assets: assets.toString(), shares: shares.toString(), totalShares: totalShares.toString(), availableLiquidity: availableLiquidity.toString() };
+        const epochs = Array.from({length: Number(epoch) > 9 ? 10 : Number(epoch) + 1}, (_, i) => BigInt(epoch) - BigInt(i));
+        const requests = await Promise.all(epochs.map(async (requestEpoch) => {
+          const [depositAssets, withdrawalShares, depositDone, withdrawalDone, settlement] = await Promise.all([
+            publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "queuedDepositOf", args: [requestEpoch, address] }),
+            publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "queuedWithdrawalOf", args: [requestEpoch, address] }),
+            publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "depositClaimed", args: [requestEpoch, address] }),
+            publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "withdrawalClaimed", args: [requestEpoch, address] }),
+            publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "queueSettlements", args: [requestEpoch] })
+          ]);
+          return { epoch: requestEpoch.toString(), depositAssets: depositAssets.toString(), withdrawalShares: withdrawalShares.toString(), depositClaimed: depositDone, withdrawalClaimed: withdrawalDone, settled: settlement[8] };
+        }));
+        return { assets: assets.toString(), shares: shares.toString(), lockedShares: lockedShares.toString(), totalShares: totalShares.toString(), availableLiquidity: availableLiquidity.toString(), epoch: epoch.toString(), epochStartedAt: epochStartedAt.toString(), epochSettled, epochDuration: epochDuration.toString(), insuranceAssets: insuranceAssets.toString(), requests };
       },
       async position(symbol: string) {
         if (!connected || !address || !publicClient) return null;

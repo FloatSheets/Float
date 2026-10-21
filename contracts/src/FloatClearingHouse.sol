@@ -21,6 +21,10 @@ interface IFloatVaultPayout {
     function claimPayout(address receiver, uint256 assets) external returns (uint256 paid);
 }
 
+interface IFloatVaultInsurance {
+    function fundInsuranceFromClearingHouse(uint256 assets) external;
+}
+
 /// @notice USDG-settled, pool-vs-trader clearing with isolated market margin and a shared LP vault.
 contract FloatClearingHouse {
     error Unauthorized();
@@ -55,6 +59,10 @@ contract FloatClearingHouse {
     uint256 public constant USDG_TO_E18 = 1e12;
     uint256 public constant BPS = 10_000;
     uint256 public constant GLOBAL_UTILIZATION_BPS = 5_000;
+    uint256 public constant MARKET_STRESS_MOVE_BPS = 2_500;
+    uint256 public constant MAX_GLOBAL_STRESS_RESERVE_BPS = 5_000;
+    uint256 public constant BASE_BORROW_FEE_BPS_PER_HOUR = 1;
+    uint256 public constant MAX_SKEW_BORROW_FEE_BPS_PER_HOUR = 9;
     uint256 public constant MARKET_OPEN_INTEREST_BPS = 1_500;
     uint256 public constant MARKET_SKEW_BPS = 1_000;
     uint256 public constant LIQUIDATION_PENALTY_BPS = 500;
@@ -95,6 +103,11 @@ contract FloatClearingHouse {
         uint256 shortBaseE18;
     }
 
+    struct MarketEntryValue {
+        uint256 longEntryValueE18;
+        uint256 shortEntryValueE18;
+    }
+
     struct Position {
         int256 sizeE18;
         uint256 entryPriceE18;
@@ -123,10 +136,13 @@ contract FloatClearingHouse {
     uint64 public oracleMaxAgeSeconds;
     uint256 public activePositionCount;
     uint256 public badDebtUsdg;
+    uint256 public totalOpenPositionMarginUsdg;
     uint256 private entered;
     mapping(bytes32 => Market) public markets;
     mapping(bytes32 => MarketExposure) public marketExposure;
+    mapping(bytes32 => MarketEntryValue) public marketEntryValue;
     mapping(address => mapping(bytes32 => Position)) private positions;
+    mapping(address => mapping(bytes32 => uint64)) public lastBorrowAccrualAt;
     mapping(address => mapping(uint64 => bool)) public quoteUsed;
     mapping(address => uint64) public minimumValidNonce;
     mapping(address => uint256) public claimableBalance;
@@ -174,6 +190,7 @@ contract FloatClearingHouse {
     event BadDebtCovered(address indexed payer, uint256 amountUsdg, uint256 remainingUsdg);
     event DeferredClaimAdded(address indexed account, uint256 assets);
     event DeferredClaimPaid(address indexed account, address indexed receiver, uint256 assets);
+    event BorrowFeeCharged(address indexed trader, bytes32 indexed marketId, uint256 assets, uint256 rateBpsPerHour);
 
     constructor(
         address initialOwner,
@@ -298,17 +315,44 @@ contract FloatClearingHouse {
     /// @notice LP assets available while preserving the protocol's global utilization ceiling.
     function availableLiquidity() public view returns (uint256) {
         uint256 assets = vault.totalAssets();
-        uint256 grossOpenInterest = 0;
+        uint256 stressReserve = 0;
         for (uint256 i; i < marketIds.length; ++i) {
             bytes32 marketId = marketIds[i];
             MarketExposure memory exposure = marketExposure[marketId];
             if (exposure.longBaseE18 == 0 && exposure.shortBaseE18 == 0) continue;
             uint256 price = _lastKnownPrice(marketId);
-            grossOpenInterest += _notionalUsdgRoundingUp(_asInt256(exposure.longBaseE18), price)
-            + _notionalUsdgRoundingUp(_asInt256(exposure.shortBaseE18), price);
+            uint256 netBase = exposure.longBaseE18 > exposure.shortBaseE18
+                ? exposure.longBaseE18 - exposure.shortBaseE18
+                : exposure.shortBaseE18 - exposure.longBaseE18;
+            uint256 netNotional = _notionalUsdgRoundingUp(_asInt256(netBase), price);
+            stressReserve += _mulDivRoundingUp(netNotional, MARKET_STRESS_MOVE_BPS, BPS);
         }
-        uint256 requiredAssets = _mulDivRoundingUp(grossOpenInterest, BPS, GLOBAL_UTILIZATION_BPS);
-        return requiredAssets >= assets ? 0 : assets - requiredAssets;
+        uint256 globalReserveCap = assets * MAX_GLOBAL_STRESS_RESERVE_BPS / BPS;
+        if (stressReserve > globalReserveCap) stressReserve = globalReserveCap;
+        return stressReserve >= assets ? 0 : assets - stressReserve;
+    }
+
+    /// @notice Net trader PnL marked to each market's latest oracle price.
+    function unrealizedPnlUsdg() external view returns (int256 pnlUsdg) {
+        for (uint256 i; i < marketIds.length; ++i) {
+            bytes32 marketId = marketIds[i];
+            MarketExposure memory exposure = marketExposure[marketId];
+            MarketEntryValue memory entryValue = marketEntryValue[marketId];
+            if (exposure.longBaseE18 == 0 && exposure.shortBaseE18 == 0) continue;
+            uint256 price = _lastKnownPrice(marketId);
+            uint256 longMark = exposure.longBaseE18 * price / E18;
+            uint256 shortMark = exposure.shortBaseE18 * price / E18;
+            if (longMark >= entryValue.longEntryValueE18) {
+                pnlUsdg += _asInt256((longMark - entryValue.longEntryValueE18) / USDG_TO_E18);
+            } else {
+                pnlUsdg -= _asInt256((entryValue.longEntryValueE18 - longMark) / USDG_TO_E18);
+            }
+            if (entryValue.shortEntryValueE18 >= shortMark) {
+                pnlUsdg += _asInt256((entryValue.shortEntryValueE18 - shortMark) / USDG_TO_E18);
+            } else {
+                pnlUsdg -= _asInt256((shortMark - entryValue.shortEntryValueE18) / USDG_TO_E18);
+            }
+        }
     }
 
     /// @notice Permissionless recapitalization of losses that exceeded isolated trader margin.
@@ -329,6 +373,7 @@ contract FloatClearingHouse {
             revert PositionLimitExceeded();
         }
         positions[msg.sender][marketId].marginUsdg += assets;
+        if (positions[msg.sender][marketId].sizeE18 != 0) totalOpenPositionMarginUsdg += assets;
         _safeTransferFrom(msg.sender, address(this), assets);
         emit MarginDeposited(msg.sender, marketId, assets);
     }
@@ -342,6 +387,7 @@ contract FloatClearingHouse {
         if (assets == 0 || assets > position.marginUsdg) revert InsufficientMargin();
         if (market.state == MarketState.Paused && position.sizeE18 != 0) revert MarketPaused();
         position.marginUsdg -= assets;
+        if (position.sizeE18 != 0) totalOpenPositionMarginUsdg -= assets;
         if (position.sizeE18 != 0) _requireInitialMargin(position, _currentPrice(marketId, market), market);
         uint256 deferred = assets < pendingPayout[msg.sender] ? assets : pendingPayout[msg.sender];
         if (deferred != 0) {
@@ -384,18 +430,19 @@ contract FloatClearingHouse {
         uint256 tradedNotional = _notionalUsdgRoundingUp(quote.sizeDeltaE18, quote.executionPriceE18);
         if (quote.feeUsdg > tradedNotional * MAX_TRADE_FEE_BPS / BPS) revert FeeTooHigh();
         quoteUsed[msg.sender][quote.nonce] = true;
+        _applyExecution(quote, market, position, nextSize, riskReducing);
+    }
+
+    function _applyExecution(
+        TradeQuote calldata quote,
+        Market memory market,
+        Position storage position,
+        int256 nextSize,
+        bool riskReducing
+    ) private {
         int256 previousSize = position.sizeE18;
-        _updateExposure(quote.marketId, previousSize, nextSize);
-        _applyTrade(position, quote.sizeDeltaE18, quote.executionPriceE18, nextSize == 0, msg.sender);
-        if (previousSize == 0 && nextSize != 0) {
-            ++activePositionCount;
-            position.openedAt = uint64(block.timestamp);
-        } else if (previousSize != 0 && nextSize == 0) {
-            --activePositionCount;
-            position.openedAt = 0;
-        } else if (previousSize != 0 && nextSize != 0 && ((previousSize > 0) != (nextSize > 0))) {
-            position.openedAt = uint64(block.timestamp);
-        }
+        uint256 marginBefore = position.marginUsdg;
+        _applyPositionTrade(quote, position, nextSize);
         uint256 chargedFee = quote.feeUsdg;
         // A reduction must never be blocked solely because realized losses
         // consumed the remaining margin before the fee is charged. Treat the
@@ -406,6 +453,8 @@ contract FloatClearingHouse {
         }
         position.marginUsdg -= chargedFee;
         if (chargedFee != 0) _safeTransfer(feeRecipient, chargedFee);
+        if (previousSize != 0) totalOpenPositionMarginUsdg -= marginBefore;
+        if (position.sizeE18 != 0) totalOpenPositionMarginUsdg += position.marginUsdg;
         if (!riskReducing) {
             uint256 notional = _notionalUsdg(position.sizeE18, quote.executionPriceE18);
             if (notional > market.maxPositionNotionalUsdg) revert PositionLimitExceeded();
@@ -415,13 +464,36 @@ contract FloatClearingHouse {
         emit TradeExecuted(msg.sender, quote.marketId, quote.sizeDeltaE18, quote.executionPriceE18, chargedFee);
     }
 
+    function _applyPositionTrade(TradeQuote calldata quote, Position storage position, int256 nextSize) private {
+        int256 previousSize = position.sizeE18;
+        uint256 previousEntry = position.entryPriceE18;
+        _accrueBorrowFee(msg.sender, quote.marketId, position);
+        _applyTrade(position, quote.sizeDeltaE18, quote.executionPriceE18, nextSize == 0, msg.sender);
+        _updateExposure(quote.marketId, previousSize, previousEntry, position.sizeE18, position.entryPriceE18);
+        if (previousSize == 0 && nextSize != 0) {
+            ++activePositionCount;
+            position.openedAt = uint64(block.timestamp);
+        } else if (previousSize != 0 && nextSize == 0) {
+            --activePositionCount;
+            position.openedAt = 0;
+        } else if (previousSize != 0 && nextSize != 0 && ((previousSize > 0) != (nextSize > 0))) {
+            position.openedAt = uint64(block.timestamp);
+        }
+    }
+
     function liquidate(address trader, bytes32 marketId) external nonReentrant {
         Position storage position = positions[trader][marketId];
         if (position.sizeE18 == 0) revert PositionNotLiquidatable();
         bool expired = block.timestamp >= uint256(position.openedAt) + MAX_POSITION_DURATION;
         uint256 price = _currentPrice(marketId, markets[marketId]);
         if (!expired && _meetsMaintenanceMargin(position, price, markets[marketId])) revert PositionNotLiquidatable();
+        uint256 marginBeforeAccrual = position.marginUsdg;
+        _accrueBorrowFee(trader, marketId, position);
+        totalOpenPositionMarginUsdg -= marginBeforeAccrual;
+        totalOpenPositionMarginUsdg += position.marginUsdg;
+        uint256 marginAtSettlement = position.marginUsdg;
         uint64 openedAt = _settlePosition(trader, marketId, price, expired);
+        totalOpenPositionMarginUsdg -= marginAtSettlement;
         if (expired) emit PositionExpired(trader, marketId, openedAt);
     }
 
@@ -433,7 +505,7 @@ contract FloatClearingHouse {
         uint256 positionNotional = _notionalUsdgRoundingUp(position.sizeE18, price);
         int256 pnl = _pnlUsdg(position.sizeE18, position.entryPriceE18, price);
         openedAt = position.openedAt;
-        _updateExposure(marketId, position.sizeE18, 0);
+        _updateExposure(marketId, position.sizeE18, position.entryPriceE18, 0, 0);
         (uint256 penalty, uint256 liquidatorReward, uint256 returned) =
             _settleMargin(position, pnl, positionNotional, expired, trader);
         delete positions[trader][marketId];
@@ -469,12 +541,56 @@ contract FloatClearingHouse {
         if (assets != 0) emit DeferredClaimPaid(msg.sender, receiver, assets);
     }
 
-    function _updateExposure(bytes32 marketId, int256 previousSize, int256 nextSize) private {
+    function _updateExposure(bytes32 marketId, int256 previousSize, uint256 previousEntry, int256 nextSize, uint256 nextEntry) private {
         MarketExposure storage exposure = marketExposure[marketId];
-        if (previousSize > 0) exposure.longBaseE18 -= _abs(previousSize);
-        else if (previousSize < 0) exposure.shortBaseE18 -= _abs(previousSize);
-        if (nextSize > 0) exposure.longBaseE18 += _abs(nextSize);
-        else if (nextSize < 0) exposure.shortBaseE18 += _abs(nextSize);
+        MarketEntryValue storage entryValue = marketEntryValue[marketId];
+        if (previousSize > 0) {
+            uint256 oldBase = _abs(previousSize);
+            exposure.longBaseE18 -= oldBase;
+            entryValue.longEntryValueE18 -= oldBase * previousEntry / E18;
+        } else if (previousSize < 0) {
+            uint256 oldBase = _abs(previousSize);
+            exposure.shortBaseE18 -= oldBase;
+            entryValue.shortEntryValueE18 -= oldBase * previousEntry / E18;
+        }
+        if (nextSize > 0) {
+            uint256 newBase = _abs(nextSize);
+            exposure.longBaseE18 += newBase;
+            entryValue.longEntryValueE18 += newBase * nextEntry / E18;
+        } else if (nextSize < 0) {
+            uint256 newBase = _abs(nextSize);
+            exposure.shortBaseE18 += newBase;
+            entryValue.shortEntryValueE18 += newBase * nextEntry / E18;
+        }
+    }
+
+    function _accrueBorrowFee(address trader, bytes32 marketId, Position storage position) private {
+        if (position.sizeE18 == 0) {
+            lastBorrowAccrualAt[trader][marketId] = uint64(block.timestamp);
+            return;
+        }
+        uint64 last = lastBorrowAccrualAt[trader][marketId];
+        lastBorrowAccrualAt[trader][marketId] = uint64(block.timestamp);
+        if (last == 0 || block.timestamp <= last) return;
+        MarketExposure memory exposure = marketExposure[marketId];
+        uint256 longNotional = _notionalUsdgRoundingUp(_asInt256(exposure.longBaseE18), _lastKnownPrice(marketId));
+        uint256 shortNotional = _notionalUsdgRoundingUp(_asInt256(exposure.shortBaseE18), _lastKnownPrice(marketId));
+        uint256 gross = longNotional + shortNotional;
+        if (gross == 0 || longNotional == shortNotional) return;
+        bool longCrowded = longNotional > shortNotional;
+        if ((position.sizeE18 > 0) != longCrowded) return;
+        uint256 skew = longNotional > shortNotional ? longNotional - shortNotional : shortNotional - longNotional;
+        uint256 rate = BASE_BORROW_FEE_BPS_PER_HOUR
+            + MAX_SKEW_BORROW_FEE_BPS_PER_HOUR * skew / gross;
+        uint256 notional = _notionalUsdgRoundingUp(position.sizeE18, _lastKnownPrice(marketId));
+        uint256 fee = notional * rate * (block.timestamp - last) / BPS / 1 hours;
+        if (fee > position.marginUsdg) fee = position.marginUsdg;
+        if (fee != 0) {
+            position.marginUsdg -= fee;
+            _safeApprove(address(vault), fee);
+            IFloatVaultInsurance(address(vault)).fundInsuranceFromClearingHouse(fee);
+            emit BorrowFeeCharged(trader, marketId, fee, rate);
+        }
     }
 
     function _enforceExposureLimits(bytes32 tradedMarketId, uint256 executionPrice) private view {
