@@ -5,17 +5,19 @@ import type { Address } from "viem";
 import type { Hex } from "viem";
 import type { Pool } from "pg";
 
-import type { AppConfig } from "../config";
+import { contractConfigForVersion, type AppConfig } from "../config";
+import { contractVersionFromRequest } from "../contract-version";
 import {
-  approveUsdG, configureMarket, depositMargin, depositVault, enableMarket, liquidate, marketId, withdrawMargin, withdrawVault
+  approveUsdG, claimDeferredPayout, claimProtocolBalance, configureMarket, depositMargin, depositVault, enableMarket, liquidate, marketId, withdrawMargin, withdrawVault
 } from "../chain/protocol";
 import { publishOracle, executeTrade } from "../chain/protocol";
 import { requireMasterAdmin } from "../auth/master-admin";
 import { signPriceAttestation, signTradeQuote } from "../signing/signer";
 import type { PriceAttestation, TradeQuote } from "../signing/types";
 import type { RpcTransport } from "../chain/rpc";
-import { readClearingExposure, readClearingMarket, readClearingPosition, readOraclePrice, readVaultAssets } from "../chain/protocol-read";
+import { readBadDebt, readClearingExposure, readClearingMarket, readClearingPosition, readOraclePrice, readPayoutBalances, readVaultAssets } from "../chain/protocol-read";
 import type { OraclePublisher } from "../oracle/publisher";
+import { safeErrorMessage } from "../safe-error";
 
 const address = z.string().regex(/^0x[0-9a-fA-F]{40}$/);
 const uint = z.string().regex(/^\d+$/);
@@ -100,7 +102,12 @@ function boundedQuoteExpiry(
 }
 
 function protocolError(response: Response, error: unknown): void {
-  response.status(400).json({ error: error instanceof Error ? error.message : "invalid request" });
+  const message = safeErrorMessage(error);
+  // Keep actionable validation messages, but never echo provider exception
+  // details (they can contain credential-bearing RPC URLs and request data).
+  const providerError = /redacted endpoint|rpc request|http request|request body|socket hang up|fetch failed/i.test(message);
+  const safeMessage = providerError ? "Protocol service is temporarily unavailable" : message.slice(0, 240);
+  response.status(providerError ? 503 : 400).json({ error: safeMessage || "Invalid protocol request" });
 }
 
 export function createProtocolTransactionsRouter(
@@ -110,7 +117,35 @@ export function createProtocolTransactionsRouter(
   oraclePublisher?: Pick<OraclePublisher, "ensureFreshMarket">
 ): Router {
   const router = Router();
+  const versions = {
+    meadow: createProtocolTransactionsRouterForConfig(contractConfigForVersion(config, "meadow"), database, rpc, oraclePublisher),
+    "legacy-orion": createProtocolTransactionsRouterForConfig(contractConfigForVersion(config, "legacy-orion"), database, rpc, oraclePublisher)
+  };
+  router.use((request, response, next) => versions[contractVersionFromRequest(request)](request, response, next));
+  return router;
+}
+
+function createProtocolTransactionsRouterForConfig(
+  config: AppConfig,
+  database?: Pool,
+  rpc?: RpcTransport,
+  oraclePublisher?: Pick<OraclePublisher, "ensureFreshMarket">
+): Router {
+  const router = Router();
   const masterAdmin = requireMasterAdmin(config);
+
+  router.get("/payouts/:account", async (request, response) => {
+    try {
+      if (!rpc) throw new Error("chain read service is unavailable");
+      const account = address.parse(request.params.account) as Address;
+      const balances = await readPayoutBalances(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, account);
+      response.json({
+        claimable_usdg: balances.claimableBalance.toString(),
+        deferred_usdg: balances.deferredClaim.toString(),
+        pending_usdg: balances.pendingPayout.toString()
+      });
+    } catch (error) { protocolError(response, error); }
+  });
 
   router.post("/oracle-attestation", masterAdmin, async (request, response) => {
     try {
@@ -150,8 +185,9 @@ export function createProtocolTransactionsRouter(
       if (quoteRows.rows[0]?.count !== "10" || (quoteRows.rows[0].max_degradation ?? Infinity) > marketRow.max_half_spread_bps) throw new Error("market quote quality is outside its configured band");
       const onchainMarket = await readClearingMarket(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, expectedMarketId);
       if (onchainMarket.state !== 1) throw new Error("on-chain market is not active");
-      if (!oraclePublisher) throw new Error("oracle publisher is unavailable");
-      await oraclePublisher.ensureFreshMarket(symbol);
+      // Oracle publication is driven by the scheduled publisher. User quote
+      // requests must never trigger publisher-paid transactions or invalidate
+      // other users' signed quotes.
       const oraclePrice = await readOraclePrice(rpc, config.FLOAT_ORACLE_ADDRESS as Address, expectedMarketId);
       const now = BigInt(Math.floor(Date.now() / 1000));
       const expiry = bigint(input.expiry as string);
@@ -173,6 +209,10 @@ export function createProtocolTransactionsRouter(
         feeUsdg: bigint(input.feeUsdg as string), maxLeverageE18: bigint(input.maxLeverageE18 as string),
         oracleSequence: bigint(input.oracleSequence as string), nonce: bigint(input.nonce as string), expiry: bigint(input.expiry as string)
       };
+      const position = await readClearingPosition(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, value.trader, expectedMarketId);
+      const nextSize = position.sizeE18 + value.sizeDeltaE18;
+      const riskIncreasing = !(position.sizeE18 !== 0n && ((position.sizeE18 > 0n && nextSize >= 0n && nextSize < position.sizeE18) || (position.sizeE18 < 0n && nextSize <= 0n && nextSize > position.sizeE18)));
+      if (riskIncreasing && await readBadDebt(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address) !== 0n) throw new Error("new positions are paused while vault bad debt is outstanding");
       const signature = await signTradeQuote(config.QUOTE_SIGNER_PRIVATE_KEY as Hex, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, value);
       response.json({ quote: input, signature, transaction: executeTrade(config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, value, signature) });
     } catch (error) { protocolError(response, error); }
@@ -209,8 +249,6 @@ export function createProtocolTransactionsRouter(
       const onchainMarket = await readClearingMarket(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, id);
       if (onchainMarket.state !== 1) throw new Error("on-chain market is not active");
       if (requestedNotional > onchainMarket.maxPositionNotionalUsdg) throw new Error("quote notional exceeds on-chain market limit");
-      if (!oraclePublisher) throw new Error("oracle publisher is unavailable");
-      await oraclePublisher.ensureFreshMarket(symbol);
       const oraclePrice = await readOraclePrice(rpc, config.FLOAT_ORACLE_ADDRESS as Address, id);
       const now = BigInt(Math.floor(Date.now() / 1_000));
       if (oraclePrice.sequence === 0n || now > oraclePrice.timestamp + BigInt(config.ORACLE_PRICE_MAX_AGE_SECONDS)) throw new Error("on-chain oracle price is stale");
@@ -254,6 +292,7 @@ export function createProtocolTransactionsRouter(
       const nextSize = position.sizeE18 + value.sizeDeltaE18;
       const riskIncreasing = !(position.sizeE18 !== 0n && ((position.sizeE18 > 0n && value.sizeDeltaE18 < 0n) || (position.sizeE18 < 0n && value.sizeDeltaE18 > 0n)) && abs(value.sizeDeltaE18) <= abs(position.sizeE18));
       if (riskIncreasing) {
+        if (await readBadDebt(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address) !== 0n) throw new Error("new positions are paused while vault bad debt is outstanding");
         const [exposure, vaultAssets] = await Promise.all([
           readClearingExposure(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, id),
           readVaultAssets(rpc, config.FLOAT_VAULT_ADDRESS as Address)
@@ -315,6 +354,7 @@ export function createProtocolTransactionsRouter(
       if (notionalForSize(nextSize, oraclePrice.priceE18) > onchainMarket.maxPositionNotionalUsdg) return reject("Lower your leverage or margin to stay within this market's position limit.");
       const riskIncreasing = !(position.sizeE18 !== 0n && ((position.sizeE18 > 0n && nextSize < position.sizeE18) || (position.sizeE18 < 0n && nextSize > position.sizeE18)));
       if (riskIncreasing) {
+        if (await readBadDebt(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address) !== 0n) return reject("New positions are paused while vault bad debt is outstanding.");
         const [exposure, vaultAssets] = await Promise.all([
           readClearingExposure(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, id),
           readVaultAssets(rpc, config.FLOAT_VAULT_ADDRESS as Address)
@@ -350,8 +390,6 @@ export function createProtocolTransactionsRouter(
       if (!marketRow.observed_at || (Date.now() - marketRow.observed_at.getTime()) / 1_000 > config.ORACLE_PRICE_MAX_AGE_SECONDS) throw new Error("market snapshot is stale");
       const onchainMarket = await readClearingMarket(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, id);
       if (onchainMarket.state === 0) throw new Error("on-chain market is unavailable");
-      if (!oraclePublisher) throw new Error("oracle publisher is unavailable");
-      await oraclePublisher.ensureFreshMarket(symbol);
       const oraclePrice = await readOraclePrice(rpc, config.FLOAT_ORACLE_ADDRESS as Address, id);
       const now = BigInt(Math.floor(Date.now() / 1_000));
       if (oraclePrice.sequence === 0n || now > oraclePrice.timestamp + BigInt(config.ORACLE_PRICE_MAX_AGE_SECONDS)) throw new Error("on-chain oracle price is stale");
@@ -372,8 +410,10 @@ export function createProtocolTransactionsRouter(
          LIMIT 1`, [marketRow.id, direction, usdgDecimal(positionNotional)]
       );
       const sample = sampleResult.rows[0];
-      if (!sample || !Number.isFinite(sample.execution_degradation_bps) || Math.abs(sample.execution_degradation_bps) > marketRow.max_half_spread_bps) throw new Error("market quote quality is outside its configured band");
-      const degradationBps = BigInt(sample.execution_degradation_bps);
+      if (!oraclePrice.circuitBroken && (!sample || !Number.isFinite(sample.execution_degradation_bps) || Math.abs(sample.execution_degradation_bps) > marketRow.max_half_spread_bps)) throw new Error("market quote quality is outside its configured band");
+      // Preserve exits during a breaker, but price them at the on-chain TWAP
+      // instead of a potentially manipulated pool sample.
+      const degradationBps = oraclePrice.circuitBroken ? 0n : BigInt(sample!.execution_degradation_bps);
       const executionPriceE18 = direction === "buy"
         ? oraclePrice.priceE18 * (BPS + degradationBps) / BPS
         : oraclePrice.priceE18 * (BPS - degradationBps) / BPS;
@@ -437,6 +477,20 @@ export function createProtocolTransactionsRouter(
   router.post("/liquidate", (request, response) => {
     try { const body = z.object({ market: z.string().min(1), trader: address }).parse(request.body); response.json({ transaction: liquidate(config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, body.trader as Address, marketId(body.market)) }); }
     catch (error) { protocolError(response, error); }
+  });
+
+  router.post("/claim", (request, response) => {
+    try {
+      const body = z.object({ receiver: address }).parse(request.body);
+      response.json({ transaction: claimProtocolBalance(config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, body.receiver as Address) });
+    } catch (error) { protocolError(response, error); }
+  });
+
+  router.post("/claim-deferred", (request, response) => {
+    try {
+      const body = z.object({ receiver: address }).parse(request.body);
+      response.json({ transaction: claimDeferredPayout(config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, body.receiver as Address) });
+    } catch (error) { protocolError(response, error); }
   });
 
   router.post("/admin/enable-market", masterAdmin, (request, response) => {

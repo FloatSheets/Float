@@ -6,15 +6,21 @@ const oracleAbi = parseAbi(["function getPrice(bytes32) view returns (uint256,ui
 const clearingAbi = parseAbi([
   "function markets(bytes32) view returns (uint8,uint64,uint64,uint64,uint64,uint128)",
   "function marketExposure(bytes32) view returns (uint256 longBaseE18,uint256 shortBaseE18)",
-  "function getPosition(address,bytes32) view returns (int256,uint256,uint256)"
+  "function getPosition(address,bytes32) view returns (int256,uint256,uint256,uint64)",
+  "function badDebtUsdg() view returns (uint256)"
 ]);
 const vaultAbi = parseAbi(["function totalAssets() view returns (uint256)"]);
+const payoutAbi = parseAbi([
+  "function claimableBalance(address) view returns (uint256)",
+  "function deferredClaim(address) view returns (uint256)",
+  "function pendingPayout(address) view returns (uint256)"
+]);
 
 export type OraclePrice = {
   priceE18: bigint; spotPriceE18: bigint; confidenceBps: bigint; spotTwapDeviationBps: bigint;
   timestamp: bigint; sequence: bigint; circuitBroken: boolean;
 };
-export type ClearingPosition = { sizeE18: bigint; entryPriceE18: bigint; marginUsdg: bigint };
+export type ClearingPosition = { sizeE18: bigint; entryPriceE18: bigint; marginUsdg: bigint; openedAt: bigint };
 export type ClearingExposure = { longBaseE18: bigint; shortBaseE18: bigint };
 export type ClearingMarket = {
   state: number; maxLeverageE18: bigint; maintenanceMarginBps: bigint; maxExecutionDeviationBps: bigint;
@@ -31,8 +37,14 @@ export async function readOraclePrice(rpc: RpcTransport, oracle: Address, id: He
 export async function readClearingPosition(rpc: RpcTransport, clearingHouse: Address, trader: Address, id: Hex): Promise<ClearingPosition> {
   const data = encodeFunctionData({ abi: clearingAbi, functionName: "getPosition", args: [trader, id] });
   const result = await rpc.call({ to: clearingHouse, data });
-  const [sizeE18, entryPriceE18, marginUsdg] = decodeFunctionResult({ abi: clearingAbi, functionName: "getPosition", data: result });
-  return { sizeE18, entryPriceE18, marginUsdg };
+  const [sizeE18, entryPriceE18, marginUsdg, openedAt] = decodeFunctionResult({ abi: clearingAbi, functionName: "getPosition", data: result });
+  return { sizeE18, entryPriceE18, marginUsdg, openedAt: BigInt(openedAt) };
+}
+
+export async function readBadDebt(rpc: RpcTransport, clearingHouse: Address): Promise<bigint> {
+  const data = encodeFunctionData({ abi: clearingAbi, functionName: "badDebtUsdg" });
+  const result = await rpc.call({ to: clearingHouse, data });
+  return decodeFunctionResult({ abi: clearingAbi, functionName: "badDebtUsdg", data: result });
 }
 
 export async function readClearingExposure(rpc: RpcTransport, clearingHouse: Address, id: Hex): Promise<ClearingExposure> {
@@ -53,4 +65,14 @@ export async function readVaultAssets(rpc: RpcTransport, vault: Address): Promis
   const data = encodeFunctionData({ abi: vaultAbi, functionName: "totalAssets" });
   const result = await rpc.call({ to: vault, data });
   return decodeFunctionResult({ abi: vaultAbi, functionName: "totalAssets", data: result });
+}
+
+export async function readPayoutBalances(rpc: RpcTransport, clearingHouse: Address, account: Address) {
+  const names = ["claimableBalance", "deferredClaim", "pendingPayout"] as const;
+  const values = await Promise.all(names.map(async (functionName) => {
+    const data = encodeFunctionData({ abi: payoutAbi, functionName, args: [account] });
+    const result = await rpc.call({ to: clearingHouse, data });
+    return decodeFunctionResult({ abi: payoutAbi, functionName, data: result });
+  }));
+  return { claimableBalance: values[0], deferredClaim: values[1], pendingPayout: values[2] };
 }

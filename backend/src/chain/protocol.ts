@@ -16,6 +16,8 @@ const clearingAbi = parseAbi([
   "function withdrawMargin(bytes32 marketId,uint256 assets)",
   "function execute((bytes32 marketId,address trader,int256 sizeDeltaE18,uint256 executionPriceE18,uint256 feeUsdg,uint256 maxLeverageE18,uint64 oracleSequence,uint64 nonce,uint64 expiry) quote,bytes signature)",
   "function liquidate(address trader,bytes32 marketId)",
+  "function claim(address receiver)",
+  "function claimDeferred(address receiver)",
   "function setMarket(bytes32 marketId,(uint8 state,uint64 maxLeverageE18,uint64 maintenanceMarginBps,uint64 maxExecutionDeviationBps,uint64 maxOracleConfidenceBps,uint128 maxPositionNotionalUsdg) market)"
 ]);
 
@@ -53,6 +55,14 @@ export function executeTrade(clearingHouse: Address, quote: TradeQuote, signatur
 
 export function liquidate(clearingHouse: Address, trader: Address, id: Hex): ProtocolTransaction {
   return tx(clearingHouse, encodeFunctionData({ abi: clearingAbi, functionName: "liquidate", args: [trader, id] }));
+}
+
+export function claimProtocolBalance(clearingHouse: Address, receiver: Address): ProtocolTransaction {
+  return tx(clearingHouse, encodeFunctionData({ abi: clearingAbi, functionName: "claim", args: [receiver] }));
+}
+
+export function claimDeferredPayout(clearingHouse: Address, receiver: Address): ProtocolTransaction {
+  return tx(clearingHouse, encodeFunctionData({ abi: clearingAbi, functionName: "claimDeferred", args: [receiver] }));
 }
 
 export function publishOracle(oracle: Address, attestation: readonly [Hex, bigint, bigint, bigint, bigint, bigint, bigint], signature: Hex): ProtocolTransaction {

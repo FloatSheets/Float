@@ -465,7 +465,20 @@
 
   function installThemeToggle(){
     const settingsPanel=root.querySelector('#preferences-form .panel-body') || root.querySelector('#preferences-form')?.parentElement;
-    if(!settingsPanel || document.getElementById('dashboard-dark-mode')) return;
+    if(!settingsPanel) return;
+    if(!document.getElementById('contract-version-select')){
+      const versionRow=document.createElement('div'); versionRow.className='list-row contract-version-row';
+      versionRow.innerHTML='<div><strong>Contract version</strong><p>Choose which FloatSheets contracts power your dashboard and wallet actions.</p></div><select id="contract-version-select" aria-label="Contract version"><option value="meadow">FloatSheets Meadow · latest</option><option value="legacy-orion">FloatSheets Legacy Orion</option></select>';
+      settingsPanel.append(versionRow);
+      const select=versionRow.querySelector('select');
+      select.value=localStorage.getItem('floatsheets-contract-version-v1')==='legacy-orion'?'legacy-orion':'meadow';
+      select.addEventListener('change',function(){
+        const version=select.value==='legacy-orion'?'legacy-orion':'meadow';
+        localStorage.setItem('floatsheets-contract-version-v1',version);
+        window.dispatchEvent(new CustomEvent('floatsheets-contract-version-change',{detail:{version:version}}));
+      });
+    }
+    if(document.getElementById('dashboard-dark-mode')) return;
     const row=document.createElement('div'); row.className='list-row dashboard-theme-row';
     row.innerHTML='<div><strong>Dark dashboard</strong><p>Use a lower-light workspace palette.</p></div><input type="checkbox" class="setting-toggle" id="dashboard-dark-mode" aria-label="Dark dashboard">';
     settingsPanel.append(row);
@@ -473,6 +486,14 @@
     toggle.checked=localStorage.getItem('floatsheets-dashboard-theme')==='dark';
     document.body.classList.toggle('dashboard-dark',toggle.checked);
     toggle.addEventListener('change',function(){document.body.classList.toggle('dashboard-dark',toggle.checked);localStorage.setItem('floatsheets-dashboard-theme',toggle.checked?'dark':'light');});
+  }
+
+  function showContractWelcome(){
+    if(window.__FLOATSHEETS_WELCOME_SHOWN__||typeof modal!=='function')return;
+    window.__FLOATSHEETS_WELCOME_SHOWN__=true;
+    const version=localStorage.getItem('floatsheets-contract-version-v1')==='legacy-orion'?'legacy-orion':'meadow';
+    const name=version==='meadow'?'FloatSheets Meadow':'FloatSheets Legacy Orion';
+    modal('Welcome to FloatSheets.','<p>Your dashboard is using <strong>'+name+'</strong>.</p><p>You can switch contract versions any time in <strong>Settings → Contract version</strong>. The selected version controls the contracts used for your wallet, positions, oracle data, and vault.</p>','Open Settings',function(){dialog.close();location.hash='settings';});
   }
 
   let chartRequest = 0;
@@ -538,7 +559,8 @@
     if(!detail||!api)return;
     const request=++liveTruthRequest;paintLiveMarketTruth(null);
     try {
-      const response=await fetch(api.replace(/\/$/,'')+'/v1/markets/'+encodeURIComponent(detail)+'/live',{headers:{accept:'application/json'}});
+      const version=localStorage.getItem('floatsheets-contract-version-v1')==='legacy-orion'?'legacy-orion':'meadow';
+      const response=await fetch(api.replace(/\/$/,'')+'/v1/markets/'+encodeURIComponent(detail)+'/live',{headers:{accept:'application/json','x-floatsheets-contract-version':version}});
       if(!response.ok)throw new Error('live state unavailable');
       const data=await response.json();
       if(request===liveTruthRequest&&root.isConnected&&selected.symbol===detail)paintLiveMarketTruth(data);
@@ -575,8 +597,9 @@
     const timeout=setTimeout(()=>controller.abort(),15000);
     try {
       const endpoint=api.replace(/\/$/,'')+'/v1/markets/'+encodeURIComponent(selected.symbol)+'/history?format=candles';
-      const historyRequest=fetch(endpoint+'&range='+encodeURIComponent(timeframe),{headers:{accept:'application/json'},signal:controller.signal});
-      const dayRequest=timeframe==='1D' ? null : fetch(endpoint+'&range=1D',{headers:{accept:'application/json'},signal:controller.signal});
+      const version=localStorage.getItem('floatsheets-contract-version-v1')==='legacy-orion'?'legacy-orion':'meadow';
+      const historyRequest=fetch(endpoint+'&range='+encodeURIComponent(timeframe),{headers:{accept:'application/json','x-floatsheets-contract-version':version},signal:controller.signal});
+      const dayRequest=timeframe==='1D' ? null : fetch(endpoint+'&range=1D',{headers:{accept:'application/json','x-floatsheets-contract-version':version},signal:controller.signal});
       const response=await historyRequest;
       if(!response.ok) throw new Error('History unavailable');
       const payload=await response.json();
@@ -614,6 +637,7 @@
     const chartLegend=root.querySelector('.chart-legend');
     if(chartLegend) chartLegend.textContent='Price history · USDG';
     installThemeToggle();
+    showContractWelcome();
     installSidebarToggle();
     installMobileWorkspaceMenu();
     installActivityFeed();

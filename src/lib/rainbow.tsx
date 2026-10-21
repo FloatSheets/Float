@@ -42,6 +42,7 @@ export function RainbowProviders({ children, queryClient }: { children: ReactNod
 
 export function RainbowWalletBridge() {
   const { address, chainId, isConnected } = useAccount();
+  const [contractVersion, setContractVersion] = useState<"meadow" | "legacy-orion">("meadow");
   const [protocolAddresses, setProtocolAddresses] = useState<{ usdg: Address; vault: Address; clearingHouse: Address; oracle: Address } | null>(null);
   const usdgAddress = protocolAddresses?.usdg ?? DEFAULT_USDG_ADDRESS;
   const { data: usdgBalance, refetch: refetchUsdG } = useReadContract({ address: usdgAddress, abi: erc20Abi, functionName: "balanceOf", args: [address ?? "0x0000000000000000000000000000000000000000"], query: { enabled: Boolean(address) && chainId === robinhoodChain.id } });
@@ -50,8 +51,11 @@ export function RainbowWalletBridge() {
 
   useEffect(() => {
     let active = true;
-    void getProtocol().then((protocol) => {
-      if (!active) return;
+    let requestId = 0;
+    const loadProtocol = (version: "meadow" | "legacy-orion") => {
+      const currentRequest = ++requestId;
+      void getProtocol({ data: { version } }).then((protocol) => {
+      if (!active || currentRequest !== requestId) return;
       const usdg = protocol.settlement_asset_address;
       const vault = protocol.vault;
       const clearingHouse = protocol.clearing_house;
@@ -59,8 +63,20 @@ export function RainbowWalletBridge() {
       if (typeof usdg === "string" && /^0x[0-9a-fA-F]{40}$/.test(usdg) && typeof vault === "string" && /^0x[0-9a-fA-F]{40}$/.test(vault) && typeof clearingHouse === "string" && /^0x[0-9a-fA-F]{40}$/.test(clearingHouse) && typeof oracle === "string" && /^0x[0-9a-fA-F]{40}$/.test(oracle)) {
         setProtocolAddresses({ usdg: usdg as Address, vault: vault as Address, clearingHouse: clearingHouse as Address, oracle: oracle as Address });
       }
-    }).catch((error) => console.warn("FloatSheets protocol address lookup failed", error));
-    return () => { active = false; };
+      }).catch((error) => console.warn("FloatSheets protocol address lookup failed", error));
+    };
+    const saved = window.localStorage.getItem("floatsheets-contract-version-v1");
+    const initialVersion = saved === "legacy-orion" ? "legacy-orion" : "meadow";
+    setContractVersion(initialVersion);
+    loadProtocol(initialVersion);
+    const onVersionChange = (event: Event) => {
+      const version = (event as CustomEvent<{ version?: string }>).detail?.version === "legacy-orion" ? "legacy-orion" : "meadow";
+      setContractVersion(version);
+      setProtocolAddresses(null);
+      loadProtocol(version);
+    };
+    window.addEventListener("floatsheets-contract-version-change", onVersionChange);
+    return () => { active = false; window.removeEventListener("floatsheets-contract-version-change", onVersionChange); };
   }, []);
 
   useEffect(() => {
@@ -77,17 +93,17 @@ export function RainbowWalletBridge() {
         if (!connected || !address) throw new Error("Connect a wallet on Robinhood Chain first.");
         const transactionPayload = action === "vault-deposit" || action === "vault-withdraw" ? { ...payload, receiver: address } : payload;
         const result = action === "trade-quote"
-          ? await getTradeTransaction({ data: { ...payload, trader: address } })
+          ? await getTradeTransaction({ data: { ...payload, trader: address, contractVersion } })
           : action === "close-quote"
-            ? await getCloseTransaction({ data: { ...payload, trader: address } })
-          : await getTransactionCalldata({ data: { action, payload: transactionPayload } });
+            ? await getCloseTransaction({ data: { ...payload, trader: address, contractVersion } })
+          : await getTransactionCalldata({ data: { action, payload: transactionPayload, contractVersion } });
         const activity = action === "trade-quote" ? "trade" : action === "close-quote" ? "close" : action;
         const market = typeof payload["market"] === "string" ? payload["market"] : "";
         return { ...result, transaction: { ...(result.transaction as object), activity, market }, activity, market };
       },
       async checkTrade(payload: Record<string, unknown>) {
         if (!connected || !address) throw new Error("Connect a wallet on Robinhood Chain first.");
-        return checkTrade({ data: { ...payload, trader: address } });
+        return checkTrade({ data: { ...payload, trader: address, contractVersion } });
       },
       async send(transaction: { to: string; data: string; value?: string; chainId: number; activity?: string; market?: string }) {
         if (!connected) throw new Error("Connect a wallet on Robinhood Chain first.");
@@ -183,7 +199,7 @@ export function RainbowWalletBridge() {
       }
     };
     window.dispatchEvent(new CustomEvent("floatsheets-wallet-state", { detail: state }));
-  }, [address, chainId, isConnected, protocolAddresses, publicClient, refetchUsdG, sendTransactionAsync, usdgBalance]);
+  }, [address, chainId, contractVersion, isConnected, protocolAddresses, publicClient, refetchUsdG, sendTransactionAsync, usdgBalance]);
 
   return <ConnectButton.Custom>{({ account, chain, openAccountModal, openChainModal, openConnectModal, authenticationStatus, mounted }) => {
     const ready = mounted && authenticationStatus !== "loading";

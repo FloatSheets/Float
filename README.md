@@ -25,15 +25,30 @@ AMC and GME remain excluded until their direct stock/USDG pool quotes pass valid
 ## How it works
 
 1. A market monitor samples the direct stock/USDG V3 pool and its executable quotes.
-2. An external stock oracle supplies the mark-price reference.
+2. The backend records the pool TWAP and spot price, checks their deviation, and publishes eligible market attestations to the configured on-chain oracle.
 3. FloatSheets accepts a trade only inside its market’s leverage, ticket, spread, oracle-health, liquidity, and open-interest limits.
-4. All balances and settlement remain denominated in USDG; pool data informs risk and hedgeability rather than changing collateral denomination.
+4. All balances and settlement remain denominated in USDG; pool data informs marks, risk, and hedgeability rather than changing collateral denomination.
 
 ## API
 
+The production backend is available at [`https://api.floatsheets.app`](https://api.floatsheets.app). Configure the frontend's `VITE_API_URL` and server-only `FLOATSHEETS_API_URL` with this base URL.
+
 | Endpoint | Description |
 | --- | --- |
-| `GET /health` | Service status, ISO timestamp, and version. |
+| `GET /health` | Process status, timestamp, and version. Does not check database connectivity. |
+| `GET /ready/` | Database readiness check. |
+| `GET /v1/markets/` | Configured markets and each market's latest stored pool snapshot. |
+| `GET /v1/markets/:symbol` | Static market configuration. |
+| `GET /v1/markets/:symbol/live` | Current monitored and on-chain oracle/market state. |
+| `GET /v1/markets/:symbol/quotes` | Latest complete executable quote sample matrix. |
+| `GET /v1/markets/:symbol/history?range=1H` | Stored TWAP/spot history; supported ranges are `1H`, `4H`, `1D`, `1W`, and `1M`. Add `format=candles` for candles. |
+| `GET /v1/markets/:symbol/risk` | Monitored risk state and latest snapshot age. |
+
+### What the backend database stores
+
+PostgreSQL stores the seeded market configuration (`markets`), sampled pool and price observations (`pool_snapshots`), executable quote samples (`quote_samples`), monitor run/failure diagnostics (`monitor_runs`, `monitor_failures`), and applied migration names (`schema_migrations`). The backend does not store user accounts, wallet keys, deposits, positions, or trade settlement history; those are not database tables in this service. On-chain balances and positions live in the contracts and chain state.
+
+A fresh database applies migrations at backend startup. The initial migration seeds the configured markets; the monitor then repopulates snapshots and quote samples on its polling cycle. A database replacement therefore loses the old historical snapshots, quote samples, and monitor diagnostics, but market configuration is seeded again. History endpoints only have data recorded in the new database, so charts fill forward rather than recovering the old database's history. Current service readiness and market data are served from the API above; no old database backup or history was inspected.
 
 ## Repository structure
 
@@ -41,12 +56,12 @@ AMC and GME remain excluded until their direct stock/USDG pool quotes pass valid
 | --- | --- |
 | `/src` | TanStack Start/Vite frontend. |
 | `/backend` | Bun, Express, TypeScript, PostgreSQL API and migrations. |
-| `/contracts` | Foundry workspace for future Robinhood Chain contracts; no deployable protocol contract yet. |
+| `/contracts` | Foundry workspace containing the Robinhood Chain oracle, shared vault, clearing house, deployment scripts, and tests. Check `contracts/README.md` and `contracts/AUDIT_READINESS.md` for implementation and deployment status. |
 | `/.github/workflows` | Backend tests, GHCR image build/publish, release, and optional Render hook. |
 
 ## Getting started
 
-Prerequisites: Bun 1.4+, PostgreSQL, and (for the future contract workspace) Foundry.
+Prerequisites: Bun 1.4+ and PostgreSQL. Install Foundry to build or test the Solidity contracts.
 
 ```sh
 # frontend
@@ -97,8 +112,8 @@ Connect the repository with the root directory set to the repository root. Use `
 | --- | --- |
 | 1 — Market data | Pool sampler, executable quote matrix, oracle adapter, and risk-state API. |
 | 2 — Trading controls | USDG margin ledger, spread engine, OI/skew limits, liquidation controls. |
-| 3 — Contracts | Decide custody and clearing architecture, implement, audit, and test on Robinhood Chain. |
-| 4 — Launch | Limited market rollout, monitored caps, then measured market expansion. |
+| 3 — Protocol hardening | Reconcile deployment state, complete independent review, and validate operations for the existing Solidity protocol. |
+| 4 — Launch | Confirm deployment readiness, then use a limited market rollout with monitored caps before measured expansion. |
 
 ## Tech stack
 

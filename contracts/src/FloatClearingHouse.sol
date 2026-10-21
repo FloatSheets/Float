@@ -16,6 +16,11 @@ interface IFloatOracle {
     function getPrice(bytes32 marketId) external view returns (Price memory);
 }
 
+interface IFloatVaultPayout {
+    function payout(address receiver, uint256 assets) external returns (uint256 paid);
+    function claimPayout(address receiver, uint256 assets) external returns (uint256 paid);
+}
+
 /// @notice USDG-settled, pool-vs-trader clearing with isolated market margin and a shared LP vault.
 contract FloatClearingHouse {
     error Unauthorized();
@@ -43,6 +48,8 @@ contract FloatClearingHouse {
     error InvalidRiskParameters();
     error FeeTooHigh();
     error NothingToClaim();
+    error BadDebtOutstanding();
+    error InvalidBadDebtAmount();
 
     uint256 public constant E18 = 1e18;
     uint256 public constant USDG_TO_E18 = 1e12;
@@ -56,6 +63,8 @@ contract FloatClearingHouse {
     uint256 public constant MIN_LIQUIDATOR_REWARD_NOTIONAL_BPS = 10;
     uint256 public constant MAX_TRADE_FEE_BPS = 100;
     uint256 public constant MAX_MARKETS = 10;
+    /// @notice Positions must be closed or permissionlessly settled within this period.
+    uint256 public constant MAX_POSITION_DURATION = 7 days;
     uint256 private constant MAX_INT256 = 0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff;
     bytes32 private constant DOMAIN_TYPEHASH =
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
@@ -90,6 +99,7 @@ contract FloatClearingHouse {
         int256 sizeE18;
         uint256 entryPriceE18;
         uint256 marginUsdg;
+        uint64 openedAt;
     }
 
     struct TradeQuote {
@@ -111,6 +121,8 @@ contract FloatClearingHouse {
     address public quoteSigner;
     address public feeRecipient;
     uint64 public oracleMaxAgeSeconds;
+    uint256 public activePositionCount;
+    uint256 public badDebtUsdg;
     uint256 private entered;
     mapping(bytes32 => Market) public markets;
     mapping(bytes32 => MarketExposure) public marketExposure;
@@ -118,6 +130,8 @@ contract FloatClearingHouse {
     mapping(address => mapping(uint64 => bool)) public quoteUsed;
     mapping(address => uint64) public minimumValidNonce;
     mapping(address => uint256) public claimableBalance;
+    mapping(address => uint256) public pendingPayout;
+    mapping(address => uint256) public deferredClaim;
     bytes32[] private marketIds;
     mapping(bytes32 => bool) private registeredMarket;
 
@@ -155,6 +169,11 @@ contract FloatClearingHouse {
     event QuoteSignerUpdated(address indexed signer);
     event FeeRecipientUpdated(address indexed recipient);
     event OracleMaxAgeUpdated(uint64 age);
+    event PositionExpired(address indexed trader, bytes32 indexed marketId, uint64 openedAt);
+    event BadDebtRecorded(address indexed trader, uint256 amountUsdg);
+    event BadDebtCovered(address indexed payer, uint256 amountUsdg, uint256 remainingUsdg);
+    event DeferredClaimAdded(address indexed account, uint256 assets);
+    event DeferredClaimPaid(address indexed account, address indexed receiver, uint256 assets);
 
     constructor(
         address initialOwner,
@@ -292,6 +311,16 @@ contract FloatClearingHouse {
         return requiredAssets >= assets ? 0 : assets - requiredAssets;
     }
 
+    /// @notice Permissionless recapitalization of losses that exceeded isolated trader margin.
+    function coverBadDebt(uint256 amountUsdg) external nonReentrant {
+        if (amountUsdg == 0 || amountUsdg > badDebtUsdg) revert InvalidBadDebtAmount();
+        _safeTransferFrom(msg.sender, address(this), amountUsdg);
+        _safeApprove(address(vault), amountUsdg);
+        vault.collect(amountUsdg);
+        badDebtUsdg -= amountUsdg;
+        emit BadDebtCovered(msg.sender, amountUsdg, badDebtUsdg);
+    }
+
     function depositMargin(bytes32 marketId, uint256 assets) external nonReentrant {
         MarketState state = markets[marketId].state;
         if (state != MarketState.Active && state != MarketState.CloseOnly) revert MarketNotActive();
@@ -314,7 +343,14 @@ contract FloatClearingHouse {
         if (market.state == MarketState.Paused && position.sizeE18 != 0) revert MarketPaused();
         position.marginUsdg -= assets;
         if (position.sizeE18 != 0) _requireInitialMargin(position, _currentPrice(marketId, market), market);
-        _safeTransfer(msg.sender, assets);
+        uint256 deferred = assets < pendingPayout[msg.sender] ? assets : pendingPayout[msg.sender];
+        if (deferred != 0) {
+            pendingPayout[msg.sender] -= deferred;
+            deferredClaim[msg.sender] += deferred;
+            emit DeferredClaimAdded(msg.sender, deferred);
+        }
+        uint256 payableNow = assets - deferred;
+        if (payableNow != 0) _safeTransfer(msg.sender, payableNow);
         emit MarginWithdrawn(msg.sender, marketId, assets);
     }
 
@@ -338,6 +374,7 @@ contract FloatClearingHouse {
         Position storage position = positions[msg.sender][quote.marketId];
         int256 nextSize = position.sizeE18 + quote.sizeDeltaE18;
         bool riskReducing = _isRiskReducing(position.sizeE18, quote.sizeDeltaE18);
+        if (!riskReducing && badDebtUsdg != 0) revert BadDebtOutstanding();
         if ((market.state == MarketState.CloseOnly || oraclePrice.circuitBroken) && !riskReducing) {
             revert MarketNotActive();
         }
@@ -347,8 +384,18 @@ contract FloatClearingHouse {
         uint256 tradedNotional = _notionalUsdgRoundingUp(quote.sizeDeltaE18, quote.executionPriceE18);
         if (quote.feeUsdg > tradedNotional * MAX_TRADE_FEE_BPS / BPS) revert FeeTooHigh();
         quoteUsed[msg.sender][quote.nonce] = true;
-        _updateExposure(quote.marketId, position.sizeE18, nextSize);
-        _applyTrade(position, quote.sizeDeltaE18, quote.executionPriceE18, nextSize == 0);
+        int256 previousSize = position.sizeE18;
+        _updateExposure(quote.marketId, previousSize, nextSize);
+        _applyTrade(position, quote.sizeDeltaE18, quote.executionPriceE18, nextSize == 0, msg.sender);
+        if (previousSize == 0 && nextSize != 0) {
+            ++activePositionCount;
+            position.openedAt = uint64(block.timestamp);
+        } else if (previousSize != 0 && nextSize == 0) {
+            --activePositionCount;
+            position.openedAt = 0;
+        } else if (previousSize != 0 && nextSize != 0 && ((previousSize > 0) != (nextSize > 0))) {
+            position.openedAt = uint64(block.timestamp);
+        }
         uint256 chargedFee = quote.feeUsdg;
         // A reduction must never be blocked solely because realized losses
         // consumed the remaining margin before the fee is charged. Treat the
@@ -369,16 +416,28 @@ contract FloatClearingHouse {
     }
 
     function liquidate(address trader, bytes32 marketId) external nonReentrant {
-        Market memory market = markets[marketId];
         Position storage position = positions[trader][marketId];
         if (position.sizeE18 == 0) revert PositionNotLiquidatable();
-        uint256 price = _currentPrice(marketId, market);
-        if (_meetsMaintenanceMargin(position, price, market)) revert PositionNotLiquidatable();
+        bool expired = block.timestamp >= uint256(position.openedAt) + MAX_POSITION_DURATION;
+        uint256 price = _currentPrice(marketId, markets[marketId]);
+        if (!expired && _meetsMaintenanceMargin(position, price, markets[marketId])) revert PositionNotLiquidatable();
+        uint64 openedAt = _settlePosition(trader, marketId, price, expired);
+        if (expired) emit PositionExpired(trader, marketId, openedAt);
+    }
+
+    function _settlePosition(address trader, bytes32 marketId, uint256 price, bool expired)
+        private
+        returns (uint64 openedAt)
+    {
+        Position storage position = positions[trader][marketId];
         uint256 positionNotional = _notionalUsdgRoundingUp(position.sizeE18, price);
         int256 pnl = _pnlUsdg(position.sizeE18, position.entryPriceE18, price);
+        openedAt = position.openedAt;
         _updateExposure(marketId, position.sizeE18, 0);
-        (uint256 penalty, uint256 liquidatorReward, uint256 returned) = _settleMargin(position, pnl, positionNotional);
+        (uint256 penalty, uint256 liquidatorReward, uint256 returned) =
+            _settleMargin(position, pnl, positionNotional, expired, trader);
         delete positions[trader][marketId];
+        --activePositionCount;
         _creditClaimable(msg.sender, liquidatorReward);
         _creditClaimable(trader, returned);
         emit PositionLiquidated(trader, marketId, price, pnl, penalty, msg.sender);
@@ -389,8 +448,25 @@ contract FloatClearingHouse {
         assets = claimableBalance[msg.sender];
         if (assets == 0) revert NothingToClaim();
         claimableBalance[msg.sender] = 0;
-        _safeTransfer(receiver, assets);
+        uint256 deferred = assets < pendingPayout[msg.sender] ? assets : pendingPayout[msg.sender];
+        if (deferred != 0) {
+            pendingPayout[msg.sender] -= deferred;
+            deferredClaim[msg.sender] += deferred;
+            emit DeferredClaimAdded(msg.sender, deferred);
+        }
+        uint256 payableNow = assets - deferred;
+        if (payableNow != 0) _safeTransfer(receiver, payableNow);
         emit Claimed(msg.sender, receiver, assets);
+    }
+
+    /// @notice Withdraws any part of a user's payout that the vault previously deferred.
+    function claimDeferred(address receiver) external nonReentrant returns (uint256 assets) {
+        if (receiver == address(0)) revert ZeroAddress();
+        uint256 requested = deferredClaim[msg.sender];
+        if (requested == 0) revert NothingToClaim();
+        assets = IFloatVaultPayout(address(vault)).claimPayout(receiver, requested);
+        deferredClaim[msg.sender] = requested - assets;
+        if (assets != 0) emit DeferredClaimPaid(msg.sender, receiver, assets);
     }
 
     function _updateExposure(bytes32 marketId, int256 previousSize, int256 nextSize) private {
@@ -424,7 +500,7 @@ contract FloatClearingHouse {
         return size != 0 && ((size > 0 && delta < 0) || (size < 0 && delta > 0)) && _abs(delta) <= _abs(size);
     }
 
-    function _applyTrade(Position storage p, int256 delta, uint256 price, bool allowBadDebt) private {
+    function _applyTrade(Position storage p, int256 delta, uint256 price, bool allowBadDebt, address trader) private {
         int256 oldSize = p.sizeE18;
         if (oldSize == 0 || (oldSize > 0) == (delta > 0)) {
             uint256 oldAbs = _abs(oldSize);
@@ -435,21 +511,25 @@ contract FloatClearingHouse {
         }
         uint256 closed = _abs(oldSize) < _abs(delta) ? _abs(oldSize) : _abs(delta);
         int256 pnl = _pnlUsdg(oldSize > 0 ? _asInt256(closed) : -_asInt256(closed), p.entryPriceE18, price);
-        _applyPnl(p, pnl, allowBadDebt);
+        _applyPnl(p, pnl, allowBadDebt, trader);
         p.sizeE18 = oldSize + delta;
         if (p.sizeE18 == 0) p.entryPriceE18 = 0;
         else if ((p.sizeE18 > 0) != (oldSize > 0)) p.entryPriceE18 = price;
     }
 
-    function _applyPnl(Position storage p, int256 pnl, bool allowBadDebt) private {
+    function _applyPnl(Position storage p, int256 pnl, bool allowBadDebt, address trader) private {
         if (pnl >= 0) {
             uint256 profit = _abs(pnl);
-            vault.payout(address(this), profit);
+            uint256 paid = IFloatVaultPayout(address(vault)).payout(address(this), profit);
+            if (paid < profit) pendingPayout[trader] += profit - paid;
             p.marginUsdg += profit;
         } else {
             uint256 loss = _abs(pnl);
             if (loss > p.marginUsdg && !allowBadDebt) revert InsufficientMargin();
             uint256 collected = loss > p.marginUsdg ? p.marginUsdg : loss;
+            if (loss > collected) {
+                _recordBadDebt(trader, loss - collected);
+            }
             p.marginUsdg -= collected;
             if (collected != 0) {
                 _safeApprove(address(vault), collected);
@@ -458,19 +538,37 @@ contract FloatClearingHouse {
         }
     }
 
-    function _settleMargin(Position storage p, int256 pnl, uint256 positionNotional)
+    function _settleMargin(Position storage p, int256 pnl, uint256 positionNotional, bool expired, address trader)
         private
         returns (uint256 penalty, uint256 liquidatorReward, uint256 returned)
     {
         uint256 lossCollected = 0;
         if (pnl >= 0) {
             uint256 profit = _abs(pnl);
-            vault.payout(address(this), profit);
+            uint256 paid = IFloatVaultPayout(address(vault)).payout(address(this), profit);
+            if (paid < profit) pendingPayout[trader] += profit - paid;
             p.marginUsdg += profit;
         } else {
             uint256 loss = _abs(pnl);
             lossCollected = loss > p.marginUsdg ? p.marginUsdg : loss;
+            if (loss > lossCollected) _recordBadDebt(trader, loss - lossCollected);
             p.marginUsdg -= lossCollected;
+        }
+        if (expired) {
+            // Expiry is a scheduled close, not a maintenance liquidation:
+            // only pay the keeper from remaining trader margin and do not levy
+            // the protocol's liquidation penalty or subsidy it from LP funds.
+            uint256 expiryMinimumReward = positionNotional * MIN_LIQUIDATOR_REWARD_NOTIONAL_BPS / BPS;
+            if (expiryMinimumReward > MIN_LIQUIDATOR_REWARD_USDG) expiryMinimumReward = MIN_LIQUIDATOR_REWARD_USDG;
+            uint256 expiryMarginReward = p.marginUsdg * LIQUIDATOR_REWARD_BPS / BPS;
+            liquidatorReward = expiryMarginReward > expiryMinimumReward ? expiryMarginReward : expiryMinimumReward;
+            if (liquidatorReward > p.marginUsdg) liquidatorReward = p.marginUsdg;
+            penalty = liquidatorReward;
+            if (lossCollected != 0) {
+                _safeApprove(address(vault), lossCollected);
+                vault.collect(lossCollected);
+            }
+            return (penalty, liquidatorReward, p.marginUsdg - penalty);
         }
         penalty = p.marginUsdg * LIQUIDATION_PENALTY_BPS / BPS;
         uint256 marginFundedReward = p.marginUsdg * LIQUIDATOR_REWARD_BPS / BPS;
@@ -484,7 +582,10 @@ contract FloatClearingHouse {
             vault.collect(totalCollection);
         }
         uint256 rewardSubsidy = liquidatorReward - marginFundedReward;
-        if (rewardSubsidy != 0) vault.payout(address(this), rewardSubsidy);
+        if (rewardSubsidy != 0) {
+            uint256 paid = IFloatVaultPayout(address(vault)).payout(address(this), rewardSubsidy);
+            if (paid < rewardSubsidy) pendingPayout[msg.sender] += rewardSubsidy - paid;
+        }
         returned = p.marginUsdg - penalty;
     }
 
@@ -550,6 +651,12 @@ contract FloatClearingHouse {
         if (assets == 0) return;
         claimableBalance[account] += assets;
         emit ClaimableCredited(account, assets);
+    }
+
+    function _recordBadDebt(address trader, uint256 amount) private {
+        if (amount == 0) return;
+        badDebtUsdg += amount;
+        emit BadDebtRecorded(trader, amount);
     }
 
     function _abs(int256 value) private pure returns (uint256) {

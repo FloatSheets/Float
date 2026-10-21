@@ -2,6 +2,7 @@ import type { Pool } from "pg";
 import type { Address } from "viem";
 
 import type { RpcTransport } from "../chain/rpc";
+import { safeErrorMessage } from "../safe-error";
 import { absoluteDeviationBps, quoteExactInputSingle, readPoolTwap } from "../chain/uniswap-v3";
 import { USDG_ADDRESS, USDG_DECIMALS } from "../chain/constants";
 
@@ -50,7 +51,7 @@ export class MarketMonitor {
         } catch (error) {
           await this.database.query(
             "INSERT INTO public.monitor_failures (run_id, market_id, error_message) VALUES ($1,$2,$3)",
-            [runId, market.id, error instanceof Error ? error.message : String(error)]
+            [runId, market.id, safeErrorMessage(error)]
           );
         }
       }
@@ -61,7 +62,7 @@ export class MarketMonitor {
     } catch (error) {
       await this.database.query(
         "UPDATE public.monitor_runs SET completed_at=now(), status='failed', markets_attempted=$2, markets_succeeded=$3, error_message=$4 WHERE id=$1",
-        [runId, rows.length, succeeded, error instanceof Error ? error.message : String(error)]
+        [runId, rows.length, succeeded, safeErrorMessage(error)]
       );
       throw error;
     } finally {

@@ -3,10 +3,11 @@ import { createPublicClient, createWalletClient, http, parseAbi, type Address, t
 import { privateKeyToAccount } from "viem/accounts";
 import { defineChain } from "viem";
 
-import type { AppConfig } from "../config";
+import { contractConfigForVersion, type AppConfig, type ContractVersion } from "../config";
+import { safeErrorMessage } from "../safe-error";
 import { marketId } from "../chain/protocol";
 import type { RpcTransport } from "../chain/rpc";
-import { readClearingExposure, readOraclePrice } from "../chain/protocol-read";
+import { readOraclePrice } from "../chain/protocol-read";
 import { signPriceAttestation } from "../signing/signer";
 import type { PriceAttestation } from "../signing/types";
 
@@ -52,30 +53,29 @@ export class OraclePublisher {
          SELECT observed_at,twap_price_usdg,spot_price_usdg FROM public.pool_snapshots WHERE market_id=m.id ORDER BY observed_at DESC LIMIT 1
        ) s ON true WHERE m.status != 'disabled' ORDER BY m.symbol`
     );
-    await Promise.all(rows.map(async (row) => {
+    // One publisher wallet serves both contracts. Send in sequence so concurrent
+    // writes cannot race for the same account nonce.
+    for (const row of rows) for (const version of ["meadow", "legacy-orion"] as const) {
       try {
-        const exposure = await readClearingExposure(this.rpc, this.config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, marketId(row.symbol));
-        // Markets without open trader exposure do not need a continuously
-        // refreshed on-chain price. The UI still reads fresh off-chain data.
-        if (exposure.longBaseE18 === 0n && exposure.shortBaseE18 === 0n) return;
-        await this.publishRow(row, false);
+        await this.publishRow(row, false, version);
       } catch (error) {
-        console.error(JSON.stringify({ event: "oracle_attestation_failed", market: row.symbol, error: error instanceof Error ? error.message : String(error) }));
+        console.error(JSON.stringify({ event: "oracle_attestation_failed", version, market: row.symbol, error: safeErrorMessage(error) }));
       }
-    }));
+    }
   }
 
   /** Refreshes a market immediately before an API-issued open or close quote. */
-  async ensureFreshMarket(symbol: string): Promise<void> {
+  async ensureFreshMarket(symbol: string, version: ContractVersion = "meadow"): Promise<void> {
     const normalized = symbol.trim().toUpperCase();
-    const inFlight = this.refreshing.get(normalized);
+    const key = `${version}:${normalized}`;
+    const inFlight = this.refreshing.get(key);
     if (inFlight) return inFlight;
-    const task = this.ensureFreshMarketInner(normalized).finally(() => this.refreshing.delete(normalized));
-    this.refreshing.set(normalized, task);
+    const task = this.ensureFreshMarketInner(normalized, version).finally(() => this.refreshing.delete(key));
+    this.refreshing.set(key, task);
     return task;
   }
 
-  private async ensureFreshMarketInner(symbol: string): Promise<void> {
+  private async ensureFreshMarketInner(symbol: string, version: ContractVersion): Promise<void> {
     const { rows } = await this.database.query<{ symbol: string; observed_at: Date | null; twap_price_usdg: string | null; spot_price_usdg: string | null }>(
       `SELECT m.symbol,s.observed_at,s.twap_price_usdg,s.spot_price_usdg
        FROM public.markets m LEFT JOIN LATERAL (
@@ -84,17 +84,19 @@ export class OraclePublisher {
     );
     const row = rows[0];
     if (!row) throw new Error("market is unavailable for oracle publication");
-    await this.publishRow(row, true);
+    await this.publishRow(row, true, version);
   }
 
   private async publishRow(
     row: { symbol: string; observed_at: Date | null; twap_price_usdg: string | null; spot_price_usdg: string | null },
-    publishLatestSnapshot: boolean
+    publishLatestSnapshot: boolean,
+    version: ContractVersion
   ): Promise<void> {
     if (!row.observed_at || !row.twap_price_usdg || !row.spot_price_usdg) throw new Error("market has no oracle snapshot");
     if ((Date.now() - row.observed_at.getTime()) / 1_000 > this.config.ORACLE_PRICE_MAX_AGE_SECONDS) throw new Error("market snapshot is stale");
+    const versionConfig = contractConfigForVersion(this.config, version);
     const id = marketId(row.symbol);
-    const current = await readOraclePrice(this.rpc, this.config.FLOAT_ORACLE_ADDRESS as Address, id);
+    const current = await readOraclePrice(this.rpc, versionConfig.FLOAT_ORACLE_ADDRESS as Address, id);
     const now = BigInt(Math.floor(Date.now() / 1_000));
     const observedAt = BigInt(Math.floor(row.observed_at.getTime() / 1_000));
     const twapPriceE18 = decimalToE18(row.twap_price_usdg);
@@ -112,9 +114,9 @@ export class OraclePublisher {
       sequence: current.sequence + 1n,
       expiry: now + ATTESTATION_TTL_SECONDS
     };
-    const signature = await signPriceAttestation(this.config.ORACLE_SIGNER_PRIVATE_KEY as Hex, this.config.FLOAT_ORACLE_ADDRESS as Address, attestation);
-    const hash = await this.wallet.writeContract({ address: this.config.FLOAT_ORACLE_ADDRESS as Address, abi: oracleAbi, functionName: "publish", args: [{ ...attestation }, signature] });
+    const signature = await signPriceAttestation(this.config.ORACLE_SIGNER_PRIVATE_KEY as Hex, versionConfig.FLOAT_ORACLE_ADDRESS as Address, attestation);
+    const hash = await this.wallet.writeContract({ address: versionConfig.FLOAT_ORACLE_ADDRESS as Address, abi: oracleAbi, functionName: "publish", args: [{ ...attestation }, signature] });
     await this.publicClient.waitForTransactionReceipt({ hash });
-    console.log(JSON.stringify({ event: "oracle_attestation_published", market: row.symbol, transaction_hash: hash, reason: publishLatestSnapshot ? "quote" : "open_exposure" }));
+    console.log(JSON.stringify({ event: "oracle_attestation_published", version, market: row.symbol, transaction_hash: hash, reason: publishLatestSnapshot ? "quote" : "scheduled_refresh" }));
   }
 }

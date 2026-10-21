@@ -2,12 +2,20 @@ import { z } from "zod";
 import { privateKeyToAccount } from "viem/accounts";
 
 const address = z.string().regex(/^0x[a-fA-F0-9]{40}$/, "must be an EVM address");
+export const contractVersionSchema = z.enum(["meadow", "legacy-orion"]);
+export type ContractVersion = z.infer<typeof contractVersionSchema>;
 
 const schema = z.object({
   ADMIN_EOA_ADDRESS: address,
   FLOAT_CLEARING_HOUSE_ADDRESS: address,
   FLOAT_ORACLE_ADDRESS: address,
   FLOAT_VAULT_ADDRESS: address,
+  MEADOW_FLOAT_CLEARING_HOUSE_ADDRESS: address.default("0xc1AfA648C30090Aa8fDd3fbca384bd65b52B58Dd"),
+  MEADOW_FLOAT_ORACLE_ADDRESS: address.default("0x7Fda40E8FD27cA067C9Ee23EA0Fd0cb8Bb786A8a"),
+  MEADOW_FLOAT_VAULT_ADDRESS: address.default("0xb74eD266A95d8393cDaF2Fa6cADd98b5a1D91875"),
+  LEGACY_ORION_FLOAT_CLEARING_HOUSE_ADDRESS: address.optional(),
+  LEGACY_ORION_FLOAT_ORACLE_ADDRESS: address.optional(),
+  LEGACY_ORION_FLOAT_VAULT_ADDRESS: address.optional(),
   MASTER_ADMIN_KEY: z.string().min(32),
   USDG_ADDRESS: address,
   FRONTEND_URL: z.url(),
@@ -32,6 +40,23 @@ const schema = z.object({
 });
 
 export type AppConfig = z.infer<typeof schema>;
+
+export function contractConfigForVersion(config: AppConfig, version: ContractVersion): AppConfig {
+  if (version === "meadow") {
+    return {
+      ...config,
+      FLOAT_CLEARING_HOUSE_ADDRESS: config.MEADOW_FLOAT_CLEARING_HOUSE_ADDRESS,
+      FLOAT_ORACLE_ADDRESS: config.MEADOW_FLOAT_ORACLE_ADDRESS,
+      FLOAT_VAULT_ADDRESS: config.MEADOW_FLOAT_VAULT_ADDRESS
+    };
+  }
+  return {
+    ...config,
+    FLOAT_CLEARING_HOUSE_ADDRESS: config.LEGACY_ORION_FLOAT_CLEARING_HOUSE_ADDRESS ?? config.FLOAT_CLEARING_HOUSE_ADDRESS,
+    FLOAT_ORACLE_ADDRESS: config.LEGACY_ORION_FLOAT_ORACLE_ADDRESS ?? config.FLOAT_ORACLE_ADDRESS,
+    FLOAT_VAULT_ADDRESS: config.LEGACY_ORION_FLOAT_VAULT_ADDRESS ?? config.FLOAT_VAULT_ADDRESS
+  };
+}
 
 export function loadConfig(environment: Record<string, string | undefined> = process.env): AppConfig {
   const config = schema.parse(environment);

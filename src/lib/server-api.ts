@@ -1,6 +1,11 @@
 import { createServerFn } from "@tanstack/react-start";
 
 type JsonRecord = Record<string, unknown>;
+type ContractVersion = "meadow" | "legacy-orion";
+
+function versionOf(value: unknown): ContractVersion {
+  return value === "legacy-orion" ? "legacy-orion" : "meadow";
+}
 
 function apiOrigin() {
   const origin = process.env["FLOATSHEETS_API_URL"];
@@ -8,8 +13,8 @@ function apiOrigin() {
   return origin.replace(/\/$/, "");
 }
 
-async function getJson<T extends JsonRecord>(path: string): Promise<T> {
-  const response = await fetch(`${apiOrigin()}${path}`, { headers: { accept: "application/json" } });
+async function getJson<T extends JsonRecord>(path: string, version: ContractVersion = "meadow"): Promise<T> {
+  const response = await fetch(`${apiOrigin()}${path}`, { headers: { accept: "application/json", "x-floatsheets-contract-version": version } });
   if (!response.ok) throw new Error(`FloatSheets API returned ${response.status} for ${path}.`);
   return (await response.json()) as T;
 }
@@ -19,7 +24,7 @@ function symbolInput(input: unknown) {
   return input.toUpperCase();
 }
 
-export const getProtocol = createServerFn({ method: "GET" }).handler((): Promise<any> => getJson("/v1/protocol"));
+export const getProtocol = createServerFn({ method: "GET" }).validator((input: unknown) => versionOf((input as JsonRecord | undefined)?.["version"])).handler(({ data }): Promise<any> => getJson("/v1/protocol", data));
 export const getMarkets = createServerFn({ method: "GET" }).handler((): Promise<any> => getJson("/v1/markets"));
 export const getMarket = createServerFn({ method: "GET" }).validator(symbolInput).handler(({ data }): Promise<any> => getJson(`/v1/markets/${data}`));
 export const getMarketQuotes = createServerFn({ method: "GET" }).validator(symbolInput).handler(({ data }): Promise<any> => getJson(`/v1/markets/${data}/quotes`));
@@ -36,9 +41,10 @@ export const getTradeTransaction = createServerFn({ method: "POST" })
     return value;
   })
   .handler(async ({ data }): Promise<any> => {
+    const version = versionOf(data["contractVersion"]);
     const response = await fetch(`${apiOrigin()}/v1/protocol/transactions/trade-quote`, {
       method: "POST",
-      headers: { accept: "application/json", "content-type": "application/json" },
+      headers: { accept: "application/json", "content-type": "application/json", "x-floatsheets-contract-version": version },
       body: JSON.stringify(data),
     });
     if (!response.ok) {
@@ -59,8 +65,9 @@ export const checkTrade = createServerFn({ method: "POST" })
     return value;
   })
   .handler(async ({ data }): Promise<any> => {
+    const version = versionOf(data["contractVersion"]);
     const response = await fetch(`${apiOrigin()}/v1/protocol/transactions/trade-check`, {
-      method: "POST", headers: { accept: "application/json", "content-type": "application/json" }, body: JSON.stringify(data),
+      method: "POST", headers: { accept: "application/json", "content-type": "application/json", "x-floatsheets-contract-version": version }, body: JSON.stringify(data),
     });
     if (!response.ok) {
       const body = await response.json().catch(() => ({})) as { error?: string };
@@ -79,9 +86,10 @@ export const getCloseTransaction = createServerFn({ method: "POST" })
     return value;
   })
   .handler(async ({ data }): Promise<any> => {
+    const version = versionOf(data["contractVersion"]);
     const response = await fetch(`${apiOrigin()}/v1/protocol/transactions/close-quote`, {
       method: "POST",
-      headers: { accept: "application/json", "content-type": "application/json" },
+      headers: { accept: "application/json", "content-type": "application/json", "x-floatsheets-contract-version": version },
       body: JSON.stringify(data),
     });
     if (!response.ok) {
@@ -104,9 +112,10 @@ export const getTransactionCalldata = createServerFn({ method: "POST" })
     return value;
   })
   .handler(async ({ data }): Promise<any> => {
+    const version = versionOf(data["contractVersion"]);
     const response = await fetch(`${apiOrigin()}/v1/protocol/transactions/${String(data["action"] ?? "")}`, {
       method: "POST",
-      headers: { accept: "application/json", "content-type": "application/json" },
+      headers: { accept: "application/json", "content-type": "application/json", "x-floatsheets-contract-version": version },
       body: JSON.stringify(data["payload"] ?? {}),
     });
     if (!response.ok) throw new Error(`Transaction request failed with ${response.status}.`);

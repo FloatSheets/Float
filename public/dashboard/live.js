@@ -2,18 +2,21 @@
 (async function loadLiveMarkets(){
   const api = window.__FLOATSHEETS_API_URL__;
   if (!api) return;
-  try {
-    const response = await fetch(api.replace(/\/$/, '') + '/v1/markets', {headers:{accept:'application/json'}});
+  async function refreshMarkets(){
+   try {
+    const version=localStorage.getItem('floatsheets-contract-version-v1')==='legacy-orion'?'legacy-orion':'meadow';
+    const response = await fetch(api.replace(/\/$/, '') + '/v1/markets', {headers:{accept:'application/json','x-floatsheets-contract-version':version}});
     if (!response.ok) throw new Error('market snapshot unavailable');
     const payload = await response.json();
     if (!Array.isArray(payload.markets) || !payload.markets.length) return;
     const liveMarkets = payload.markets.map(function(row){
       const price = Number(row.twap_price_usdg ?? row.spot_price_usdg);
       const status = String(row.status || '').toLowerCase();
-      const tradable = row.oracle_tradable === true && status === 'active' && Number.isFinite(price) && price > 0;
+      const onchainState=Number(row.onchain_market_state);
+      const tradable = row.oracle_tradable === true && status === 'active' && onchainState === 1 && Number.isFinite(price) && price > 0;
       return {symbol:String(row.symbol),name:String(row.symbol)+' equity',price:Number.isFinite(price)?price:0,change:0,
         band:Number(row.max_half_spread_bps || 0)/10000,max:Number(row.max_leverage || 1),cap:Number(row.max_ticket_usdg || 0),oi:0,
-        state:tradable?'LIVE':(status==='disabled'?'HALTED':'CLOSE_ONLY'),sector:'Equity',oracleTradable:tradable};
+        state:status==='disabled'||onchainState===0?'HALTED':(tradable?'LIVE':'CLOSE_ONLY'),sector:'Equity',oracleTradable:tradable};
     }).filter(function(row){return row.price>0;});
     if (!liveMarkets.length) return;
     markets=liveMarkets;
@@ -22,5 +25,9 @@
     selected=markets.find(function(m){return m.symbol===detailSymbol})||markets[0];
     stale=!selected.oracleTradable; render();
     if (typeof toast === 'function') toast('Live Robinhood Chain market data loaded.');
-  } catch (error) { console.error('FloatSheets live market load failed', error); }
+   } catch (error) { console.error('FloatSheets live market load failed', error); }
+  }
+  window.__FLOATSHEETS_REFRESH_MARKETS__=refreshMarkets;
+  window.addEventListener('floatsheets-contract-version-change',function(){void refreshMarkets();});
+  await refreshMarkets();
 })();

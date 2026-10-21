@@ -18,6 +18,12 @@ const config = loadConfig({
   FLOAT_CLEARING_HOUSE_ADDRESS: "0x2222222222222222222222222222222222222222",
   FLOAT_ORACLE_ADDRESS: "0x3333333333333333333333333333333333333333",
   FLOAT_VAULT_ADDRESS: "0x4444444444444444444444444444444444444444",
+  MEADOW_FLOAT_CLEARING_HOUSE_ADDRESS: "0x2222222222222222222222222222222222222222",
+  MEADOW_FLOAT_ORACLE_ADDRESS: "0x3333333333333333333333333333333333333333",
+  MEADOW_FLOAT_VAULT_ADDRESS: "0x4444444444444444444444444444444444444444",
+  LEGACY_ORION_FLOAT_CLEARING_HOUSE_ADDRESS: "0x2222222222222222222222222222222222222222",
+  LEGACY_ORION_FLOAT_ORACLE_ADDRESS: "0x3333333333333333333333333333333333333333",
+  LEGACY_ORION_FLOAT_VAULT_ADDRESS: "0x4444444444444444444444444444444444444444",
   MASTER_ADMIN_KEY: "test-master-admin-key-012345678901234567890123456789",
   USDG_ADDRESS: "0x5555555555555555555555555555555555555555",
   FRONTEND_URL: "https://floatsheets.app",
@@ -58,19 +64,30 @@ async function listening(app: express.Express): Promise<Server> {
 const server = await listening(app);
 afterAll(() => new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())));
 
-test("publishes the deployed protocol addresses for integrations", async () => {
+test("publishes Meadow addresses by default and legacy addresses when selected", async () => {
   const response = await request(server).get("/v1/protocol");
   expect(response.status).toBe(200);
   expect(response.body).toEqual({
     chain_id: 4663,
     settlement_asset: "USDG",
     settlement_asset_address: config.USDG_ADDRESS,
-    oracle: config.FLOAT_ORACLE_ADDRESS,
-    vault: config.FLOAT_VAULT_ADDRESS,
-    clearing_house: config.FLOAT_CLEARING_HOUSE_ADDRESS,
+    contract_version: "meadow",
+    contract_name: "FloatSheets Meadow",
+    oracle: config.MEADOW_FLOAT_ORACLE_ADDRESS,
+    vault: config.MEADOW_FLOAT_VAULT_ADDRESS,
+    clearing_house: config.MEADOW_FLOAT_CLEARING_HOUSE_ADDRESS,
     oracle_signer: config.ORACLE_SIGNER_ADDRESS,
-    quote_signer: config.QUOTE_SIGNER_ADDRESS
+    quote_signer: config.QUOTE_SIGNER_ADDRESS,
+    max_position_duration_seconds: 604800,
+    lp_actions_locked_while_positions_open: true
   });
+  const legacy = await request(server).get("/v1/protocol").set("x-floatsheets-contract-version", "legacy-orion");
+  expect(legacy.body.contract_version).toBe("legacy-orion");
+  expect(legacy.body.oracle).toBe(config.LEGACY_ORION_FLOAT_ORACLE_ADDRESS);
+  expect(legacy.body.vault).toBe(config.LEGACY_ORION_FLOAT_VAULT_ADDRESS);
+  expect(legacy.body.clearing_house).toBe(config.LEGACY_ORION_FLOAT_CLEARING_HOUSE_ADDRESS);
+  expect(legacy.body.max_position_duration_seconds).toBeNull();
+  expect(legacy.body.lp_actions_locked_while_positions_open).toBe(false);
 });
 
 test("builds a real USDG approval transaction", async () => {
@@ -89,15 +106,30 @@ test("builds a real USDG approval transaction", async () => {
     amountUsdg: "1000000", receiver: "0x1111111111111111111111111111111111111111"
   });
   expect(vaultDeposit.status).toBe(200);
-  expect(vaultDeposit.body.transaction.to).toBe(config.FLOAT_VAULT_ADDRESS);
+  expect(vaultDeposit.body.transaction.to).toBe(config.MEADOW_FLOAT_VAULT_ADDRESS);
   expect(vaultDeposit.body.transaction.data).toMatch(/^0x6e553f65/);
 
   const vaultWithdraw = await request(server).post("/v1/protocol/transactions/vault-withdraw").send({
     shares: "1000000000000", receiver: "0x1111111111111111111111111111111111111111"
   });
   expect(vaultWithdraw.status).toBe(200);
-  expect(vaultWithdraw.body.transaction.to).toBe(config.FLOAT_VAULT_ADDRESS);
+  expect(vaultWithdraw.body.transaction.to).toBe(config.MEADOW_FLOAT_VAULT_ADDRESS);
   expect(vaultWithdraw.body.transaction.data).toMatch(/^0x00f714ce/);
+
+  const claim = await request(server).post("/v1/protocol/transactions/claim").send({ receiver: "0x1111111111111111111111111111111111111111" });
+  expect(claim.status).toBe(200);
+  expect(claim.body.transaction.data.length).toBeGreaterThan(10);
+  const deferred = await request(server).post("/v1/protocol/transactions/claim-deferred").send({ receiver: "0x1111111111111111111111111111111111111111" });
+  expect(deferred.status).toBe(200);
+  expect(deferred.body.transaction.data.length).toBeGreaterThan(10);
+});
+
+test("builds legacy vault transactions against Legacy Orion", async () => {
+  const response = await request(server).post("/v1/protocol/transactions/vault-deposit")
+    .set("x-floatsheets-contract-version", "legacy-orion")
+    .send({ amountUsdg: "1000000", receiver: "0x1111111111111111111111111111111111111111" });
+  expect(response.status).toBe(200);
+  expect(response.body.transaction.to).toBe(config.LEGACY_ORION_FLOAT_VAULT_ADDRESS);
 });
 
 test("rejects signer issuance without the master admin key", async () => {
@@ -121,7 +153,8 @@ test("signs an oracle attestation only with the master admin key", async () => {
 test("builds a trader quote and execution transaction without exposing the quote signer", async () => {
   const clearingAbi = parseAbi([
     "function markets(bytes32) view returns (uint8,uint64,uint64,uint64,uint64,uint128)",
-    "function getPosition(address,bytes32) view returns (int256,uint256,uint256)"
+    "function getPosition(address,bytes32) view returns (int256,uint256,uint256,uint64)",
+    "function badDebtUsdg() view returns (uint256)"
   ]);
   const oracleAbi = parseAbi(["function getPrice(bytes32) view returns (uint256,uint256,uint256,uint256,uint64,uint64,bool)"]);
   const database = {
@@ -134,17 +167,20 @@ test("builds a trader quote and execution transaction without exposing the quote
       throw new Error(`unexpected query: ${sql}`);
     }
   } as unknown as Pool;
+  let circuitBroken = false;
   const rpc: RpcTransport = {
     call: async ({ to, data }) => {
       if (to.toLowerCase() !== config.FLOAT_CLEARING_HOUSE_ADDRESS.toLowerCase()) {
-        return encodeFunctionResult({ abi: oracleAbi, functionName: "getPrice", result: [100_000000000000000000n, 100_000000000000000000n, 25n, 0n, BigInt(Math.floor(Date.now() / 1000)), 9n, false] });
+        return encodeFunctionResult({ abi: oracleAbi, functionName: "getPrice", result: [100_000000000000000000n, 100_000000000000000000n, 25n, 0n, BigInt(Math.floor(Date.now() / 1000)), 9n, circuitBroken] });
       }
       const positionSelector = "0x" + encodeFunctionData({
         abi: clearingAbi, functionName: "getPosition",
         args: ["0x1111111111111111111111111111111111111111", (`0x${"00".repeat(32)}`) as `0x${string}`]
       }).slice(2, 10);
+      const badDebtSelector = encodeFunctionData({ abi: clearingAbi, functionName: "badDebtUsdg" }).slice(0, 10);
+      if (data.startsWith(badDebtSelector)) return encodeFunctionResult({ abi: clearingAbi, functionName: "badDebtUsdg", result: 0n });
       return data.startsWith(positionSelector)
-        ? encodeFunctionResult({ abi: clearingAbi, functionName: "getPosition", result: [10_000000000000000000n, 100_000000000000000000n, 5_000_000000n] })
+        ? encodeFunctionResult({ abi: clearingAbi, functionName: "getPosition", result: [10_000000000000000000n, 100_000000000000000000n, 5_000_000000n, 1_800_000_000n] })
         : encodeFunctionResult({ abi: clearingAbi, functionName: "markets", result: [1, 5_000000000000000000n, 1_000n, 100n, 50n, 50_000_000000n] });
     }
   };
@@ -167,7 +203,7 @@ test("builds a trader quote and execution transaction without exposing the quote
     expect(BigInt(response.body.quote.expiry) - BigInt(Math.floor(Date.now() / 1_000))).toBeLessThanOrEqual(15n);
     expect(response.body.signature).toMatch(/^0x[0-9a-f]{130}$/);
     expect(response.body.transaction.to).toBe(config.FLOAT_CLEARING_HOUSE_ADDRESS);
-    expect(refreshedMarkets).toEqual(["HIMS"]);
+    expect(refreshedMarkets).toEqual([]);
 
     const closeResponse = await request(quoteServer).post("/v1/protocol/transactions/close-quote").send({
       market: "HIMS", trader: "0x1111111111111111111111111111111111111111"
@@ -175,14 +211,24 @@ test("builds a trader quote and execution transaction without exposing the quote
     expect(closeResponse.status).toBe(200);
     expect(closeResponse.body.quote.sizeDeltaE18).toBe("-10000000000000000000");
     expect(closeResponse.body.transaction.to).toBe(config.FLOAT_CLEARING_HOUSE_ADDRESS);
-    expect(refreshedMarkets).toEqual(["HIMS", "HIMS"]);
+    expect(refreshedMarkets).toEqual([]);
+    circuitBroken = true;
+    const breakerClose = await request(quoteServer).post("/v1/protocol/transactions/close-quote").send({
+      market: "HIMS", trader: "0x1111111111111111111111111111111111111111"
+    });
+    expect(breakerClose.status).toBe(200);
+    expect(breakerClose.body.quote.executionPriceE18).toBe("100000000000000000000");
   } finally {
     await new Promise<void>((resolve, reject) => quoteServer.close((error) => error ? reject(error) : resolve()));
   }
 });
 
 test("accepts a signed, in-band improvement from the live buy matrix", async () => {
-  const clearingAbi = parseAbi(["function markets(bytes32) view returns (uint8,uint64,uint64,uint64,uint64,uint128)"]);
+  const clearingAbi = parseAbi([
+    "function markets(bytes32) view returns (uint8,uint64,uint64,uint64,uint64,uint128)",
+    "function getPosition(address,bytes32) view returns (int256,uint256,uint256,uint64)",
+    "function badDebtUsdg() view returns (uint256)"
+  ]);
   const oracleAbi = parseAbi(["function getPrice(bytes32) view returns (uint256,uint256,uint256,uint256,uint64,uint64,bool)"]);
   const database = {
     query: async (sql: string) => {
@@ -192,8 +238,12 @@ test("accepts a signed, in-band improvement from the live buy matrix", async () 
     }
   } as unknown as Pool;
   const rpc: RpcTransport = {
-    call: async ({ to }) => to.toLowerCase() === config.FLOAT_CLEARING_HOUSE_ADDRESS.toLowerCase()
-      ? encodeFunctionResult({ abi: clearingAbi, functionName: "markets", result: [1, 5_000000000000000000n, 1_000n, 30n, 50n, 50_000_000000n] })
+    call: async ({ to, data }) => to.toLowerCase() === config.FLOAT_CLEARING_HOUSE_ADDRESS.toLowerCase()
+      ? data.startsWith(encodeFunctionData({ abi: clearingAbi, functionName: "badDebtUsdg" }).slice(0, 10))
+        ? encodeFunctionResult({ abi: clearingAbi, functionName: "badDebtUsdg", result: 0n })
+        : data.startsWith(encodeFunctionData({ abi: clearingAbi, functionName: "getPosition", args: ["0x1111111111111111111111111111111111111111", (`0x${"00".repeat(32)}`) as `0x${string}`] }).slice(0, 10))
+          ? encodeFunctionResult({ abi: clearingAbi, functionName: "getPosition", result: [0n, 0n, 100_000_000n, 0n] })
+          : encodeFunctionResult({ abi: clearingAbi, functionName: "markets", result: [1, 5_000000000000000000n, 1_000n, 30n, 50n, 50_000_000000n] })
       : encodeFunctionResult({ abi: oracleAbi, functionName: "getPrice", result: [100_000000000000000000n, 100_000000000000000000n, 25n, 0n, BigInt(Math.floor(Date.now() / 1000)), 9n, false] })
   };
   const quoteApp = express();
@@ -214,13 +264,15 @@ test("accepts a signed, in-band improvement from the live buy matrix", async () 
 test("rejects an unfunded or vault-capacity-exceeding opening quote before wallet execution", async () => {
   const clearingAbi = parseAbi([
     "function markets(bytes32) view returns (uint8,uint64,uint64,uint64,uint64,uint128)",
-    "function getPosition(address,bytes32) view returns (int256,uint256,uint256)",
-    "function marketExposure(bytes32) view returns (uint256,uint256)"
+    "function getPosition(address,bytes32) view returns (int256,uint256,uint256,uint64)",
+    "function marketExposure(bytes32) view returns (uint256,uint256)",
+    "function badDebtUsdg() view returns (uint256)"
   ]);
   const oracleAbi = parseAbi(["function getPrice(bytes32) view returns (uint256,uint256,uint256,uint256,uint64,uint64,bool)"]);
   const vaultAbi = parseAbi(["function totalAssets() view returns (uint256)"]);
   const positionSelector = encodeFunctionData({ abi: clearingAbi, functionName: "getPosition", args: ["0x1111111111111111111111111111111111111111", (`0x${"00".repeat(32)}`) as `0x${string}`] }).slice(0, 10);
   const exposureSelector = encodeFunctionData({ abi: clearingAbi, functionName: "marketExposure", args: [(`0x${"00".repeat(32)}`) as `0x${string}`] }).slice(0, 10);
+  const badDebtSelector = encodeFunctionData({ abi: clearingAbi, functionName: "badDebtUsdg" }).slice(0, 10);
   let margin = 0n;
   const database = {
     query: async (sql: string) => {
@@ -233,8 +285,9 @@ test("rejects an unfunded or vault-capacity-exceeding opening quote before walle
     call: async ({ to, data }) => {
       if (to.toLowerCase() === config.FLOAT_VAULT_ADDRESS.toLowerCase()) return encodeFunctionResult({ abi: vaultAbi, functionName: "totalAssets", result: 2_750_000n });
       if (to.toLowerCase() === config.FLOAT_ORACLE_ADDRESS.toLowerCase()) return encodeFunctionResult({ abi: oracleAbi, functionName: "getPrice", result: [100_000000000000000000n, 100_000000000000000000n, 25n, 0n, BigInt(Math.floor(Date.now() / 1000)), 9n, false] });
-      if (data.startsWith(positionSelector)) return encodeFunctionResult({ abi: clearingAbi, functionName: "getPosition", result: [0n, 0n, margin] });
+      if (data.startsWith(positionSelector)) return encodeFunctionResult({ abi: clearingAbi, functionName: "getPosition", result: [0n, 0n, margin, 0n] });
       if (data.startsWith(exposureSelector)) return encodeFunctionResult({ abi: clearingAbi, functionName: "marketExposure", result: [0n, 0n] });
+      if (data.startsWith(badDebtSelector)) return encodeFunctionResult({ abi: clearingAbi, functionName: "badDebtUsdg", result: 0n });
       return encodeFunctionResult({ abi: clearingAbi, functionName: "markets", result: [1, 5_000000000000000000n, 1_000n, 30n, 50n, 50_000_000000n] });
     }
   };
@@ -255,5 +308,23 @@ test("rejects an unfunded or vault-capacity-exceeding opening quote before walle
     expect(overCapacity.body.error).toContain("one-sided market capacity");
   } finally {
     await new Promise<void>((resolve, reject) => quoteServer.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+test("provider failures return a sanitized service error", async () => {
+  const failedDatabase = { query: async () => { throw new Error("request to https://rpc.example/key-with-secret failed"); } } as unknown as Pool;
+  const failingApp = express();
+  failingApp.use(express.json());
+  failingApp.use("/v1/protocol/transactions", createProtocolTransactionsRouter(config, failedDatabase, { call: async () => "0x" as `0x${string}` }));
+  const failingServer = await listening(failingApp);
+  try {
+    const response = await request(failingServer).post("/v1/protocol/transactions/trade-quote").send({
+      market: "HIMS", trader: "0x1111111111111111111111111111111111111111", isLong: true, notionalUsdg: "1000000"
+    });
+    expect(response.status).toBe(503);
+    expect(response.body.error).toBe("Protocol service is temporarily unavailable");
+    expect(JSON.stringify(response.body)).not.toContain("key-with-secret");
+  } finally {
+    await new Promise<void>((resolve, reject) => failingServer.close((error) => error ? reject(error) : resolve()));
   }
 });

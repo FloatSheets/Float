@@ -7,13 +7,15 @@ import { marketId } from '../chain/protocol';
 import { readClearingMarket, readOraclePrice } from '../chain/protocol-read';
 import type { RpcTransport } from '../chain/rpc';
 import type { Address } from 'viem';
+import { contractVersionFromRequest } from '../contract-version';
 
 type LiveMarketDependencies = { rpc: RpcTransport; clearingHouse: Address; oracle: Address };
+type VersionedLiveMarketDependencies = Partial<Record<'meadow' | 'legacy-orion', LiveMarketDependencies>>;
 
-export function createMarketsRouter(database: Pool, maxPriceAgeSeconds = 120, live?: LiveMarketDependencies): Router {
+export function createMarketsRouter(database: Pool, maxPriceAgeSeconds = 120, live?: LiveMarketDependencies | VersionedLiveMarketDependencies): Router {
   const router = Router();
 
-  router.get("/", async (_request, response, next) => {
+  router.get("/", async (request, response, next) => {
     try {
       const result = await database.query(
         `SELECT m.symbol, m.status, m.max_leverage, m.max_ticket_usdg,
@@ -28,7 +30,20 @@ export function createMarketsRouter(database: Pool, maxPriceAgeSeconds = 120, li
          ) s ON true
          ORDER BY m.symbol`
       );
-      response.json({ markets: result.rows });
+      if (!live) return response.json({ markets: result.rows });
+      const selectedLive = 'rpc' in live ? live : live[contractVersionFromRequest(request)];
+      if (!selectedLive) return response.status(503).json({ error: 'live market reads are unavailable for this contract version' });
+      const markets = await Promise.all(result.rows.map(async (row) => {
+        const id = marketId(row.symbol);
+        const market = await readClearingMarket(selectedLive.rpc, selectedLive.clearingHouse, id);
+        return {
+          ...row,
+          max_leverage: Number(market.maxLeverageE18) / 1e18,
+          max_ticket_usdg: Number(market.maxPositionNotionalUsdg) / 1e6,
+          onchain_market_state: market.state
+        };
+      }));
+      response.json({ markets });
     } catch (error) {
       next(error);
     }
@@ -62,6 +77,8 @@ export function createMarketsRouter(database: Pool, maxPriceAgeSeconds = 120, li
   router.get('/:symbol/live', async (request, response, next) => {
     try {
       if (!live) return response.status(503).json({ error: 'live market reads are unavailable' });
+      const selectedLive = 'rpc' in live ? live : live[contractVersionFromRequest(request)];
+      if (!selectedLive) return response.status(503).json({ error: 'live market reads are unavailable for this contract version' });
       const symbol=request.params.symbol.toUpperCase();
       const market=await database.query<{
         id:string;status:'active'|'restricted'|'pilot'|'disabled';max_half_spread_bps:number;
@@ -78,13 +95,10 @@ export function createMarketsRouter(database: Pool, maxPriceAgeSeconds = 120, li
       const snapshotAgeSeconds=row.observed_at?(Date.now()-row.observed_at.getTime())/1_000:null;
       const monitoredState=assessMarketRisk({marketStatus:row.status,maxHalfSpreadBps:row.max_half_spread_bps,quoteBps:quotes.rows.map(q=>q.execution_degradation_bps),oracleTradable:row.oracle_tradable,snapshotAgeSeconds,usdgBalance:row.usdg_balance===null?null:BigInt(row.usdg_balance)},maxPriceAgeSeconds);
       const id=marketId(symbol);
-      const [oracle,onchainMarket]=await Promise.all([readOraclePrice(live.rpc,live.oracle,id),readClearingMarket(live.rpc,live.clearingHouse,id)]);
+      const [oracle,onchainMarket]=await Promise.all([readOraclePrice(selectedLive.rpc,selectedLive.oracle,id),readClearingMarket(selectedLive.rpc,selectedLive.clearingHouse,id)]);
       const oracleAgeSeconds=Number(BigInt(Math.floor(Date.now()/1_000))-oracle.timestamp);
       const oracleFresh=oracle.sequence!==0n&&oracleAgeSeconds<=maxPriceAgeSeconds&&!oracle.circuitBroken;
-      // Idle markets intentionally do not consume publisher gas every 120
-      // seconds. A fresh attestation is produced by ensureFreshMarket() just
-      // before an open/close quote. They are ready to trade, not close-only.
-      const state=onchainMarket.state!==1?'HALTED':(monitoredState!=='active'?'CLOSE_ONLY':(oracleFresh?'LIVE':'READY'));
+      const state=onchainMarket.state===0?'HALTED':onchainMarket.state===2?'CLOSE_ONLY':(monitoredState!=='active'?'CLOSE_ONLY':(oracleFresh?'LIVE':'READY'));
       response.json({market:symbol,state,monitored_state:monitoredState,onchain_market_state:onchainMarket.state,
         oracle_confidence_bps:oracle.confidenceBps.toString(),oracle_confidence_limit_bps:onchainMarket.maxOracleConfidenceBps.toString(),
         oracle_age_seconds:oracleAgeSeconds,oracle_circuit_broken:oracle.circuitBroken,oracle_fresh:oracleFresh});

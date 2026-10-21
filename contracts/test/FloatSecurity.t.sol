@@ -93,6 +93,10 @@ contract FloatSecurityTest is Test {
         return type(uint256).max;
     }
 
+    function activePositionCount() external pure returns (uint256) {
+        return 0;
+    }
+
     function testFirstDepositorDonationCannotStealVictimDeposit() public {
         MockUsdG localToken = new MockUsdG();
         FloatVault localVault = new FloatVault(address(this), address(localToken));
@@ -139,6 +143,15 @@ contract FloatSecurityTest is Test {
         uint256 newShares = localVault.deposit(50 * USDG, address(this));
         assertGt(newShares, 0);
         assertEq(localVault.totalAssets(), 50 * USDG);
+    }
+
+    function testVaultBlocksDepositsUntilClearingHouseIsLinked() public {
+        MockUsdG localToken = new MockUsdG();
+        FloatVault localVault = new FloatVault(address(this), address(localToken));
+        localToken.mint(address(this), USDG);
+        localToken.approve(address(localVault), type(uint256).max);
+        vm.expectRevert(FloatVault.ClearingHouseNotSet.selector);
+        localVault.deposit(USDG, address(this));
     }
 
     function testStaleEmptyMarketDoesNotFreezeOtherTradingOrLpLiquidity() public {
@@ -224,8 +237,72 @@ contract FloatSecurityTest is Test {
         _depositMargin(20_000 * USDG);
         _execute(_quote(MARKET_A, TRADER, int256(500 * E18), 100 * E18, 1, 1, 0));
         assertApproxEqAbs(clearing.availableLiquidity(), 900_000 * USDG, 2);
-        vm.expectRevert(FloatVault.InsufficientAvailableLiquidity.selector);
+        vm.expectRevert(FloatVault.LiquidityLocked.selector);
         vault.withdraw(lpShares * 91 / 100, address(this));
+    }
+
+    function testLpEntryAndExitAreLockedWhileAnyTraderPositionIsOpen() public {
+        _depositMargin(20_000 * USDG);
+        _execute(_quote(MARKET_A, TRADER, int256(500 * E18), 100 * E18, 1, 1, 0));
+        assertEq(clearing.activePositionCount(), 1);
+        vm.expectRevert(FloatVault.LiquidityLocked.selector);
+        vault.deposit(USDG, address(this));
+        vm.expectRevert(FloatVault.LiquidityLocked.selector);
+        vault.withdraw(1, address(this));
+
+        _publish(MARKET_A, 2, 100 * E18, 100 * E18);
+        _execute(_quote(MARKET_A, TRADER, -int256(500 * E18), 100 * E18, 2, 2, 0));
+        assertEq(clearing.activePositionCount(), 0);
+        token.mint(address(this), USDG);
+        assertGt(vault.deposit(USDG, address(this)), 0);
+    }
+
+    function testExpiredPositionCanBePermissionlesslySettled() public {
+        _depositMargin(20_000 * USDG);
+        _execute(_quote(MARKET_A, TRADER, int256(500 * E18), 100 * E18, 1, 1, 0));
+        vm.warp(block.timestamp + clearing.MAX_POSITION_DURATION());
+        _publish(MARKET_A, 2, 100 * E18, 100 * E18);
+        vm.prank(KEEPER);
+        clearing.liquidate(TRADER, MARKET_A);
+        assertEq(clearing.activePositionCount(), 0);
+        assertEq(clearing.getPosition(TRADER, MARKET_A).sizeE18, 0);
+        assertGt(clearing.claimableBalance(TRADER), 0);
+    }
+
+    function testBadDebtPausesNewRiskUntilSomeoneRecapitalizesVault() public {
+        _depositMargin(10_000 * USDG);
+        _execute(_quote(MARKET_A, TRADER, int256(500 * E18), 100 * E18, 1, 1, 0));
+        _publish(MARKET_A, 2, 70 * E18, 70 * E18);
+        vm.prank(KEEPER);
+        clearing.liquidate(TRADER, MARKET_A);
+        assertEq(clearing.badDebtUsdg(), 5_000 * USDG);
+
+        vm.prank(TRADER_TWO);
+        clearing.depositMargin(MARKET_A, 20_000 * USDG);
+        FloatClearingHouse.TradeQuote memory blocked = _quote(MARKET_A, TRADER_TWO, int256(10 * E18), 70 * E18, 2, 1, 0);
+        vm.expectRevert(FloatClearingHouse.BadDebtOutstanding.selector);
+        _execute(blocked);
+
+        token.mint(address(this), 5_000 * USDG);
+        token.approve(address(clearing), type(uint256).max);
+        clearing.coverBadDebt(5_000 * USDG);
+        assertEq(clearing.badDebtUsdg(), 0);
+        _execute(blocked);
+        assertEq(clearing.getPosition(TRADER_TWO, MARKET_A).sizeE18, int256(10 * E18));
+    }
+
+    function testVaultDefersUnderfundedPayoutAndPaysItAfterRecapitalization() public {
+        MockUsdG localToken = new MockUsdG();
+        FloatVault localVault = new FloatVault(address(this), address(localToken));
+        localVault.setClearingHouse(address(this));
+        uint256 payout = 10 * USDG;
+        assertEq(localVault.payout(address(this), payout), 0);
+        assertEq(localVault.totalPayoutOwed(), payout);
+        assertEq(localVault.totalAssets(), 0);
+        localToken.mint(address(localVault), payout);
+        assertEq(localVault.claimPayout(address(0xCAFE), payout), payout);
+        assertEq(localVault.payoutOwed(address(this)), 0);
+        assertEq(localToken.balanceOf(address(0xCAFE)), payout);
     }
 
     function testRejectsMaintenanceMarginAtOrAboveInitialMargin() public {

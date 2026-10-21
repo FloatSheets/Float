@@ -128,3 +128,4 @@
   .dashboard-dark .mobile-workspace-sheet nav a{border-color:#2c4266;background:#172741;color:#fff!important}
   .dashboard-dark .mobile-workspace-sheet nav a:active{background:#223858}
 }
+.contract-version-row select{max-width:240px;padding:10px 12px;border:1px solid #d6dfed;background:#fff;color:var(--blue);font:inherit}.dashboard-dark .contract-version-row select{background:#111b30;color:#e7efff;border-color:#2a3b5b}
