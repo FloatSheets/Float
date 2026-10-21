@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { encodeFunctionResult, parseAbi } from "viem";
+import { encodeFunctionResult, parseAbi, toFunctionSelector } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import type { Pool } from "pg";
 
@@ -28,15 +28,24 @@ test("does not spend publisher gas on inactive markets", async () => {
     query: async () => ({ rows: [{ symbol: "HIMS", observed_at: new Date(), twap_price_usdg: "30", spot_price_usdg: "30" }] })
   } as unknown as Pool;
   const exposureAbi = parseAbi(["function marketExposure(bytes32) view returns (uint256 longBaseE18,uint256 shortBaseE18)"]);
-  let calls = 0;
+  const exposureSelector = toFunctionSelector("marketExposure(bytes32)");
+  let exposureCalls = 0;
+  let unexpectedCalls = 0;
   const rpc: RpcTransport = {
-    call: async () => {
-      calls += 1;
+    call: async ({ data }) => {
+      if (!data.startsWith(exposureSelector)) {
+        unexpectedCalls += 1;
+        throw new Error("unexpected oracle read for a market with no exposure");
+      }
+      exposureCalls += 1;
       return encodeFunctionResult({ abi: exposureAbi, functionName: "marketExposure", result: [0n, 0n] });
     }
   };
 
   await new OraclePublisher(database, rpc, config).publishFreshMarkets();
 
-  expect(calls).toBe(1);
+  // Scheduled checks inspect exposure once per deployment, then skip oracle
+  // reads and transaction submission for both zero-exposure markets.
+  expect(exposureCalls).toBe(2);
+  expect(unexpectedCalls).toBe(0);
 });

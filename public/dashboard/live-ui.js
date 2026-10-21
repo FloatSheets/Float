@@ -496,6 +496,18 @@
     modal('Welcome to FloatSheets.','<p>Your dashboard is using <strong>'+name+'</strong>.</p><p>You can switch contract versions any time in <strong>Settings → Contract version</strong>. The selected version controls the contracts used for your wallet, positions, oracle data, and vault.</p>','Open Settings',function(){dialog.close();location.hash='settings';});
   }
 
+  function showLegacyTradingDisabled(){
+    const version=localStorage.getItem('floatsheets-contract-version-v1')==='legacy-orion'?'legacy-orion':'meadow';
+    const view=location.hash.slice(1)||'trade';
+    if(version!=='legacy-orion'||!['trade','portfolio','oracle','listings'].includes(view))return false;
+    root.innerHTML='<section class="panel live-only-panel legacy-trading-overlay" role="status" aria-labelledby="legacy-trading-title"><div class="legacy-trading-mark" aria-hidden="true">i</div><div class="legacy-trading-copy"><span class="pill">FLOATSHEETS LEGACY ORION</span><h1 id="legacy-trading-title">Trading is disabled on Orion.</h1><p>You can still use the vault to view your liquidity and withdraw it. Switch to FloatSheets Meadow to access trading, portfolio, oracle and market listing pages.</p><div class="legacy-trading-actions"><button type="button" class="small-btn" data-switch-meadow>Switch to Meadow</button><a class="small-btn" href="#vault">Open vault</a><a class="legacy-settings-link" href="#settings">Version settings</a></div></div></section>';
+    root.querySelector('[data-switch-meadow]').addEventListener('click',function(){
+      localStorage.setItem('floatsheets-contract-version-v1','meadow');
+      window.dispatchEvent(new CustomEvent('floatsheets-contract-version-change',{detail:{version:'meadow'}}));
+    });
+    return true;
+  }
+
   let chartRequest = 0;
   function scheduleChartRefresh(){
     clearInterval(window.__FLOATSHEETS_CHART_REFRESH_TIMER__);
@@ -628,8 +640,11 @@
     originalRender();
     removeSimulationControls();
     genuinePageContent();
-    paintTwentyFourHourChange(null);
-    void refreshLiveMarketTruth();
+    const legacyTradingDisabled=showLegacyTradingDisabled();
+    if(!legacyTradingDisabled){
+      paintTwentyFourHourChange(null);
+      void refreshLiveMarketTruth();
+    }
     document.querySelector('.network-label .pill')?.remove();
     root.querySelectorAll('.risk-strip span').forEach(function(item){if(item.textContent?.trim().startsWith('Sources'))item.remove();});
     decorateAssets();
@@ -642,11 +657,11 @@
     installMobileWorkspaceMenu();
     installActivityFeed();
     window.__FLOATSHEETS_INSTALL_WALLET__?.();
-    bindTradeTicket();
-    void renderWalletContext();
-    void renderVaultContext();
-    scheduleChartRefresh();
-    scheduleWalletRefresh();
+    if(!legacyTradingDisabled) bindTradeTicket();
+    if(!legacyTradingDisabled) void renderWalletContext();
+    if(location.hash.slice(1)==='vault') void renderVaultContext();
+    if(!legacyTradingDisabled) { scheduleChartRefresh(); scheduleWalletRefresh(); }
+    else { clearInterval(window.__FLOATSHEETS_CHART_REFRESH_TIMER__); clearInterval(window.__FLOATSHEETS_WALLET_REFRESH_TIMER__); }
   };
   // Discard any local design-time account state before the first live render.
   state={balance:0,positions:[],orders:[],activity:[],nominations:[],vault:0,staked:0,float:0,preferences:{notifications:true,reduced:localStorage.getItem('floatsheets-reduced-motion')==='true'},name:'Trading account'};

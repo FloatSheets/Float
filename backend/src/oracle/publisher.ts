@@ -7,7 +7,7 @@ import { contractConfigForVersion, type AppConfig, type ContractVersion } from "
 import { safeErrorMessage } from "../safe-error";
 import { marketId } from "../chain/protocol";
 import type { RpcTransport } from "../chain/rpc";
-import { readOraclePrice } from "../chain/protocol-read";
+import { readClearingExposure, readOraclePrice } from "../chain/protocol-read";
 import { signPriceAttestation } from "../signing/signer";
 import type { PriceAttestation } from "../signing/types";
 
@@ -57,6 +57,11 @@ export class OraclePublisher {
     // writes cannot race for the same account nonce.
     for (const row of rows) for (const version of ["meadow", "legacy-orion"] as const) {
       try {
+        const versionConfig = contractConfigForVersion(this.config, version);
+        const exposure = await readClearingExposure(this.rpc, versionConfig.FLOAT_CLEARING_HOUSE_ADDRESS as Address, marketId(row.symbol));
+        // Scheduled refreshes only serve markets with existing positions. A
+        // quote request still publishes on demand before a new position opens.
+        if (exposure.longBaseE18 === 0n && exposure.shortBaseE18 === 0n) continue;
         await this.publishRow(row, false, version);
       } catch (error) {
         console.error(JSON.stringify({ event: "oracle_attestation_failed", version, market: row.symbol, error: safeErrorMessage(error) }));
