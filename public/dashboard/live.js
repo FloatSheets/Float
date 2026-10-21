@@ -1,13 +1,11 @@
 // Read-only live market adapter. No credentials are included in this script.
 (async function loadLiveMarkets(){
-  const api = window.__FLOATSHEETS_API_URL__;
+  const api = window.__FLOATSHEETS_SERVER_API__;
   if (!api) return;
   async function refreshMarkets(){
    try {
     const version=localStorage.getItem('floatsheets-contract-version-v1')==='legacy-orion'?'legacy-orion':'meadow';
-    const response = await fetch(api.replace(/\/$/, '') + '/v1/markets', {headers:{accept:'application/json','x-floatsheets-contract-version':version}});
-    if (!response.ok) throw new Error('market snapshot unavailable');
-    const payload = await response.json();
+    const payload = await api.getMarkets(version);
     if (!Array.isArray(payload.markets) || !payload.markets.length) return;
     const liveMarkets = payload.markets.map(function(row){
       const price = Number(row.twap_price_usdg ?? row.spot_price_usdg);

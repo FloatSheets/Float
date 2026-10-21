@@ -31,7 +31,7 @@ AMC and GME remain excluded until their direct stock/USDG pool quotes pass valid
 
 ## API
 
-The production backend is available at [`https://api.floatsheets.app`](https://api.floatsheets.app). Configure the frontend's `VITE_API_URL` and server-only `FLOATSHEETS_API_URL` with this base URL.
+The production backend is available at [`https://api.floatsheets.app`](https://api.floatsheets.app). Configure `FLOATSHEETS_API_URL` as a server-only frontend environment variable; browser requests use TanStack Start server functions and do not call the backend origin directly.
 
 | Endpoint | Description |
 | --- | --- |
@@ -104,7 +104,7 @@ The public repository's GitHub workflow also publishes `ghcr.io/floatsheets/floa
 
 ### Vercel frontend
 
-Connect the repository with the root directory set to the repository root. Use `bun run build` as the build command. Configure `VITE_API_URL` to the deployed backend URL for read-only live market hydration, and configure the same origin as the server-only `FLOATSHEETS_API_URL` variable for TanStack Start server functions. Never prefix the BFF origin or `MASTER_ADMIN_KEY` with `VITE_`.
+Connect the repository with the root directory set to the repository root and use `bun run build` as the build command. Set `FLOATSHEETS_API_URL` to the deployed backend URL as a server-only Vercel environment variable. Browser market-data and protocol requests go through TanStack Start server functions; do not expose the backend origin through a `VITE_` variable. Never prefix `MASTER_ADMIN_KEY` with `VITE_`.
 
 ## Roadmap
 

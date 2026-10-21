@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { pages } from "./pages";
 import { installWalletButton } from "@/lib/walletconnect";
+import { getLiveMarket, getMarketHistory, getMarkets } from "@/lib/server-api";
+
+type DashboardContractVersion = "meadow" | "legacy-orion";
+type DashboardServerApi = {
+  getMarkets: (version: DashboardContractVersion) => Promise<any>;
+  getLiveMarket: (symbol: string, version: DashboardContractVersion) => Promise<any>;
+  getMarketHistory: (symbol: string, range: string, version: DashboardContractVersion) => Promise<any>;
+};
 
 export type FloatPage = (typeof pages)[number];
 
@@ -75,6 +83,13 @@ export function FloatSheetsPage({ page }: { page: FloatPage }) {
     let active = true;
     let fadeTimer: ReturnType<typeof setTimeout>;
     let removeWalletButton: (() => void) | undefined;
+    const serverApi: DashboardServerApi = {
+      getMarkets: (version) => getMarkets({ data: { version } }),
+      getLiveMarket: (symbol, version) => getLiveMarket({ data: { symbol, version } }),
+      getMarketHistory: (symbol, range, version) => getMarketHistory({ data: { symbol, range, version } }),
+    };
+    const dashboardWindow = window as Window & { __FLOATSHEETS_SERVER_API__?: DashboardServerApi };
+    dashboardWindow.__FLOATSHEETS_SERVER_API__ = serverApi;
     const added: Element[] = [...heads];
 
 
@@ -94,8 +109,7 @@ export function FloatSheetsPage({ page }: { page: FloatPage }) {
         const codes = await Promise.all(page.scripts.map(loadScript));
         if (!active) return;
         const script = document.createElement("script");
-        const publicApiUrl = import.meta.env["VITE_API_URL"] ?? "";
-        script.textContent = `(function(){\nwindow.__FLOATSHEETS_API_URL__=${JSON.stringify(publicApiUrl)};\n${codes.join("\n;\n")}\n})();`;
+        script.textContent = `(function(){\n${codes.join("\n;\n")}\n})();`;
         (window as Window & { __FLOATSHEETS_INSTALL_WALLET__?: () => void }).__FLOATSHEETS_INSTALL_WALLET__ = () => {
           const button = document.getElementById("account-button");
           if (button instanceof HTMLButtonElement) installWalletButton(button, (message) => window.dispatchEvent(new CustomEvent("floatsheets-toast", { detail: message })));
@@ -118,6 +132,7 @@ export function FloatSheetsPage({ page }: { page: FloatPage }) {
       active = false;
       if (page.route === '/dashboard/') window.dispatchEvent(new Event('floatsheets-dashboard-dispose'));
       removeWalletButton?.();
+      if (dashboardWindow.__FLOATSHEETS_SERVER_API__ === serverApi) delete dashboardWindow.__FLOATSHEETS_SERVER_API__;
       delete (window as Window & { __FLOATSHEETS_INSTALL_WALLET__?: () => void }).__FLOATSHEETS_INSTALL_WALLET__;
       clearTimeout(fadeTimer);
       setPhase("hidden");

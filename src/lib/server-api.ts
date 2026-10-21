@@ -25,10 +25,30 @@ function symbolInput(input: unknown) {
 }
 
 export const getProtocol = createServerFn({ method: "GET" }).validator((input: unknown) => versionOf((input as JsonRecord | undefined)?.["version"])).handler(({ data }): Promise<any> => getJson("/v1/protocol", data));
-export const getMarkets = createServerFn({ method: "GET" }).handler((): Promise<any> => getJson("/v1/markets"));
+export const getMarkets = createServerFn({ method: "GET" }).validator((input: unknown) => versionOf((input as JsonRecord | undefined)?.["version"])).handler(({ data }): Promise<any> => getJson("/v1/markets", data));
 export const getMarket = createServerFn({ method: "GET" }).validator(symbolInput).handler(({ data }): Promise<any> => getJson(`/v1/markets/${data}`));
 export const getMarketQuotes = createServerFn({ method: "GET" }).validator(symbolInput).handler(({ data }): Promise<any> => getJson(`/v1/markets/${data}/quotes`));
 export const getMarketRisk = createServerFn({ method: "GET" }).validator(symbolInput).handler(({ data }): Promise<any> => getJson(`/v1/markets/${data}/risk`));
+
+type VersionedMarketInput = { symbol: string; version: ContractVersion };
+function versionedMarketInput(input: unknown): VersionedMarketInput {
+  if (!input || typeof input !== "object") throw new Error("A market request is required.");
+  const value = input as JsonRecord;
+  return { symbol: symbolInput(value["symbol"]), version: versionOf(value["version"]) };
+}
+
+export const getLiveMarket = createServerFn({ method: "GET" })
+  .validator(versionedMarketInput)
+  .handler(({ data }): Promise<any> => getJson(`/v1/markets/${data.symbol}/live`, data.version));
+
+export const getMarketHistory = createServerFn({ method: "GET" })
+  .validator((input: unknown) => {
+    const value = versionedMarketInput(input);
+    const range = (input as JsonRecord)["range"];
+    if (typeof range !== "string" || !["1H", "4H", "1D", "1W", "1M"].includes(range)) throw new Error("A valid history range is required.");
+    return { ...value, range };
+  })
+  .handler(({ data }): Promise<any> => getJson(`/v1/markets/${data.symbol}/history?format=candles&range=${encodeURIComponent(data.range)}`, data.version));
 
 /** The API owns quote construction/signing; the browser receives only calldata to sign. */
 export const getTradeTransaction = createServerFn({ method: "POST" })

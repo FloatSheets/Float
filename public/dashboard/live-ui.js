@@ -565,16 +565,22 @@
       stateValue.title=data.state==='READY'?'A current oracle price is published when you request a quote.':'Current on-chain market and oracle check';
     }
   }
+  function abortable(promise,signal){
+    return new Promise(function(resolve,reject){
+      if(signal.aborted){reject(new DOMException('The operation was aborted.','AbortError'));return;}
+      const onAbort=function(){reject(new DOMException('The operation was aborted.','AbortError'));};
+      signal.addEventListener('abort',onAbort,{once:true});
+      promise.then(resolve,reject).finally(function(){signal.removeEventListener('abort',onAbort);});
+    });
+  }
   async function refreshLiveMarketTruth(){
     const detail=location.pathname.match(/^\/dashboard\/([A-Za-z0-9.-]+)\/?$/)?.[1]?.toUpperCase();
-    const api=window.__FLOATSHEETS_API_URL__;
+    const api=window.__FLOATSHEETS_SERVER_API__;
     if(!detail||!api)return;
     const request=++liveTruthRequest;paintLiveMarketTruth(null);
     try {
       const version=localStorage.getItem('floatsheets-contract-version-v1')==='legacy-orion'?'legacy-orion':'meadow';
-      const response=await fetch(api.replace(/\/$/,'')+'/v1/markets/'+encodeURIComponent(detail)+'/live',{headers:{accept:'application/json','x-floatsheets-contract-version':version}});
-      if(!response.ok)throw new Error('live state unavailable');
-      const data=await response.json();
+      const data=await api.getLiveMarket(detail,version);
       if(request===liveTruthRequest&&root.isConnected&&selected.symbol===detail)paintLiveMarketTruth(data);
     } catch { if(request===liveTruthRequest&&root.isConnected)paintLiveMarketTruth({state:'UNAVAILABLE'}); }
   }
@@ -601,24 +607,21 @@
     const wallet=walletState(), snapshot=lastPnlSnapshot;
     const accountKey=wallet?.address?.toLowerCase()+':'+selected.symbol;
     activeChart.setPosition(wallet?.connected && snapshot?.key===accountKey ? snapshot.snapshot.positions.find(p=>p.symbol===selected.symbol) : null);
-    const api=window.__FLOATSHEETS_API_URL__;
+    const api=window.__FLOATSHEETS_SERVER_API__;
     if(!api){activeChart.unavailable();return;}
     chartAbort?.abort();
     chartAbort=new AbortController();
     const controller=chartAbort;
     const timeout=setTimeout(()=>controller.abort(),15000);
     try {
-      const endpoint=api.replace(/\/$/,'')+'/v1/markets/'+encodeURIComponent(selected.symbol)+'/history?format=candles';
       const version=localStorage.getItem('floatsheets-contract-version-v1')==='legacy-orion'?'legacy-orion':'meadow';
-      const historyRequest=fetch(endpoint+'&range='+encodeURIComponent(timeframe),{headers:{accept:'application/json','x-floatsheets-contract-version':version},signal:controller.signal});
-      const dayRequest=timeframe==='1D' ? null : fetch(endpoint+'&range=1D',{headers:{accept:'application/json','x-floatsheets-contract-version':version},signal:controller.signal});
-      const response=await historyRequest;
-      if(!response.ok) throw new Error('History unavailable');
-      const payload=await response.json();
+      const historyRequest=api.getMarketHistory(selected.symbol,timeframe,version);
+      const dayRequest=timeframe==='1D' ? null : api.getMarketHistory(selected.symbol,'1D',version);
+      const payload=await abortable(historyRequest,controller.signal);
       if(requestId!==chartRequest || !canvas.isConnected) return;
       activeChart.setData(payload,timeframe);
       if(dayRequest){
-        try { const dayResponse=await dayRequest;if(dayResponse.ok) paintTwentyFourHourChange(await dayResponse.json());else paintTwentyFourHourChange(null); }
+        try { paintTwentyFourHourChange(await abortable(dayRequest,controller.signal)); }
         catch { paintTwentyFourHourChange(null); }
       } else paintTwentyFourHourChange(payload);
     } catch(error) {
