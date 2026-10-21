@@ -4,7 +4,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import type { Pool } from "pg";
 
 import { loadConfig } from "../src/config";
-import { OraclePublisher } from "../src/oracle/publisher";
+import { OraclePublisher, snapshotTimeOnChain } from "../src/oracle/publisher";
 import type { RpcTransport } from "../src/chain/rpc";
 
 const key = "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
@@ -48,4 +48,11 @@ test("does not spend publisher gas on inactive markets", async () => {
   // reads and transaction submission for both zero-exposure markets.
   expect(exposureCalls).toBe(3);
   expect(unexpectedCalls).toBe(0);
+});
+
+test("converts backend snapshot time into chain time when the server clock leads", () => {
+  const snapshotAt = new Date(995_000);
+  const chainTimestamp = snapshotTimeOnChain(snapshotAt, 1_000n, 990n);
+  expect(chainTimestamp).toBe(985n);
+  expect(990n - chainTimestamp).toBe(5n);
 });

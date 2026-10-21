@@ -46,7 +46,15 @@ to its clearing house:
 - Clearing house: `0x82889877B395840BC0efce625C06c5423C75B029`
 
 The machine-readable deployment record is `deployments/jasper-4663.json`.
-The contracts are deployed but markets still need fresh price attestations and
-market configuration before trading can be enabled. Do not seed them from old
-oracle prices; the configuration transaction must use current validated TWAPs.
+The ten configured markets are NVDA, SPCX, CRCL, HIMS, MU, TSLA, RDDT, MSTR,
+PLTR, and QUBT. NVDA, SPCX, CRCL, HIMS, MU, TSLA, RDDT, and MSTR are active;
+PLTR and QUBT are close-only. Each configured price used a fresh pool TWAP and
+spot observation. HIMS was switched to active after its spot/TWAP deviation
+returned below the 50 bps breaker. Oracle prices expire after 120 seconds, so
+the backend's publisher must keep running against a working Robinhood RPC.
+
+`ConfigureFloatMarkets.s.sol` runs four markets at a time using
+`MARKET_BATCH_INDEX` (0, 1, or 2) to keep each attestation batch inside its
+expiry window. Supply separate `PRICE_<SYMBOL>_E18` and `SPOT_<SYMBOL>_E18`
+values from validated current observations; do not seed from old oracle prices.
 The deployer keystore and password are intentionally ignored by Git.

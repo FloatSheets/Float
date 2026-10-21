@@ -18,6 +18,11 @@ const MAX_CONFIDENCE_BPS = 50n;
 const ATTESTATION_TTL_SECONDS = 120n;
 const PUBLISH_SAFETY_WINDOW_SECONDS = 30n;
 
+export function snapshotTimeOnChain(snapshotAt: Date, wallTimeSeconds: bigint, chainTimeSeconds: bigint): bigint {
+  const snapshotWallTime = BigInt(Math.floor(snapshotAt.getTime() / 1_000));
+  return snapshotWallTime - (wallTimeSeconds - chainTimeSeconds);
+}
+
 const robinhoodChain = defineChain({
   id: 4663,
   name: "Robinhood Chain",
@@ -98,16 +103,24 @@ export class OraclePublisher {
     version: ContractVersion
   ): Promise<void> {
     if (!row.observed_at || !row.twap_price_usdg || !row.spot_price_usdg) throw new Error("market has no oracle snapshot");
-    if ((Date.now() - row.observed_at.getTime()) / 1_000 > this.config.ORACLE_PRICE_MAX_AGE_SECONDS) throw new Error("market snapshot is stale");
+    const wallNow = BigInt(Math.floor(Date.now() / 1_000));
+    const observedAtWall = BigInt(Math.floor(row.observed_at.getTime() / 1_000));
+    const wallAge = wallNow - observedAtWall;
+    if (wallAge < 0n || wallAge > BigInt(this.config.ORACLE_PRICE_MAX_AGE_SECONDS)) throw new Error("market snapshot is stale");
     const versionConfig = contractConfigForVersion(this.config, version);
     const id = marketId(row.symbol);
     const current = await readOraclePrice(this.rpc, versionConfig.FLOAT_ORACLE_ADDRESS as Address, id);
-    const now = BigInt(Math.floor(Date.now() / 1_000));
-    const observedAt = BigInt(Math.floor(row.observed_at.getTime() / 1_000));
+    // Convert backend wall time into chain time before signing, or a clock lead
+    // makes the oracle reject a valid fresh pool snapshot as InvalidTimestamp.
+    const chainNow = (await this.publicClient.getBlock({ blockTag: "latest" })).timestamp;
+    const observedAt = snapshotTimeOnChain(row.observed_at, wallNow, chainNow);
+    if (observedAt > chainNow || chainNow - observedAt > BigInt(this.config.ORACLE_PRICE_MAX_AGE_SECONDS)) {
+      throw new Error("market snapshot is stale relative to chain time");
+    }
     const twapPriceE18 = decimalToE18(row.twap_price_usdg);
     const spotPriceE18 = decimalToE18(row.spot_price_usdg);
     const breakerChanged = current.sequence !== 0n && current.circuitBroken !== circuitBroken(twapPriceE18, spotPriceE18);
-    const renewalDue = current.sequence === 0n || now >= current.timestamp + ATTESTATION_TTL_SECONDS - PUBLISH_SAFETY_WINDOW_SECONDS;
+    const renewalDue = current.sequence === 0n || chainNow >= current.timestamp + ATTESTATION_TTL_SECONDS - PUBLISH_SAFETY_WINDOW_SECONDS;
     const hasNewerSnapshot = observedAt > current.timestamp;
     if (!breakerChanged && !renewalDue && (!publishLatestSnapshot || !hasNewerSnapshot)) return;
     const attestation: PriceAttestation = {
@@ -117,7 +130,7 @@ export class OraclePublisher {
       confidenceBps: MAX_CONFIDENCE_BPS,
       timestamp: observedAt,
       sequence: current.sequence + 1n,
-      expiry: now + ATTESTATION_TTL_SECONDS
+      expiry: chainNow + ATTESTATION_TTL_SECONDS
     };
     const signature = await signPriceAttestation(this.config.ORACLE_SIGNER_PRIVATE_KEY as Hex, versionConfig.FLOAT_ORACLE_ADDRESS as Address, attestation);
     const hash = await this.wallet.writeContract({ address: versionConfig.FLOAT_ORACLE_ADDRESS as Address, abi: oracleAbi, functionName: "publish", args: [{ ...attestation }, signature] });
