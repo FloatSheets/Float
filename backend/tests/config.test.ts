@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { privateKeyToAccount } from "viem/accounts";
 
-import { loadConfig } from "../src/config";
+import { contractConfigForVersion, loadConfig } from "../src/config";
 
 const testPrivateKey = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const validEnvironment = {
@@ -31,6 +31,13 @@ const validEnvironment = {
 
 test("loads valid Robinhood Chain configuration", () => {
   expect(loadConfig(validEnvironment).RHC_ID).toBe(4663);
+});
+
+test("uses the current Amber addresses in production when no override is set", () => {
+  const amber = contractConfigForVersion(loadConfig({ ...validEnvironment, NODE_ENV: "production" }), "amber");
+  expect(amber.FLOAT_CLEARING_HOUSE_ADDRESS).toBe("0x022Cc8DFf79414DcB56812Bd93601854E2b7A700");
+  expect(amber.FLOAT_ORACLE_ADDRESS).toBe("0x71B5FBd2df7eF976d02A4b4090450EEE24F77Ce0");
+  expect(amber.FLOAT_VAULT_ADDRESS).toBe("0xD5B0461F09C0Cb67AEd9Ca8e73569EAfa3a2E445");
 });
 
 test("rejects a non-Robinhood chain ID", () => {

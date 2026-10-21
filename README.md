@@ -22,6 +22,29 @@
 
 AMC and GME remain excluded until their direct stock/USDG pool quotes pass validation.
 
+## Contract versions
+
+| Version | Status | Dashboard behavior |
+| --- | --- | --- |
+| FloatSheets Amber | Deployed and runtime-bytecode verified; configuration has zero delay; 7 markets active and 3 close-only | Selected by default |
+| FloatSheets Jasper | Paused on-chain | Visible in settings, disabled |
+| FloatSheets Meadow | Paused on-chain | Visible in settings, disabled |
+| FloatSheets Legacy Orion | Legacy deployment | Vault viewing and withdrawals; trade, portfolio, oracle, and listings pages are disabled |
+
+Amber is not an upgrade to Jasper or Meadow. Its clearing house, oracle, and vault are new addresses. Jasper and Meadow markets are paused; existing positions can still be reduced and vault withdrawals remain available. Amber markets are registered and oracle-enabled without a time delay. The oracle publisher must post fresh prices before trade quotes can execute. The machine-readable deployment record is [`contracts/deployments/amber-4663.json`](contracts/deployments/amber-4663.json).
+
+| Amber contract | Robinhood Chain address |
+| --- | --- |
+| Clearing house | `0x022Cc8DFf79414DcB56812Bd93601854E2b7A700` |
+| Oracle | `0x71B5FBd2df7eF976d02A4b4090450EEE24F77Ce0` |
+| Vault | `0xD5B0461F09C0Cb67AEd9Ca8e73569EAfa3a2E445` |
+
+## Trust model
+
+FloatSheets deliberately uses a single EOA for protocol administration. The quote service remains the primary trade path. FloatSheets continues to use its currently configured market feeds without adding licensed feeds. Configuration changes, signer rotations, ownership changes, and market changes have no timelock; pauses and risk reductions are immediate. Contract code enforces a 7.5% maximum quote-to-oracle deviation, a 20% price-jump circuit breaker, and a 5% per-hour cap on vault-funded trader payouts. Excess payout requests become claims, so the cap does not block position closes.
+
+The EOA and signing keys remain trusted. A compromised quote signer can issue executions within the on-chain limits; an administrator can change risk settings or pause markets without a delay; and the oracle signer can attest prices derived from configured feeds. This design does not provide multisig protection, independent licensed feeds, or a separate fallback-close path.
+
 ## How it works
 
 1. A market monitor samples the direct stock/USDG V3 pool and its executable quotes.
@@ -56,8 +79,8 @@ A fresh database applies migrations at backend startup. The initial migration se
 | --- | --- |
 | `/src` | TanStack Start/Vite frontend. |
 | `/backend` | Bun, Express, TypeScript, PostgreSQL API and migrations. |
-| `/contracts` | Foundry workspace containing the Robinhood Chain oracle, shared vault, clearing house, deployment scripts, and tests. Check `contracts/README.md` and `contracts/AUDIT_READINESS.md` for implementation and deployment status. |
-| `/.github/workflows` | Backend tests, GHCR image build/publish, release, and optional Render hook. |
+| `/contracts` | Foundry workspace containing the Robinhood Chain oracle, shared vault, clearing house, deployment scripts, and regression, fuzz, and invariant tests. Check `contracts/README.md` and `contracts/AUDIT_READINESS.md` for deployment status. |
+| `/.github/workflows` | Backend, frontend, and contract checks; GHCR image build/publish, release, and optional Render hook. |
 
 ## Getting started
 
@@ -98,7 +121,7 @@ Use a Render **Native Environment** service rooted at `backend`:
 | Start command | `bun run start` |
 | Health check | `/health` |
 
-Set `DATABASE_URL`, `DATABASE_PASSWORD`, `RHC_ID`, `RHC_RPC_URL`, `PROTOCOL_FEE_WALLET`, `FRONTEND_URL`, `NODE_ENV=production`, and Render’s `PORT`. The API applies migrations during startup.
+Set `DATABASE_URL`, `DATABASE_PASSWORD`, `RHC_ID`, `RHC_RPC_URL`, `PROTOCOL_FEE_WALLET`, `FRONTEND_URL`, `NODE_ENV=production`, and Render’s `PORT`. The backend defaults to the deployed Amber addresses; the `AMBER_FLOAT_*_ADDRESS` variables in `backend/.env.example` can override them. Keep Jasper, Meadow, and Orion address variables populated for retired-version display and vault flows. The API applies migrations during startup.
 
 The public repository's GitHub workflow also publishes `ghcr.io/floatsheets/float-backend:latest` and a SHA-tagged image. If Render is configured to pull the GHCR image instead, provide registry credentials when the package is private. Set `RENDER_DEPLOY_HOOK_URL` in the public repository's Actions secrets to have successful backend image builds trigger Render automatically.
 

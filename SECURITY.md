@@ -4,19 +4,18 @@ Report vulnerabilities privately to [security@floatsheets.app](mailto:security@f
 
 We aim to acknowledge reports within 48 hours and address confirmed critical issues within seven days. Good-faith researchers acting to avoid privacy harm, service disruption, or loss of funds will be credited if they wish.
 
-## Deployed contracts
+## Contract versions
 
-FloatSheets is deployed on Robinhood Chain (chain ID `4663`) with two contract versions. The dashboard defaults to Meadow. Legacy Orion remains available for existing vault positions and withdrawals; the dashboard disables trading pages while Legacy Orion is selected. The contracts are not upgradeable, so code changes do not alter an existing deployment.
+Contract versions are immutable and changing protocol logic requires a new address set. Amber is deployed, runtime-bytecode verified, and configured with no-delay market changes. Jasper and Meadow are paused on-chain. Orion remains available for legacy vault access. The current version table and deployment status are in [`README.md`](README.md).
 
-| Version | Oracle | Vault | Clearing house |
-| --- | --- | --- | --- |
-| FloatSheets Meadow | `0x7Fda40E8FD27cA067C9Ee23EA0Fd0cb8Bb786A8a` | `0xb74eD266A95d8393cDaF2Fa6cADd98b5a1D91875` | `0xc1AfA648C30090Aa8fDd3fbca384bd65b52B58Dd` |
-| FloatSheets Legacy Orion | `0x072538824C9FD957B0b2530Bff4D3130897E711f` | `0xfCaa75781c11C414a6c25dF926D142C49501c810` | `0x76CB051b4E20621A96b7303b9Ee4C287fcB0E8F3` |
+## Trust model
 
-The Meadow contracts contain the newer risk controls described in [`contracts/README.md`](contracts/README.md). Those changes do not apply to Legacy Orion. The dashboard restriction is a user-interface safeguard; it does not make the old contracts inaccessible through direct transactions.
+FloatSheets uses one EOA for administration. The quote service remains the primary signed execution path. The protocol continues to use its currently configured market feeds and adds no licensed feeds. Configuration, ownership, signer, and market changes have no timelock; pausing and risk reductions are immediate. This leaves compromised admin keys able to change protocol settings without a delay. Amber caps quote deviation from the oracle at 7.5%, trips a circuit breaker on a per-attestation price jump above 20%, and limits vault-funded trader payouts to 5% of NAV per hour. Excess payouts remain claims and do not stop closes.
+
+The EOA, quote signer, and oracle signer remain trusted. These controls constrain the keys' actions but do not remove their trust or the risk of eventual payout obligations. There is no multisig and no separate fallback-close transaction path.
 
 ## Security considerations
 
-High-risk surfaces include oracle manipulation or staleness, USDG pool manipulation, quote and risk-limit validation, contract ownership and signing keys, liquidation and vault liquidity accounting, and database or deployment credential exposure. The owner and signing keys are privileged; their custody and operational security are part of the protocol's trust assumptions. Review the contract and backend source before interacting with either version.
+High-risk surfaces include oracle manipulation or staleness, USDG pool manipulation, quote and risk-limit validation, contract ownership and signing keys, liquidation and vault liquidity accounting, and database or deployment credential exposure. Review the contract and backend source before interacting with a deployment.
 
 Verify the intended version and contract addresses against the current production configuration before sending funds. Addresses can change when a new deployment is released.

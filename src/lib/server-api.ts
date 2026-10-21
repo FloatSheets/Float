@@ -1,10 +1,10 @@
 import { createServerFn } from "@tanstack/react-start";
 
 type JsonRecord = Record<string, unknown>;
-type ContractVersion = "jasper" | "meadow" | "legacy-orion";
+type ContractVersion = "amber" | "jasper" | "meadow" | "legacy-orion";
 
 function versionOf(value: unknown): ContractVersion {
-  return value === "legacy-orion" ? "legacy-orion" : value === "meadow" ? "meadow" : "jasper";
+  return value === "legacy-orion" ? "legacy-orion" : value === "jasper" ? "jasper" : value === "meadow" ? "meadow" : "amber";
 }
 
 function apiOrigin() {
@@ -13,7 +13,7 @@ function apiOrigin() {
   return origin.replace(/\/$/, "");
 }
 
-async function getJson<T extends JsonRecord>(path: string, version: ContractVersion = "jasper"): Promise<T> {
+async function getJson<T extends JsonRecord>(path: string, version: ContractVersion = "amber"): Promise<T> {
   const response = await fetch(`${apiOrigin()}${path}`, { headers: { accept: "application/json", "x-floatsheets-contract-version": version } });
   if (!response.ok) throw new Error(`FloatSheets API returned ${response.status} for ${path}.`);
   return (await response.json()) as T;

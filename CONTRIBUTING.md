@@ -2,9 +2,9 @@
 
 ## Project scope
 
-Contributions are welcome across the frontend, backend API and market-data service, Solidity contracts, deployment tooling, security controls, tests, and documentation. FloatSheets supports two Robinhood Chain contract versions: Meadow and Legacy Orion. Changes involving contracts or protocol transactions should state which version they affect and preserve the behavior of the other version unless the change intentionally updates it too.
+Contributions are welcome across the frontend, backend API and market-data service, Solidity contracts, deployment tooling, security controls, tests, and documentation. FloatSheets uses Amber for new trading, retains Jasper and Meadow as retired versions, and keeps Legacy Orion for vault access. Changes involving contracts or protocol transactions should identify the affected version and preserve legacy withdrawals.
 
-The contracts are deployed and manage real on-chain positions and vault liquidity. Do not deploy contracts, send funds, or change production configuration as part of a contribution. Describe any required deployment or environment changes in the pull request so maintainers can review and perform them separately.
+The contracts manage real on-chain positions and vault liquidity. Production deployments and configuration changes require explicit maintainer authorization. Describe required deployment and environment changes in the pull request.
 
 ## Setup
 
@@ -14,7 +14,7 @@ Install Foundry to build and test the Solidity contracts. See [`contracts/README
 
 ## Workflow
 
-Fork, create a focused branch, and make one concern per pull request. Include or update tests for behavioral changes. Before submitting, run the relevant checks, such as `cd backend && bun test && bun run check` or `cd contracts && forge test`.
+Fork, create a focused branch, and make one concern per pull request. Include unit, fuzz, and invariant tests for behavioral changes. Before submitting, run the relevant checks, such as `cd backend && bun test && bun run check`, `cd contracts && forge test`, and `forge coverage --report lcov` followed by `python3 scripts/check-branch-coverage.py lcov.info 80`.
 
 Use imperative, present-tense commit subjects, for example: `add pool snapshot reader`.
 

@@ -1,5 +1,5 @@
-import { Router, type Response } from "express";
-import { randomBytes } from "node:crypto";
+import { Router, type NextFunction, type Request, type Response } from "express";
+import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import type { Address } from "viem";
 import type { Hex } from "viem";
@@ -20,12 +20,12 @@ import type { OraclePublisher } from "../oracle/publisher";
 import { safeErrorMessage } from "../safe-error";
 
 const address = z.string().regex(/^0x[0-9a-fA-F]{40}$/);
-const uint = z.string().regex(/^\d+$/);
+const uint = z.string().regex(/^\d+$/).max(78);
 const hex = z.string().regex(/^0x[0-9a-fA-F]+$/);
 const signedInt = z.string().regex(/^-?\d+$/);
-const attestation = z.object({ marketId: hex, priceE18: uint, spotPriceE18: uint, confidenceBps: uint, timestamp: uint, sequence: uint, expiry: uint });
+const attestation = z.object({ marketId: hex.length(66), priceE18: uint, spotPriceE18: uint, confidenceBps: uint, timestamp: uint, sequence: uint, expiry: uint });
 const quote = z.object({
-  market: z.string().min(1), marketId: hex, trader: address, sizeDeltaE18: signedInt, executionPriceE18: uint,
+  market: z.string().min(1).max(16), marketId: hex.length(66), trader: address, sizeDeltaE18: signedInt.max(78), executionPriceE18: uint,
   feeUsdg: uint, maxLeverageE18: uint, oracleSequence: uint, nonce: uint, expiry: uint
 });
 const traderQuoteRequest = z.object({
@@ -35,12 +35,45 @@ const tradeCheckRequest = traderQuoteRequest.extend({ marginUsdg: uint, targetLe
 const closeQuoteRequest = z.object({ market: z.string().min(1).max(16), trader: address });
 const TRADING_FEE_BPS = 6n;
 const MAX_TRADING_FEE_BPS = 100n;
+const MAX_QUOTE_ORACLE_DEVIATION_BPS = 750n;
 const BPS = 10_000n;
 const USDG_TO_E18 = 1_000_000_000_000n;
 const E18 = 1_000_000_000_000_000_000n;
 const QUOTE_ORACLE_HEADROOM_SECONDS = 5n;
 const BPS_MARKET_OPEN_INTEREST_CAP = 1_500n;
 const BPS_MARKET_SKEW_CAP = 1_000n;
+const fallbackAdminWindows = new Map<string, { count: number; resetAt: number }>();
+let adminCleanupCounter = 0;
+
+function createAdminRateLimit(database?: Pool) {
+  return async (request: Request, response: Response, next: NextFunction): Promise<void> => {
+    const ip = request.ip ?? request.socket.remoteAddress ?? "unknown";
+    const key = createHash("sha256").update(ip).digest("hex");
+    if (database) {
+      try {
+        const result = await database.query<{ hits: number }>(
+          `INSERT INTO public.api_rate_limits(bucket_key, window_start, hit_count)
+           VALUES ($1, date_trunc('minute', now()), 1)
+           ON CONFLICT (bucket_key, window_start) DO UPDATE SET hit_count=api_rate_limits.hit_count+1
+           RETURNING hit_count AS hits`, [key]
+        );
+        if ((result.rows[0]?.hits ?? 0) > 10) { response.status(429).json({ error: "Admin signing rate limit exceeded" }); return; }
+        if (++adminCleanupCounter % 60 === 0) await database.query("DELETE FROM public.api_rate_limits WHERE window_start < now() - interval '1 hour'");
+        next();
+      } catch {
+        response.status(503).json({ error: "Admin signing rate limit is unavailable" });
+      }
+      return;
+    }
+    const now = Date.now();
+    let window = fallbackAdminWindows.get(key);
+    if (!window || window.resetAt <= now) { window = { count: 0, resetAt: now + 60_000 }; fallbackAdminWindows.set(key, window); }
+    window.count++;
+    if (window.count > 10) { response.status(429).json({ error: "Admin signing rate limit exceeded" }); return; }
+    if (fallbackAdminWindows.size > 10_000) for (const [id, item] of fallbackAdminWindows) if (item.resetAt <= now) fallbackAdminWindows.delete(id);
+    next();
+  };
+}
 
 function bigint(value: string): bigint {
   return BigInt(value);
@@ -60,6 +93,11 @@ function usdgDecimal(value: bigint): string {
 function deviationBps(a: bigint, b: bigint): bigint {
   const delta = a > b ? a - b : b - a;
   return delta * 10_000n / b;
+}
+
+function exceedsOracleDeviation(executionPrice: bigint, oraclePrice: bigint, marketLimit: bigint): boolean {
+  const effectiveLimit = marketLimit < MAX_QUOTE_ORACLE_DEVIATION_BPS ? marketLimit : MAX_QUOTE_ORACLE_DEVIATION_BPS;
+  return deviationBps(executionPrice, oraclePrice) > effectiveLimit;
 }
 
 function quoteNonce(): bigint {
@@ -118,11 +156,19 @@ export function createProtocolTransactionsRouter(
 ): Router {
   const router = Router();
   const versions = {
+    amber: createProtocolTransactionsRouterForConfig(contractConfigForVersion(config, "amber"), database, rpc, oraclePublisher),
     jasper: createProtocolTransactionsRouterForConfig(contractConfigForVersion(config, "jasper"), database, rpc, oraclePublisher),
     meadow: createProtocolTransactionsRouterForConfig(contractConfigForVersion(config, "meadow"), database, rpc, oraclePublisher),
     "legacy-orion": createProtocolTransactionsRouterForConfig(contractConfigForVersion(config, "legacy-orion"), database, rpc, oraclePublisher)
   };
-  router.use((request, response, next) => versions[contractVersionFromRequest(request)](request, response, next));
+  router.use((request, response, next) => {
+    const version = contractVersionFromRequest(request);
+    if (version !== "amber" && ["/trade-quote", "/trade-check", "/quote"].includes(request.path)) {
+      response.status(409).json({ error: `New position opens are disabled on ${version}; select FloatSheets Amber.` });
+      return;
+    }
+    versions[version](request, response, next);
+  });
   return router;
 }
 
@@ -134,6 +180,7 @@ function createProtocolTransactionsRouterForConfig(
 ): Router {
   const router = Router();
   const masterAdmin = requireMasterAdmin(config);
+  const adminRateLimit = createAdminRateLimit(database);
 
   router.get("/payouts/:account", async (request, response) => {
     try {
@@ -148,19 +195,31 @@ function createProtocolTransactionsRouterForConfig(
     } catch (error) { protocolError(response, error); }
   });
 
-  router.post("/oracle-attestation", masterAdmin, async (request, response) => {
+  router.post("/oracle-attestation", adminRateLimit, masterAdmin, async (request, response) => {
     try {
       const input = attestation.parse(request.body) as Record<string, string>;
+      const now = BigInt(Math.floor(Date.now() / 1_000));
+      const price = bigint(input.priceE18);
+      const spot = bigint(input.spotPriceE18);
+      const confidence = bigint(input.confidenceBps);
+      const timestamp = bigint(input.timestamp);
+      const sequence = bigint(input.sequence);
+      const expiry = bigint(input.expiry);
+      if (price === 0n || spot === 0n || confidence > BPS || timestamp > now
+        || now - timestamp > BigInt(config.ORACLE_PRICE_MAX_AGE_SECONDS) || sequence === 0n
+        || expiry <= now || expiry > timestamp + BigInt(config.ORACLE_PRICE_MAX_AGE_SECONDS)) {
+        throw new Error("attestation fields exceed protocol bounds");
+      }
       const value: PriceAttestation = {
-        marketId: input.marketId as Hex, priceE18: bigint(input.priceE18), spotPriceE18: bigint(input.spotPriceE18), confidenceBps: bigint(input.confidenceBps),
-        timestamp: bigint(input.timestamp), sequence: bigint(input.sequence), expiry: bigint(input.expiry)
+        marketId: input.marketId as Hex, priceE18: price, spotPriceE18: spot, confidenceBps: confidence,
+        timestamp, sequence, expiry
       };
       const signature = await signPriceAttestation(config.ORACLE_SIGNER_PRIVATE_KEY as Hex, config.FLOAT_ORACLE_ADDRESS as Address, value);
       response.json({ attestation: input, signature, transaction: publishOracle(config.FLOAT_ORACLE_ADDRESS as Address, [value.marketId, value.priceE18, value.spotPriceE18, value.confidenceBps, value.timestamp, value.sequence, value.expiry], signature) });
     } catch (error) { protocolError(response, error); }
   });
 
-  router.post("/quote", masterAdmin, async (request, response) => {
+  router.post("/quote", adminRateLimit, masterAdmin, async (request, response) => {
     try {
       const input = quote.parse(request.body) as Record<string, string | boolean>;
       if (!database || !rpc) throw new Error("quote validation dependencies are unavailable");
@@ -202,8 +261,9 @@ function createProtocolTransactionsRouterForConfig(
       if (sizeDeltaE18 === 0n) throw new Error("quote size must be non-zero");
       const quoteNotional = notionalForSize(sizeDeltaE18, executionPriceE18);
       if (quoteNotional > usdgUnits(marketRow.max_ticket_usdg) || quoteNotional > onchainMarket.maxPositionNotionalUsdg) throw new Error("quote notional exceeds market limit");
-      if (bigint(input.feeUsdg as string) > quoteNotional * MAX_TRADING_FEE_BPS / BPS) throw new Error("quote fee exceeds protocol limit");
-      if (deviationBps(executionPriceE18, oraclePrice.priceE18) > onchainMarket.maxExecutionDeviationBps) throw new Error("execution price exceeds oracle deviation limit");
+      const minimumFee = ceilingDiv(quoteNotional * TRADING_FEE_BPS, BPS);
+      if (bigint(input.feeUsdg as string) < minimumFee || bigint(input.feeUsdg as string) > ceilingDiv(quoteNotional * MAX_TRADING_FEE_BPS, BPS)) throw new Error("quote fee is outside protocol limits");
+      if (exceedsOracleDeviation(executionPriceE18, oraclePrice.priceE18, onchainMarket.maxExecutionDeviationBps)) throw new Error("execution price exceeds oracle deviation limit");
       const value: TradeQuote = {
         marketId: input.marketId as Hex, trader: input.trader as Address, sizeDeltaE18,
         executionPriceE18,
@@ -274,12 +334,12 @@ function createProtocolTransactionsRouterForConfig(
       const executionPriceE18 = input.isLong
         ? oraclePrice.priceE18 * (BPS + degradationBps) / BPS
         : oraclePrice.priceE18 * (BPS - degradationBps) / BPS;
-      if (executionPriceE18 === 0n || deviationBps(executionPriceE18, oraclePrice.priceE18) > onchainMarket.maxExecutionDeviationBps) throw new Error("execution price exceeds oracle deviation limit");
+      if (executionPriceE18 === 0n || exceedsOracleDeviation(executionPriceE18, oraclePrice.priceE18, onchainMarket.maxExecutionDeviationBps)) throw new Error("execution price exceeds oracle deviation limit");
 
       const value: TradeQuote = {
         marketId: id, trader: input.trader as Address,
         sizeDeltaE18: sizeForNotional(requestedNotional, executionPriceE18, input.isLong), executionPriceE18,
-        feeUsdg: requestedNotional * TRADING_FEE_BPS / BPS,
+        feeUsdg: ceilingDiv(requestedNotional * TRADING_FEE_BPS, BPS),
         maxLeverageE18: onchainMarket.maxLeverageE18,
         oracleSequence: oraclePrice.sequence, nonce: quoteNonce(),
         expiry: boundedQuoteExpiry(now, oraclePrice.timestamp, config.ORACLE_PRICE_MAX_AGE_SECONDS, config.QUOTE_TTL_SECONDS)
@@ -346,7 +406,7 @@ function createProtocolTransactionsRouterForConfig(
         readClearingPosition(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, input.trader as Address, id),
         readOraclePrice(rpc, config.FLOAT_ORACLE_ADDRESS as Address, id)
       ]);
-      const fee = requestedNotional * TRADING_FEE_BPS / BPS;
+      const fee = ceilingDiv(requestedNotional * TRADING_FEE_BPS, BPS);
       const requiredMargin = ceilingDiv(requestedNotional * E18, onchainMarket.maxLeverageE18) + fee;
       if (position.marginUsdg + requestedMargin < requiredMargin) return reject("Add more margin or choose lower leverage for this position.", "margin");
       if (oraclePrice.sequence === 0n || oraclePrice.priceE18 === 0n || oraclePrice.circuitBroken) return reject("This market price is not ready for a new position. Try again shortly.");
@@ -418,12 +478,12 @@ function createProtocolTransactionsRouterForConfig(
       const executionPriceE18 = direction === "buy"
         ? oraclePrice.priceE18 * (BPS + degradationBps) / BPS
         : oraclePrice.priceE18 * (BPS - degradationBps) / BPS;
-      if (executionPriceE18 === 0n || deviationBps(executionPriceE18, oraclePrice.priceE18) > onchainMarket.maxExecutionDeviationBps) throw new Error("execution price exceeds oracle deviation limit");
+      if (executionPriceE18 === 0n || exceedsOracleDeviation(executionPriceE18, oraclePrice.priceE18, onchainMarket.maxExecutionDeviationBps)) throw new Error("execution price exceeds oracle deviation limit");
       const sizeDeltaE18 = -position.sizeE18;
       const tradeNotional = notionalForSize(sizeDeltaE18, executionPriceE18);
       const value: TradeQuote = {
         marketId: id, trader: input.trader as Address, sizeDeltaE18, executionPriceE18,
-        feeUsdg: tradeNotional * TRADING_FEE_BPS / BPS,
+        feeUsdg: ceilingDiv(tradeNotional * TRADING_FEE_BPS, BPS),
         maxLeverageE18: onchainMarket.maxLeverageE18,
         oracleSequence: oraclePrice.sequence, nonce: quoteNonce(),
         expiry: boundedQuoteExpiry(now, oraclePrice.timestamp, config.ORACLE_PRICE_MAX_AGE_SECONDS, config.QUOTE_TTL_SECONDS)
@@ -516,15 +576,24 @@ function createProtocolTransactionsRouterForConfig(
     } catch (error) { protocolError(response, error); }
   });
 
-  router.post("/admin/enable-market", masterAdmin, (request, response) => {
+  router.post("/admin/enable-market", adminRateLimit, masterAdmin, (request, response) => {
     try { const body = z.object({ market: z.string().min(1), enabled: z.boolean() }).parse(request.body); response.json({ transaction: enableMarket(config.FLOAT_ORACLE_ADDRESS as Address, marketId(body.market), body.enabled) }); }
     catch (error) { protocolError(response, error); }
   });
 
-  router.post("/admin/configure-market", masterAdmin, (request, response) => {
+  router.post("/admin/configure-market", adminRateLimit, masterAdmin, (request, response) => {
     try {
-      const body = z.object({ market: z.string().min(1), state: z.number().int().min(1).max(3), maxLeverageE18: uint, maintenanceMarginBps: uint, maxExecutionDeviationBps: uint, maxOracleConfidenceBps: uint, maxPositionNotionalUsdg: uint }).parse(request.body);
-      response.json({ transaction: configureMarket(config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, marketId(body.market), [body.state, bigint(body.maxLeverageE18), bigint(body.maintenanceMarginBps), bigint(body.maxExecutionDeviationBps), bigint(body.maxOracleConfidenceBps), bigint(body.maxPositionNotionalUsdg)]) });
+      const body = z.object({ market: z.string().regex(/^[A-Za-z0-9.-]{1,16}$/), state: z.number().int().min(1).max(3), maxLeverageE18: uint, maintenanceMarginBps: uint, maxExecutionDeviationBps: uint, maxOracleConfidenceBps: uint, maxPositionNotionalUsdg: uint }).parse(request.body);
+      const leverage = bigint(body.maxLeverageE18);
+      const maintenance = bigint(body.maintenanceMarginBps);
+      const deviation = bigint(body.maxExecutionDeviationBps);
+      const confidence = bigint(body.maxOracleConfidenceBps);
+      const notional = bigint(body.maxPositionNotionalUsdg);
+      if (leverage < E18 || leverage > (1n << 64n) - 1n || maintenance < 1n || maintenance >= BPS
+        || deviation > MAX_QUOTE_ORACLE_DEVIATION_BPS || confidence > BPS || notional === 0n || notional > (1n << 128n) - 1n) {
+        throw new Error("market parameters exceed protocol bounds");
+      }
+      response.json({ transaction: configureMarket(config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, marketId(body.market), [body.state, leverage, maintenance, deviation, confidence, notional]) });
     } catch (error) { protocolError(response, error); }
   });
 

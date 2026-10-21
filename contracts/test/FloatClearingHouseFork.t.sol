@@ -46,7 +46,7 @@ contract FloatClearingHouseForkTest {
         clearing.setMarket(
             MARKET,
             FloatClearingHouse.Market({
-                state: FloatClearingHouse.MarketState.Active,
+                state: FloatClearingHouse.MarketState.Paused,
                 maxLeverageE18: uint64(5 * E18),
                 maintenanceMarginBps: 1_000,
                 maxExecutionDeviationBps: 30,
@@ -54,12 +54,23 @@ contract FloatClearingHouseForkTest {
                 maxPositionNotionalUsdg: uint128(150_000 * USDG_UNIT)
             })
         );
+        FloatClearingHouse.Market memory activeMarket = clearing.getMarket(MARKET);
+        activeMarket.state = FloatClearingHouse.MarketState.Active;
+        clearing.setMarket(MARKET, activeMarket);
+        vm.warp(block.timestamp + clearing.CONFIG_DELAY());
+        clearing.applyMarket(MARKET);
+        oracle.applyMarketEnabled(MARKET);
         _publish(1, 228 * E18, 10);
 
         vm.prank(NVDA_USDG_POOL);
         require(usdg.transfer(address(this), 1_100_000 * USDG_UNIT), "fork USDG transfer");
         usdg.approve(address(vault), type(uint256).max);
         lpShares = vault.deposit(1_000_000 * USDG_UNIT, address(this));
+        vm.warp(block.timestamp + vault.QUEUE_EPOCH_DURATION());
+        vault.settleQueue();
+        vault.claimDeposit(vault.queueEpoch());
+        vault.startNextQueueEpoch();
+        _publish(2, 228 * E18, 10);
         require(usdg.transfer(TRADER, 50_000 * USDG_UNIT), "trader funding");
         vm.prank(TRADER);
         usdg.approve(address(clearing), type(uint256).max);
@@ -70,19 +81,21 @@ contract FloatClearingHouseForkTest {
         _execute(_quote(true, 50_000 * USDG_UNIT, 1));
 
         uint256 available = clearing.availableLiquidity();
-        require(available < 901_000 * USDG_UNIT, "50% utilization reserve was not enforced");
-        require(available > 899_000 * USDG_UNIT, "unexpected reserve");
+        require(available < 988_000 * USDG_UNIT, "stress reserve was not applied");
+        require(available > 987_000 * USDG_UNIT, "unexpected reserve");
     }
 
     function testBlocksLpWithdrawalOfReservedLiquidity() public {
         _depositTraderMargin(20_000 * USDG_UNIT);
         _execute(_quote(true, 50_000 * USDG_UNIT, 1));
 
+        vault.withdraw(lpShares * 99 / 100, address(this));
+        vm.warp(block.timestamp + vault.QUEUE_EPOCH_DURATION());
         vm.expectRevert(FloatVault.InsufficientAvailableLiquidity.selector);
-        vault.withdraw(lpShares * 96 / 100, address(this));
+        vault.settleQueue();
     }
 
-    function testReservesGrossOpenInterestEvenWhenLongAndShortExposureOffsets() public {
+    function testStressReserveTracksNetExposureWhenLongAndShortExposureOffsets() public {
         _depositTraderMargin(20_000 * USDG_UNIT);
         _execute(_quote(true, 50_000 * USDG_UNIT, 1));
         require(usdg.transfer(KEEPER, 20_000 * USDG_UNIT), "second trader funding");
@@ -95,8 +108,8 @@ contract FloatClearingHouseForkTest {
         clearing.execute(shortQuote, _quoteSignature(shortQuote));
 
         uint256 available = clearing.availableLiquidity();
-        require(available < 851_000 * USDG_UNIT, "netting released settlement liquidity");
-        require(available > 849_000 * USDG_UNIT, "unexpected gross reserve");
+        require(available < 994_000 * USDG_UNIT, "net stress reserve was not applied");
+        require(available > 993_000 * USDG_UNIT, "unexpected net reserve");
     }
 
     function testCloseOnlyAllowsReductionButNotRiskIncrease() public {
@@ -115,9 +128,11 @@ contract FloatClearingHouseForkTest {
         );
 
         _execute(_quote(false, 25_000 * USDG_UNIT, 2));
+        FloatClearingHouse.TradeQuote memory increase = _quote(true, 5_000 * USDG_UNIT, 3);
+        bytes memory signature = _quoteSignature(increase);
         vm.expectRevert(FloatClearingHouse.MarketNotActive.selector);
         vm.prank(TRADER);
-        clearing.execute(_quote(true, 5_000 * USDG_UNIT, 3), _quoteSignature(_quote(true, 5_000 * USDG_UNIT, 3)));
+        clearing.execute(increase, signature);
     }
 
     function testPausedAllowsOnlyRiskReduction() public {
@@ -136,15 +151,18 @@ contract FloatClearingHouseForkTest {
         );
         _execute(_quote(false, 25_000 * USDG_UNIT, 2));
         FloatClearingHouse.TradeQuote memory increase = _quote(true, 5_000 * USDG_UNIT, 3);
+        bytes memory signature = _quoteSignature(increase);
         vm.expectRevert(FloatClearingHouse.MarketPaused.selector);
         vm.prank(TRADER);
-        clearing.execute(increase, _quoteSignature(increase));
+        clearing.execute(increase, signature);
     }
 
     function testFullLiquidationPaysKeeperAndClearsExposure() public {
         _depositTraderMargin(20_000 * USDG_UNIT);
         _execute(_quote(true, 50_000 * USDG_UNIT, 1));
-        _publish(2, 140 * E18, 10);
+        _publish(3, 190 * E18, 10);
+        _publish(4, 160 * E18, 10);
+        _publish(5, 140 * E18, 10);
         uint256 keeperBefore = usdg.balanceOf(KEEPER);
         vm.prank(KEEPER);
         clearing.liquidate(TRADER, MARKET);
@@ -170,9 +188,9 @@ contract FloatClearingHouseForkTest {
 
     function testRejectsAnOracleAttestationAboveTheConfiguredConfidenceLimit() public {
         _depositTraderMargin(20_000 * USDG_UNIT);
-        _publish(2, 228 * E18, 51);
+        uint64 sequence = oracle.getPrice(MARKET).sequence + 1;
+        _publish(sequence, 228 * E18, 51);
         FloatClearingHouse.TradeQuote memory quote = _quote(true, 5_000 * USDG_UNIT, 1);
-        quote.oracleSequence = 2;
         vm.expectRevert(FloatClearingHouse.OracleConfidenceTooLow.selector);
         vm.prank(TRADER);
         clearing.execute(quote, _quoteSignature(quote));
@@ -226,7 +244,7 @@ contract FloatClearingHouseForkTest {
             executionPriceE18: 228 * E18,
             feeUsdg: notional * 6 / 10_000,
             maxLeverageE18: 5 * E18,
-            oracleSequence: nonce == 1 ? 1 : 1,
+            oracleSequence: oracle.getPrice(MARKET).sequence,
             nonce: nonce,
             expiry: uint64(block.timestamp + 60)
         });

@@ -25,27 +25,34 @@ const config = loadConfig({
 
 test("does not spend publisher gas on inactive markets", async () => {
   const database = {
-    query: async () => ({ rows: [{ symbol: "HIMS", observed_at: new Date(), twap_price_usdg: "30", spot_price_usdg: "30" }] })
+    query: async (sql: string) => sql.includes("WHERE m.symbol=$1")
+      ? { rows: [{ status: "disabled", oracle_tradable: false }] }
+      : { rows: [{ symbol: "HIMS", observed_at: new Date(), twap_price_usdg: "30", spot_price_usdg: "30" }] }
   } as unknown as Pool;
   const exposureAbi = parseAbi(["function marketExposure(bytes32) view returns (uint256 longBaseE18,uint256 shortBaseE18)"]);
+  const marketAbi = parseAbi(["function markets(bytes32) view returns (uint8,uint64,uint64,uint64,uint64,uint128)"]);
   const exposureSelector = toFunctionSelector("marketExposure(bytes32)");
+  const marketSelector = toFunctionSelector("markets(bytes32)");
   let exposureCalls = 0;
   let unexpectedCalls = 0;
   const rpc: RpcTransport = {
     call: async ({ data }) => {
-      if (!data.startsWith(exposureSelector)) {
-        unexpectedCalls += 1;
-        throw new Error("unexpected oracle read for a market with no exposure");
+      if (data.startsWith(marketSelector)) {
+        return encodeFunctionResult({ abi: marketAbi, functionName: "markets", result: [1, 0n, 0n, 0n, 0n, 0n] });
       }
-      exposureCalls += 1;
-      return encodeFunctionResult({ abi: exposureAbi, functionName: "marketExposure", result: [0n, 0n] });
+      if (data.startsWith(exposureSelector)) {
+        exposureCalls += 1;
+        return encodeFunctionResult({ abi: exposureAbi, functionName: "marketExposure", result: [0n, 0n] });
+      }
+      unexpectedCalls += 1;
+      throw new Error("unexpected oracle read for a market with no exposure");
     }
   };
 
   await new OraclePublisher(database, rpc, config).publishFreshMarkets();
 
-  // Scheduled checks inspect exposure once per deployment, then skip oracle
-  // reads and transaction submission for both zero-exposure markets.
+  // Amber refreshes active, tradable markets even before the first position;
+  // retired deployments still inspect exposure and skip zero-exposure markets.
   expect(exposureCalls).toBe(3);
   expect(unexpectedCalls).toBe(0);
 });

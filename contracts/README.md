@@ -1,8 +1,8 @@
 # FloatSheets contracts
 
-This is the Foundry workspace for FloatSheets on Robinhood Chain (chain ID `4663`).
+This is the Foundry workspace for FloatSheets on Robinhood Chain (chain ID `4663`). FloatSheets Amber is the new immutable contract set. Jasper and Meadow are retained retired releases; Legacy Orion remains available for vault access.
 
-FloatSheets Jasper is a new pool-vs-trader deployment: a single USDG vault backs every market, while traders use isolated USDG margin per market. It has no order book and never matches one trader against another.
+FloatSheets Amber is a pool-vs-trader deployment: a single USDG vault backs every market, while traders use isolated USDG margin per market. It has no order book and never matches one trader against another.
 
 - `FloatOracle.sol` stores EIP-712 signed, sequence-monotonic TWAP and spot-price attestations and enforces the configured spot/TWAP circuit breaker on-chain.
 - `FloatVault.sol` prices queued LP deposits and withdrawals once per daily epoch using a NAV that marks open trader PnL. Virtual shares protect against donation inflation. A separately accounted insurance balance is spent before LP cash on trader payouts; unused insurance cannot be withdrawn by the owner.
@@ -10,7 +10,18 @@ FloatSheets Jasper is a new pool-vs-trader deployment: a single USDG vault backs
 
 Jasper risk defaults are explicit, conservative starting values rather than calibrated parameters: 25% stress move on net market skew, a 50% NAV cap on aggregate stress reserves, and borrow fees of 1 bp/hour plus up to 9 bp/hour as skew approaches one-sided. They should be monitored and independently reviewed before increasing risk.
 
-The selected audit remediations have local regression coverage. These changes alter vault NAV, liquidity availability and LP withdrawal timing. This work is not a substitute for an independent re-audit. Existing contracts are non-upgradeable, so Jasper must be deployed to new addresses and the backend/frontend must be switched over together before production use.
+Amber adds no-delay owner, signer, and market configuration, a fixed 7.5% quote/oracle deviation cap, price-jump circuit breaking, borrow-fee remainder accounting, fee floors, queue rounding conservation, and an hourly payout cap whose excess remains claimable. Initial market registration and first oracle enablement are immediate. These changes require an independent review. The source and tests do not alter Jasper or Meadow's deployed bytecode.
+
+### Current Amber deployment
+
+- Oracle: `0x71B5FBd2df7eF976d02A4b4090450EEE24F77Ce0`
+- Vault: `0xD5B0461F09C0Cb67AEd9Ca8e73569EAfa3a2E445`
+- Clearing house: `0x022Cc8DFf79414DcB56812Bd93601854E2b7A700`
+
+Runtime bytecode was compared with the local build. Ten markets are registered
+without a delay; NVDA, SPCX, CRCL, MU, TSLA, RDDT, and MSTR are active, while
+HIMS, PLTR, and QUBT are close-only. The deployment record is
+`deployments/amber-4663.json`.
 
 Run locally (the current macOS Foundry installation requires its bundled libusb path):
 

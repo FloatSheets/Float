@@ -24,6 +24,9 @@ const config = loadConfig({
   JASPER_FLOAT_CLEARING_HOUSE_ADDRESS: "0x6666666666666666666666666666666666666666",
   JASPER_FLOAT_ORACLE_ADDRESS: "0x7777777777777777777777777777777777777777",
   JASPER_FLOAT_VAULT_ADDRESS: "0x8888888888888888888888888888888888888888",
+  AMBER_FLOAT_CLEARING_HOUSE_ADDRESS: "0x6666666666666666666666666666666666666666",
+  AMBER_FLOAT_ORACLE_ADDRESS: "0x7777777777777777777777777777777777777777",
+  AMBER_FLOAT_VAULT_ADDRESS: "0x8888888888888888888888888888888888888888",
   LEGACY_ORION_FLOAT_CLEARING_HOUSE_ADDRESS: "0x2222222222222222222222222222222222222222",
   LEGACY_ORION_FLOAT_ORACLE_ADDRESS: "0x3333333333333333333333333333333333333333",
   LEGACY_ORION_FLOAT_VAULT_ADDRESS: "0x4444444444444444444444444444444444444444",
@@ -67,18 +70,18 @@ async function listening(app: express.Express): Promise<Server> {
 const server = await listening(app);
 afterAll(() => new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())));
 
-test("publishes Jasper addresses by default and supports Meadow and legacy selections", async () => {
+test("publishes Amber addresses by default and supports paused and legacy selections", async () => {
   const response = await request(server).get("/v1/protocol");
   expect(response.status).toBe(200);
   expect(response.body).toEqual({
     chain_id: 4663,
     settlement_asset: "USDG",
     settlement_asset_address: config.USDG_ADDRESS,
-    contract_version: "jasper",
-    contract_name: "FloatSheets Jasper",
-    oracle: config.JASPER_FLOAT_ORACLE_ADDRESS,
-    vault: config.JASPER_FLOAT_VAULT_ADDRESS,
-    clearing_house: config.JASPER_FLOAT_CLEARING_HOUSE_ADDRESS,
+    contract_version: "amber",
+    contract_name: "FloatSheets Amber",
+    oracle: config.AMBER_FLOAT_ORACLE_ADDRESS,
+    vault: config.AMBER_FLOAT_VAULT_ADDRESS,
+    clearing_house: config.AMBER_FLOAT_CLEARING_HOUSE_ADDRESS,
     oracle_signer: config.ORACLE_SIGNER_ADDRESS,
     quote_signer: config.QUOTE_SIGNER_ADDRESS,
     max_position_duration_seconds: 604800,
@@ -143,6 +146,17 @@ test("builds a real USDG approval transaction", async () => {
   expect(deferred.body.transaction.data.length).toBeGreaterThan(10);
 });
 
+test("blocks new position issuance for retired versions", async () => {
+  for (const version of ["jasper", "meadow", "legacy-orion"] as const) {
+    const response = await request(server)
+      .post("/v1/protocol/transactions/trade-quote")
+      .set("x-floatsheets-contract-version", version)
+      .send({ market: "NVDA", trader: "0x1111111111111111111111111111111111111111", isLong: true, notionalUsdg: "1000000" });
+    expect(response.status).toBe(409);
+    expect(response.body.error).toContain("Amber");
+  }
+});
+
 test("builds legacy vault transactions against Legacy Orion", async () => {
   const response = await request(server).post("/v1/protocol/transactions/vault-deposit")
     .set("x-floatsheets-contract-version", "legacy-orion")
@@ -161,12 +175,31 @@ test("rejects signer issuance without the master admin key", async () => {
 });
 
 test("signs an oracle attestation only with the master admin key", async () => {
+  const now = Math.floor(Date.now() / 1_000);
   const response = await request(server).post("/v1/protocol/transactions/oracle-attestation")
     .set("x-master-admin-key", config.MASTER_ADMIN_KEY)
-    .send({ marketId: "0x" + "11".repeat(32), priceE18: "1000000000000000000", spotPriceE18: "1000000000000000000", confidenceBps: "50", timestamp: "1900000000", sequence: "1", expiry: "1900000060" });
+    .send({ marketId: "0x" + "11".repeat(32), priceE18: "1000000000000000000", spotPriceE18: "1000000000000000000", confidenceBps: "50", timestamp: String(now), sequence: "1", expiry: String(now + 60) });
   expect(response.status).toBe(200);
   expect(response.body.signature).toMatch(/^0x[0-9a-f]{130}$/);
   expect(response.body.transaction.to).toBe(config.JASPER_FLOAT_ORACLE_ADDRESS);
+});
+
+test("bounds and database-rate-limits admin market configuration", async () => {
+  let hits = 0;
+  const database = { query: async () => ({ rows: [{ hits: ++hits }], rowCount: 1 }) } as unknown as Pool;
+  const limitedApp = express();
+  limitedApp.use(express.json());
+  limitedApp.use("/v1/protocol/transactions", createProtocolTransactionsRouter(config, database));
+  const limitedServer = await listening(limitedApp);
+  try {
+    const send = () => request(limitedServer).post("/v1/protocol/transactions/admin/configure-market")
+      .set("x-master-admin-key", config.MASTER_ADMIN_KEY)
+      .send({ market: "NVDA", state: 1, maxLeverageE18: "5000000000000000000", maintenanceMarginBps: "1000", maxExecutionDeviationBps: "751", maxOracleConfidenceBps: "50", maxPositionNotionalUsdg: "100000000" });
+    for (let i = 0; i < 10; i++) expect((await send()).status).toBe(400);
+    expect((await send()).status).toBe(429);
+  } finally {
+    await new Promise<void>((resolve, reject) => limitedServer.close((error) => error ? reject(error) : resolve()));
+  }
 });
 
 test("builds a trader quote and execution transaction without exposing the quote signer", async () => {

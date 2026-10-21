@@ -1,0 +1,109 @@
+{
+  "chainId": 4663,
+  "network": "Robinhood Chain",
+  "version": "floatsheets-amber",
+  "settlementAsset": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+  "owner": "0x4a4c4e9Ad9afc8c5603ef5EA91cEf98CCdFE91f3",
+  "deployer": "0x4a4c4e9Ad9afc8c5603ef5EA91cEf98CCdFE91f3",
+  "oracle": "0xD604e14Cc22882bCB1F83007991dA943F0B3BC05",
+  "vault": "0x3A7F374eA90Dc063e1B5050731FeDf28ED91B631",
+  "clearingHouse": "0x149d0f1CcF6e423657532e144953Ea0E043A9Ad8",
+  "oracleSigner": "0x9417f45d924b43587fE1a03803001fA073ce3a5a",
+  "quoteSigner": "0x325Fd0FA56AC44dfe6015c6F4c2C426967aFb3ad",
+  "feeRecipient": "0x5140a99bf0fB56637a3DBDA7685cc4E190F15c94",
+  "deploymentTransactions": [
+    "0x0bfee0e9ae817e999fe32812472cf01eaba8513e9db6bfb1718353724bcdb6fb",
+    "0xe34354d8a7211f9496dae2da15d080a6c0ec126a954a8122465ab0c1d552ea73",
+    "0xa07865e00d144d0ecf36b9b79855a8dd5d0e056647b0b0a1c367a5accf314657",
+    "0xf42f254b441ff8faecd95b34bc5d1ae38541f9d6d6ce4743312afd830d379f2b"
+  ],
+  "verification": {
+    "runtimeBytecode": "matched local artifacts outside immutable constructor slots",
+    "explorerVerification": "blocked by Robinhood Blockscout Cloudflare challenge"
+  },
+  "markets": {
+    "configured": [
+      "NVDA",
+      "SPCX",
+      "CRCL",
+      "HIMS",
+      "MU",
+      "TSLA",
+      "RDDT",
+      "MSTR",
+      "PLTR",
+      "QUBT"
+    ],
+    "riskIncreasingSettings": "scheduled with 48-hour delay",
+    "closeOnlySettings": "applied immediately as risk reductions",
+    "oracleEnables": "scheduled with 48-hour delay",
+    "initialOracleMarks": "not yet published",
+    "activeTrading": "not yet available"
+  },
+  "deploymentBlock": 94604755,
+  "configurationTransactions": [
+    "0x017be2687d2bdcb8d995b7b473165a36e505f6174e18de96d38a31d1082e7e9e",
+    "0xb4927ec15ee627c94a433d1c96f3adefbe246da30635ccca07f40840cd0384ea",
+    "0xd6e99a348ce37a05cad16f57b654ba19e10ff97c84655351d1818b4ebcf08a8c",
+    "0x7c2ca1b975362a7c59c33edad30dd814a81289a2679294ed2d759b0ee89fe844",
+    "0x5ee3dcb5521bf747f5ce5cb3822d1bb1025e7fadd45d1575e0adca985b3043de",
+    "0x9cdcbffc2a4854a11783a0c26e0f736ba77b8294718b64685f38b940e6ed148d",
+    "0x75a40dc3841ef67097e894dfb6bf6819a5a8c945d75d29b42050f8974e920a0f",
+    "0x7c7992c61910e364f9fd35fd1823fbbefd175a6dbbcf4c62f66044d05374a886",
+    "0xbda97880bbec75b232f99965e527913623ec2cca711ddad241b5dcb40da4ac08",
+    "0xd99bed87f5447d874f900b3d6b6ed9f146639aeacfee9bc9ee7b6a0ff1417dac",
+    "0x4fa29da1f63225d7735c23d6988dd95a2bf4dc4b80f72ab40fdb8d2a73e73d13",
+    "0x0fa804abaae66849e7401b1d79faa3b7f9e0238913a2ad628b32802fbde08db3",
+    "0x38d30bd22845449875cc74eaa610682ed52f1106fda0242ca28dcb8aa1b1ab11",
+    "0xb57076b42cce92bcd0615b0246568ef4271d594f69095c169008042819c41a01",
+    "0xc661ca03364e61c4aaecc7a656301a62b4048dcb626700debac5364f17745236",
+    "0x6aacb0944ca9cd753fe693dcc4d252bb7c7bcb8adc7222032fc3559bc86ae80c",
+    "0x4c6d13cf5bcf8cb253b0a54faa068738eb406ed098fbea931523d005d0fa818d",
+    "0x87e0082c7ee69ea5d9d2785bdab0976d1236c5a585a6afc7fb4d53ebe7ebc5a0",
+    "0x5dcee829715d4b093e6ff2730fdaa6e37401f9935ba3d0bf61bed5b8354c72ab",
+    "0x2c63f01f73f6969b01a70dd2a87704340b5ff3491869611dd028f43a62a437ee",
+    "0x608953cc3242c99c796d00028871ae6a31d72d6db5baf39297ec50306be84505",
+    "0xe23230790ae28868e5e10f430c939232c4de811971a85a829d668f7ca9a5c83e",
+    "0xfe69cf91b80e832be88f1227f4b25b03d129ffcc7b9af8670863508df082a6ca",
+    "0xdecd50692ce3aa04f733e0f8dc4ba828e565b39b54e1594af54b2cd64f9e4e11",
+    "0xb650af694baf9c713b5d61d911a8075a33f37a4caa205b4a662e9e03c4fa3d1e",
+    "0x266fc93bf178c2a6ec98d0a9f9fbb51146335a57fa45a181d210c3f61d820ee8",
+    "0xcedd554a351d8c4ef24bbf4fc5269b425568f8f8ab59e7a477bfe333837d4f45",
+    "0xfe3c9781984952e9834868349c869aa8019cbcc25308c071c93baa515fb1b4d5",
+    "0xdd52e7cae2249d2aea8f1732d991ba373504850880acd203184714fd5bdfa8af",
+    "0x6ddf356ed3e540df453313c640584ed52f46dcb420aa895b0c0d66efd30ef636"
+  ],
+  "legacyPauseTransactions": [
+    "0x511a2d9bb15222680c95b6d49d37956834d13456d0536b40ccf709cedb3f8e8d",
+    "0xea2b9fced748bb85fbcdfbc40ca13be5427dff93a5fae0282fb37cd9a814886d",
+    "0x86138fbb2437bfad8ee149cd42757a0c7217612f386f3cab58e1ff3179db3b49",
+    "0x0417cd348c85b94e76fbf339777900bec7b2f9325e421a599c8814d2ae5fcda4",
+    "0x72fc0607ced6f99c9cdb77b068f28e38c6fe5dd865cf7afd8882322f9214ed6d",
+    "0x06bc86b433adaead79cbd8cbc05b202f6996c10f9ec70e7344e4de4106e7402a",
+    "0x5e562a9a1790647e98c6421d8494c56b63b7564d9e3a0f942fec6b64651ca8da",
+    "0xf39b0f4724525b2204c5530b4e1914ee68dbfe92053cc7c20a357f36795883e0",
+    "0xcdadb63d096e69572187cfeec484abfa1cbb3b0755b1c067048b5933ab610a01",
+    "0xd18dc343a9d3bc7826c4e1e71a80023ba3bcf709c9f208145b1c06e7f62f14c0",
+    "0x74c187cc0f3a9be50de82f69068b3f9239b51c66d9333f0a5e96ddd7120890aa",
+    "0xc7c6b836ee9902a686cbc5c5b52dce48db45f3a7b84fd3e8fed5a830ed0635af",
+    "0x3718cd193e6b235ebd7e20d4341fbd518daabdbceb73de0113ac4e8eaada287b",
+    "0x3520fbef0aa3a92814b6873c3f67be608ccdf61740731ff8192821fb680eab57",
+    "0x4f92e9137356e34c3f572594f8ca7ef94a67b24367942607bc7f5345242a118d",
+    "0x83f6c150d81bdb354b2218899654f12170a0c114a4209ad7922a4fc365161ebe",
+    "0xdd9d5c2d488df9e9cd4885867a59c92ff14da8950fbddbed4b0f293657f04cac",
+    "0x11046163135c64ddea30ae31a8315b86bda6f0fff45902a2484586502d3041bb",
+    "0x8c735703341b5ebc569aaa052865acc26b7d0fb898a9040ebdcccbb2eaef1aa9",
+    "0x5b7beb17e5098373d3b37d12ec61cb362b0423f79019e17a252eeb8067ffd006"
+  ],
+  "marketActivationEligibleAtUtc": "2026-10-23T21:51:21Z",
+  "legacyPaused": {
+    "jasper": {
+      "clearingHouse": "0x82889877B395840BC0efce625C06c5423C75B029",
+      "marketsPaused": 10
+    },
+    "meadow": {
+      "clearingHouse": "0xb91fE7c85E6645D2134f1C313Ea787812d43bfa8",
+      "marketsPaused": 10
+    }
+  }
+}

@@ -27,6 +27,7 @@ contract FloatVault {
     error ClearingHouseNotSet();
     error Reentrant();
     error LiquidityLocked();
+    error TimelockNotReady();
     error QueueNotReady();
     error QueueAlreadySettled();
     error NothingQueued();
@@ -36,6 +37,9 @@ contract FloatVault {
     address public owner;
     address public clearingHouse;
     uint256 public totalShares;
+    address public pendingOwner;
+    uint64 public pendingOwnerAt;
+    uint64 public constant CONFIG_DELAY = 0;
     uint256 public totalPayoutOwed;
     uint256 public totalWithdrawalOwed;
     uint256 public pendingDepositAssets;
@@ -52,6 +56,7 @@ contract FloatVault {
     uint256 public queuedWithdrawalClaimsRemaining;
     uint256 public settledNav;
     uint256 public settledShareSupply;
+
     struct QueueSettlement {
         uint256 nav;
         uint256 shareSupply;
@@ -67,6 +72,11 @@ contract FloatVault {
     uint256 public constant QUEUE_EPOCH_DURATION = 1 days;
     uint256 public constant VIRTUAL_ASSETS = 1;
     uint256 public constant VIRTUAL_SHARES = 1e6;
+    uint256 public constant MAX_HOURLY_PAYOUT_BPS = 500;
+    uint256 public hourlyPayoutHour;
+    uint256 public hourlyPayoutCap;
+    uint256 public hourlyPayoutUsed;
+    bool public hourlyPayoutInitialized;
     uint256 private entered;
     mapping(address => uint256) public balanceOf;
     mapping(address => uint256) public payoutOwed;
@@ -86,11 +96,15 @@ contract FloatVault {
     event Collection(address indexed payer, uint256 assets);
     event DepositQueued(uint64 indexed epoch, address indexed account, uint256 assets);
     event WithdrawalQueued(uint64 indexed epoch, address indexed account, uint256 shares);
-    event QueueEpochSettled(uint64 indexed epoch, uint256 nav, uint256 shareSupply, uint256 depositShares, uint256 withdrawalAssets);
+    event QueueEpochSettled(
+        uint64 indexed epoch, uint256 nav, uint256 shareSupply, uint256 depositShares, uint256 withdrawalAssets
+    );
     event QueuedDepositClaimed(uint64 indexed epoch, address indexed account, uint256 shares);
     event QueuedWithdrawalClaimed(uint64 indexed epoch, address indexed account, uint256 assets);
     event InsuranceFunded(address indexed payer, uint256 assets);
     event InsuranceUsed(uint256 assets);
+    event OwnershipTransferStarted(address indexed pendingOwner, uint64 effectiveAt);
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
     constructor(address initialOwner, address settlementAsset) {
         if (initialOwner == address(0) || settlementAsset == address(0)) revert ZeroAddress();
@@ -106,6 +120,23 @@ contract FloatVault {
     modifier onlyClearingHouse() {
         if (msg.sender != clearingHouse) revert Unauthorized();
         _;
+    }
+
+    function scheduleOwnershipTransfer(address nextOwner) external onlyOwner {
+        if (nextOwner == address(0)) revert ZeroAddress();
+        pendingOwner = nextOwner;
+        pendingOwnerAt = uint64(block.timestamp + CONFIG_DELAY);
+        emit OwnershipTransferStarted(nextOwner, pendingOwnerAt);
+    }
+
+    function acceptOwnership() external {
+        if (msg.sender != pendingOwner) revert Unauthorized();
+        if (block.timestamp < pendingOwnerAt) revert TimelockNotReady();
+        address previousOwner = owner;
+        owner = pendingOwner;
+        pendingOwner = address(0);
+        pendingOwnerAt = 0;
+        emit OwnershipTransferred(previousOwner, owner);
     }
     modifier nonReentrant() {
         if (entered == 1) revert Reentrant();
@@ -151,6 +182,7 @@ contract FloatVault {
         if (!hasQueuedDeposit[queueEpoch][receiver]) {
             hasQueuedDeposit[queueEpoch][receiver] = true;
             ++queuedDepositClaimsRemaining;
+            ++queuedDepositAccountsCount[queueEpoch];
         }
         queuedDepositOf[queueEpoch][receiver] += assets;
         pendingDepositAssets += assets;
@@ -197,6 +229,8 @@ contract FloatVault {
         settledWithdrawalShares = withdrawalShares;
         settledWithdrawalAssets = withdrawalAssets;
         settledWithdrawalRemaining = withdrawalAssets;
+        settledDepositSharesRemaining[queueEpoch] = depositShares;
+        settledDepositClaimsRemaining[queueEpoch] = queuedDepositAccountsCount[queueEpoch];
         queueSettlements[queueEpoch] = QueueSettlement({
             nav: nav,
             shareSupply: supply,
@@ -223,7 +257,14 @@ contract FloatVault {
         if (assets == 0 || settlement.depositAssets == 0) revert NothingQueued();
         depositClaimed[epoch][msg.sender] = true;
         --queuedDepositClaimsRemaining;
-        shares = assets * (settlement.shareSupply + VIRTUAL_SHARES) / (settlement.nav + VIRTUAL_ASSETS);
+        uint256 claimsRemaining = settledDepositClaimsRemaining[epoch];
+        if (claimsRemaining == 0) revert NothingQueued();
+        shares = claimsRemaining == 1
+            ? settledDepositSharesRemaining[epoch]
+            : assets * (settlement.shareSupply + VIRTUAL_SHARES) / (settlement.nav + VIRTUAL_ASSETS);
+        if (shares > settledDepositSharesRemaining[epoch]) shares = settledDepositSharesRemaining[epoch];
+        settledDepositSharesRemaining[epoch] -= shares;
+        settledDepositClaimsRemaining[epoch] = claimsRemaining - 1;
         balanceOf[msg.sender] += shares;
         emit Deposit(msg.sender, msg.sender, assets, shares);
         emit QueuedDepositClaimed(epoch, msg.sender, shares);
@@ -237,7 +278,9 @@ contract FloatVault {
         uint256 shares = queuedWithdrawalOf[epoch][msg.sender];
         if (shares == 0 || settlement.withdrawalShares == 0) revert NothingQueued();
         if (balanceOf[msg.sender] < shares) revert InsufficientShares();
-        assets = shares * (settlement.nav + VIRTUAL_ASSETS) / (settlement.shareSupply + VIRTUAL_SHARES);
+        assets = settlement.withdrawalClaimsRemaining == 1
+            ? settlement.withdrawalRemaining
+            : shares * (settlement.nav + VIRTUAL_ASSETS) / (settlement.shareSupply + VIRTUAL_SHARES);
         uint256 balance = asset.balanceOf(address(this));
         uint256 protected = totalPayoutOwed + insuranceAssets + (totalWithdrawalOwed - settlement.withdrawalRemaining);
         uint256 available = balance > protected ? balance - protected : 0;
@@ -289,6 +332,9 @@ contract FloatVault {
 
     mapping(uint64 => uint256) public queuedWithdrawalTotal;
     mapping(uint64 => uint256) public queuedWithdrawalAccountsCount;
+    mapping(uint64 => uint256) public queuedDepositAccountsCount;
+    mapping(uint64 => uint256) public settledDepositSharesRemaining;
+    mapping(uint64 => uint256) public settledDepositClaimsRemaining;
 
     function fundInsurance(uint256 assets) external nonReentrant {
         if (assets == 0) revert ZeroAmount();
@@ -316,12 +362,13 @@ contract FloatVault {
     /// This lets winning trader closes settle even when LP cash is temporarily insufficient.
     function payout(address receiver, uint256 assets) external nonReentrant onlyClearingHouse returns (uint256 paid) {
         if (assets != 0) {
-            uint256 insured = _useInsurance(assets);
+            uint256 allowed = _hourlyAllowance(assets);
+            uint256 insured = _useInsurance(allowed);
             if (insured != 0) {
                 _safeTransfer(receiver, insured);
                 paid = insured;
             }
-            uint256 remaining = assets - insured;
+            uint256 remaining = allowed - insured;
             uint256 balance = asset.balanceOf(address(this));
             uint256 protected = totalPayoutOwed + totalWithdrawalOwed + insuranceAssets;
             uint256 freeBalance = balance > protected ? balance - protected : 0;
@@ -330,6 +377,7 @@ contract FloatVault {
                 _safeTransfer(receiver, lpPaid);
                 paid += lpPaid;
             }
+            _recordHourlyPayout(paid);
             uint256 owed = assets - paid;
             if (owed != 0) {
                 payoutOwed[msg.sender] += owed;
@@ -349,7 +397,9 @@ contract FloatVault {
         if (receiver == address(0)) revert ZeroAddress();
         uint256 owed = payoutOwed[msg.sender];
         if (assets == 0 || owed == 0) revert ZeroAmount();
-        uint256 insurancePaid = _useInsurance(assets < owed ? assets : owed);
+        uint256 requested = assets < owed ? assets : owed;
+        uint256 allowed = _hourlyAllowance(requested);
+        uint256 insurancePaid = _useInsurance(allowed);
         if (insurancePaid != 0) {
             owed -= insurancePaid;
             payoutOwed[msg.sender] = owed;
@@ -361,7 +411,7 @@ contract FloatVault {
         uint256 otherOwed = totalPayoutOwed - owed;
         uint256 protected = otherOwed + totalWithdrawalOwed + insuranceAssets;
         uint256 available = balance > protected ? balance - protected : 0;
-        uint256 lpPaid = assets - insurancePaid;
+        uint256 lpPaid = allowed - insurancePaid;
         if (lpPaid > owed) lpPaid = owed;
         if (lpPaid > available) lpPaid = available;
         if (lpPaid != 0) {
@@ -370,7 +420,26 @@ contract FloatVault {
             _safeTransfer(receiver, lpPaid);
             paid += lpPaid;
         }
+        _recordHourlyPayout(paid);
         if (paid != 0) emit Payout(receiver, paid);
+    }
+
+    function _hourlyAllowance(uint256 requested) private returns (uint256 allowed) {
+        uint256 hour = block.timestamp / 1 hours;
+        if (!hourlyPayoutInitialized || hour != hourlyPayoutHour) {
+            hourlyPayoutInitialized = true;
+            hourlyPayoutHour = hour;
+            hourlyPayoutCap = 0;
+            hourlyPayoutUsed = 0;
+        }
+        uint256 currentCap = (totalAssets() + insuranceAssets) * MAX_HOURLY_PAYOUT_BPS / 10_000;
+        if (currentCap > hourlyPayoutCap) hourlyPayoutCap = currentCap;
+        uint256 remaining = hourlyPayoutCap > hourlyPayoutUsed ? hourlyPayoutCap - hourlyPayoutUsed : 0;
+        allowed = requested < remaining ? requested : remaining;
+    }
+
+    function _recordHourlyPayout(uint256 paid) private {
+        hourlyPayoutUsed += paid;
     }
 
     function collect(uint256 assets) external nonReentrant onlyClearingHouse {

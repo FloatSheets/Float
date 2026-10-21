@@ -5,7 +5,7 @@
   async function refreshMarkets(){
    try {
     const storedVersion=localStorage.getItem('floatsheets-contract-version-v1');
-    const version=storedVersion==='legacy-orion'?'legacy-orion':'jasper';
+    const version=storedVersion==='legacy-orion'?'legacy-orion':'amber';
     const payload = await api.getMarkets(version);
     if (!Array.isArray(payload.markets) || !payload.markets.length) return;
     const liveMarkets = payload.markets.map(function(row){

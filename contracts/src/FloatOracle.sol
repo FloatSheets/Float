@@ -10,6 +10,8 @@ contract FloatOracle {
     error InvalidSequence();
     error InvalidPrice();
     error ZeroAddress();
+    error NoPendingChange();
+    error TimelockNotReady();
 
     bytes32 private constant DOMAIN_TYPEHASH =
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
@@ -19,6 +21,8 @@ contract FloatOracle {
     bytes32 private constant NAME_HASH = keccak256("FloatSheetsOracle");
     bytes32 private constant VERSION_HASH = keccak256("1");
     uint256 public constant MAX_SPOT_TWAP_DEVIATION_BPS = 50;
+    uint256 public constant MAX_PRICE_JUMP_BPS = 2_000;
+    uint64 public constant CONFIG_DELAY = 0;
     uint256 private constant BPS = 10_000;
 
     struct PriceAttestation {
@@ -42,8 +46,14 @@ contract FloatOracle {
     }
 
     address public owner;
+    address public pendingOwner;
+    uint64 public pendingOwnerAt;
     address public signer;
+    address public pendingSigner;
+    uint64 public pendingSignerAt;
+    mapping(bytes32 => uint64) public pendingMarketEnableAt;
     mapping(bytes32 => bool) public marketEnabled;
+    mapping(bytes32 => bool) public marketEverEnabled;
     mapping(bytes32 => Price) private prices;
 
     event PricePublished(
@@ -57,6 +67,9 @@ contract FloatOracle {
     );
     event SignerUpdated(address indexed signer);
     event MarketUpdated(bytes32 indexed marketId, bool enabled);
+    event SignerChangeScheduled(address indexed signer, uint64 effectiveAt);
+    event OwnershipTransferStarted(address indexed pendingOwner, uint64 effectiveAt);
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
     constructor(address initialOwner, address initialSigner) {
         if (initialOwner == address(0) || initialSigner == address(0)) revert ZeroAddress();
@@ -71,13 +84,64 @@ contract FloatOracle {
 
     function setSigner(address newSigner) external onlyOwner {
         if (newSigner == address(0)) revert ZeroAddress();
-        signer = newSigner;
-        emit SignerUpdated(newSigner);
+        pendingSigner = newSigner;
+        pendingSignerAt = uint64(block.timestamp + CONFIG_DELAY);
+        emit SignerChangeScheduled(newSigner, pendingSignerAt);
+    }
+
+    function applySigner() external {
+        if (pendingSigner == address(0)) revert NoPendingChange();
+        if (block.timestamp < pendingSignerAt) revert TimelockNotReady();
+        signer = pendingSigner;
+        pendingSigner = address(0);
+        pendingSignerAt = 0;
+        emit SignerUpdated(signer);
+    }
+
+    function scheduleOwnershipTransfer(address nextOwner) external onlyOwner {
+        if (nextOwner == address(0)) revert ZeroAddress();
+        pendingOwner = nextOwner;
+        pendingOwnerAt = uint64(block.timestamp + CONFIG_DELAY);
+        emit OwnershipTransferStarted(nextOwner, pendingOwnerAt);
+    }
+
+    function acceptOwnership() external {
+        if (msg.sender != pendingOwner) revert Unauthorized();
+        if (block.timestamp < pendingOwnerAt) revert TimelockNotReady();
+        address previousOwner = owner;
+        owner = pendingOwner;
+        pendingOwner = address(0);
+        pendingOwnerAt = 0;
+        emit OwnershipTransferred(previousOwner, owner);
     }
 
     function setMarketEnabled(bytes32 marketId, bool enabled) external onlyOwner {
-        marketEnabled[marketId] = enabled;
-        emit MarketUpdated(marketId, enabled);
+        if (!enabled) {
+            marketEnabled[marketId] = false;
+            pendingMarketEnableAt[marketId] = 0;
+            emit MarketUpdated(marketId, false);
+        } else {
+            pendingMarketEnableAt[marketId] = uint64(block.timestamp + CONFIG_DELAY);
+        }
+    }
+
+    /// @notice Enables the first oracle publication for a new launch market.
+    ///         All subsequent market enables are also immediately applicable.
+    function enableInitialMarket(bytes32 marketId) external onlyOwner {
+        if (marketEverEnabled[marketId] || marketEnabled[marketId]) revert NoPendingChange();
+        marketEverEnabled[marketId] = true;
+        marketEnabled[marketId] = true;
+        emit MarketUpdated(marketId, true);
+    }
+
+    function applyMarketEnabled(bytes32 marketId) external {
+        uint64 effectiveAt = pendingMarketEnableAt[marketId];
+        if (effectiveAt == 0) revert NoPendingChange();
+        if (block.timestamp < effectiveAt) revert TimelockNotReady();
+        marketEnabled[marketId] = true;
+        marketEverEnabled[marketId] = true;
+        pendingMarketEnableAt[marketId] = 0;
+        emit MarketUpdated(marketId, true);
     }
 
     function getPrice(bytes32 marketId) external view returns (Price memory) {
@@ -113,6 +177,33 @@ contract FloatOracle {
             ? (attestation.spotPriceE18 - attestation.priceE18) * BPS / attestation.priceE18
             : (attestation.priceE18 - attestation.spotPriceE18) * BPS / attestation.priceE18;
         bool circuitBroken = deviation > MAX_SPOT_TWAP_DEVIATION_BPS;
+        Price memory previous = prices[attestation.marketId];
+        if (previous.priceE18 != 0) {
+            uint256 jumpBps = attestation.priceE18 > previous.priceE18
+                ? (attestation.priceE18 - previous.priceE18) * BPS / previous.priceE18
+                : (previous.priceE18 - attestation.priceE18) * BPS / previous.priceE18;
+            if (jumpBps > MAX_PRICE_JUMP_BPS) {
+                prices[attestation.marketId] = Price(
+                    previous.priceE18,
+                    previous.spotPriceE18,
+                    previous.confidenceBps,
+                    previous.spotTwapDeviationBps,
+                    attestation.timestamp,
+                    attestation.sequence,
+                    true
+                );
+                emit PricePublished(
+                    attestation.marketId,
+                    previous.priceE18,
+                    previous.spotPriceE18,
+                    previous.spotTwapDeviationBps,
+                    true,
+                    attestation.sequence,
+                    attestation.timestamp
+                );
+                return;
+            }
+        }
         prices[attestation.marketId] = Price(
             attestation.priceE18,
             attestation.spotPriceE18,

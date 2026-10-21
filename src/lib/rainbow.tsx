@@ -49,7 +49,7 @@ export function RainbowProviders({ children, queryClient }: { children: ReactNod
 
 export function RainbowWalletBridge() {
   const { address, chainId, isConnected } = useAccount();
-  const [contractVersion, setContractVersion] = useState<"jasper" | "meadow" | "legacy-orion">("jasper");
+  const [contractVersion, setContractVersion] = useState<"amber" | "jasper" | "meadow" | "legacy-orion">("amber");
   const [protocolAddresses, setProtocolAddresses] = useState<{ usdg: Address; vault: Address; clearingHouse: Address; oracle: Address } | null>(null);
   const usdgAddress = protocolAddresses?.usdg ?? DEFAULT_USDG_ADDRESS;
   const { data: usdgBalance, refetch: refetchUsdG } = useReadContract({ address: usdgAddress, abi: erc20Abi, functionName: "balanceOf", args: [address ?? "0x0000000000000000000000000000000000000000"], query: { enabled: Boolean(address) && chainId === robinhoodChain.id } });
@@ -59,7 +59,7 @@ export function RainbowWalletBridge() {
   useEffect(() => {
     let active = true;
     let requestId = 0;
-    const loadProtocol = (version: "jasper" | "meadow" | "legacy-orion") => {
+    const loadProtocol = (version: "amber" | "jasper" | "meadow" | "legacy-orion") => {
       const currentRequest = ++requestId;
       void getProtocol({ data: { version } }).then((protocol) => {
       if (!active || currentRequest !== requestId) return;
@@ -73,12 +73,12 @@ export function RainbowWalletBridge() {
       }).catch((error) => console.warn("FloatSheets protocol address lookup failed", error));
     };
     const saved = window.localStorage.getItem("floatsheets-contract-version-v1");
-    const initialVersion = saved === "legacy-orion" ? "legacy-orion" : "jasper";
+    const initialVersion = saved === "legacy-orion" ? "legacy-orion" : "amber";
     setContractVersion(initialVersion);
     loadProtocol(initialVersion);
     const onVersionChange = (event: Event) => {
       const selected = (event as CustomEvent<{ version?: string }>).detail?.version;
-      const version = selected === "legacy-orion" || selected === "meadow" ? selected : "jasper";
+      const version = selected === "legacy-orion" ? "legacy-orion" : "amber";
       setContractVersion(version);
       setProtocolAddresses(null);
       loadProtocol(version);

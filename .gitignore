@@ -3,6 +3,7 @@
 contracts/AUDITv1.md
 logs
 *.log
+contracts/lcov.info
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

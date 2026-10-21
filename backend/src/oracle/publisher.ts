@@ -7,7 +7,7 @@ import { contractConfigForVersion, type AppConfig, type ContractVersion } from "
 import { safeErrorMessage } from "../safe-error";
 import { marketId } from "../chain/protocol";
 import type { RpcTransport } from "../chain/rpc";
-import { readClearingExposure, readOraclePrice } from "../chain/protocol-read";
+import { readClearingExposure, readClearingMarket, readOraclePrice } from "../chain/protocol-read";
 import { signPriceAttestation } from "../signing/signer";
 import type { PriceAttestation } from "../signing/types";
 
@@ -60,10 +60,23 @@ export class OraclePublisher {
     );
     // One publisher wallet serves both contracts. Send in sequence so concurrent
     // writes cannot race for the same account nonce.
-    for (const row of rows) for (const version of ["jasper", "meadow", "legacy-orion"] as const) {
+    for (const row of rows) for (const version of ["amber", "jasper", "meadow", "legacy-orion"] as const) {
       try {
         const versionConfig = contractConfigForVersion(this.config, version);
-        const exposure = await readClearingExposure(this.rpc, versionConfig.FLOAT_CLEARING_HOUSE_ADDRESS as Address, marketId(row.symbol));
+        const id = marketId(row.symbol);
+        if (version === "amber") {
+          const [market, snapshot] = await Promise.all([
+            readClearingMarket(this.rpc, versionConfig.FLOAT_CLEARING_HOUSE_ADDRESS as Address, id),
+            this.database.query<{ status: string; oracle_tradable: boolean | null }>(
+              `SELECT m.status,s.oracle_tradable FROM public.markets m LEFT JOIN LATERAL (
+                 SELECT oracle_tradable FROM public.pool_snapshots WHERE market_id=m.id ORDER BY observed_at DESC LIMIT 1
+               ) s ON true WHERE m.symbol=$1`, [row.symbol])
+          ]);
+          if (market.state !== 1 || snapshot.rows[0]?.status !== "active" || snapshot.rows[0]?.oracle_tradable !== true) continue;
+          await this.publishRow(row, false, version);
+          continue;
+        }
+        const exposure = await readClearingExposure(this.rpc, versionConfig.FLOAT_CLEARING_HOUSE_ADDRESS as Address, id);
         // Scheduled refreshes only serve markets with existing positions. A
         // quote request still publishes on demand before a new position opens.
         if (exposure.longBaseE18 === 0n && exposure.shortBaseE18 === 0n) continue;
@@ -75,7 +88,7 @@ export class OraclePublisher {
   }
 
   /** Refreshes a market immediately before an API-issued open or close quote. */
-  async ensureFreshMarket(symbol: string, version: ContractVersion = "meadow"): Promise<void> {
+  async ensureFreshMarket(symbol: string, version: ContractVersion = "amber"): Promise<void> {
     const normalized = symbol.trim().toUpperCase();
     const key = `${version}:${normalized}`;
     const inFlight = this.refreshing.get(key);

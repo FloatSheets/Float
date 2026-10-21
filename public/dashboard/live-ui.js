@@ -8,9 +8,9 @@
   function selectedContractVersion(){
     const selected=localStorage.getItem('floatsheets-contract-version-v1');
     if(selected==='legacy-orion') return 'legacy-orion';
-    if(selected==='jasper') return 'jasper';
-    localStorage.setItem('floatsheets-contract-version-v1','jasper');
-    return 'jasper';
+    if(selected==='amber') return 'amber';
+    localStorage.setItem('floatsheets-contract-version-v1','amber');
+    return 'amber';
   }
   document.body.classList.toggle('dashboard-dark',localStorage.getItem('floatsheets-dashboard-theme')==='dark');
 
@@ -488,12 +488,12 @@
     if(!settingsPanel) return;
     if(!document.getElementById('contract-version-select')){
       const versionRow=document.createElement('div'); versionRow.className='list-row contract-version-row';
-      versionRow.innerHTML='<div><strong>Contract version</strong><p>Choose which FloatSheets contracts power your dashboard and wallet actions.</p></div><select id="contract-version-select" aria-label="Contract version"><option value="jasper">FloatSheets Jasper · latest</option><option value="meadow" disabled>FloatSheets Meadow · paused</option><option value="legacy-orion">FloatSheets Legacy Orion</option></select>';
+      versionRow.innerHTML='<div><strong>Contract version</strong><p>Choose which FloatSheets contracts power your dashboard and wallet actions.</p></div><select id="contract-version-select" aria-label="Contract version"><option value="amber">FloatSheets Amber · latest</option><option value="jasper" disabled>FloatSheets Jasper · paused</option><option value="meadow" disabled>FloatSheets Meadow · paused</option><option value="legacy-orion">FloatSheets Legacy Orion · vault access</option></select>';
       settingsPanel.append(versionRow);
       const select=versionRow.querySelector('select');
       select.value=selectedContractVersion();
       select.addEventListener('change',function(){
-        const version=select.value==='legacy-orion'?'legacy-orion':'jasper';
+        const version=select.value==='legacy-orion'?'legacy-orion':'amber';
         localStorage.setItem('floatsheets-contract-version-v1',version);
         window.dispatchEvent(new CustomEvent('floatsheets-contract-version-change',{detail:{version:version}}));
       });
@@ -512,7 +512,7 @@
     if(window.__FLOATSHEETS_WELCOME_SHOWN__||typeof modal!=='function')return;
     window.__FLOATSHEETS_WELCOME_SHOWN__=true;
     const version=selectedContractVersion();
-    const name=version==='jasper'?'FloatSheets Jasper':'FloatSheets Legacy Orion';
+    const name=version==='amber'?'FloatSheets Amber':'FloatSheets Legacy Orion';
     modal('Welcome to FloatSheets.','<p>Your dashboard is using <strong>'+name+'</strong>.</p><p>You can switch contract versions any time in <strong>Settings → Contract version</strong>. The selected version controls the contracts used for your wallet, positions, oracle data, and vault.</p>','Open Settings',function(){dialog.close();location.hash='settings';});
   }
 
@@ -520,10 +520,10 @@
     const version=selectedContractVersion();
     const view=location.hash.slice(1)||'trade';
     if(version!=='legacy-orion'||!['trade','portfolio','oracle','listings'].includes(view))return false;
-    root.innerHTML='<section class="panel live-only-panel legacy-trading-overlay" role="status" aria-labelledby="legacy-trading-title"><div class="legacy-trading-mark" aria-hidden="true">i</div><div class="legacy-trading-copy"><span class="pill">FLOATSHEETS LEGACY ORION</span><h1 id="legacy-trading-title">Trading is disabled on Orion.</h1><p>You can still use the vault to view your liquidity and withdraw it. Switch to FloatSheets Jasper to access trading, portfolio, oracle and market listing pages.</p><div class="legacy-trading-actions"><button type="button" class="small-btn" data-switch-jasper>Switch to Jasper</button><a class="small-btn" href="#vault">Open vault</a><a class="legacy-settings-link" href="#settings">Version settings</a></div></div></section>';
+    root.innerHTML='<section class="panel live-only-panel legacy-trading-overlay" role="status" aria-labelledby="legacy-trading-title"><div class="legacy-trading-mark" aria-hidden="true">i</div><div class="legacy-trading-copy"><span class="pill">FLOATSHEETS LEGACY ORION</span><h1 id="legacy-trading-title">Trading is disabled on Orion.</h1><p>You can still use the vault to view your liquidity and withdraw it. Switch to FloatSheets Amber to access trading, portfolio, oracle and market listing pages.</p><div class="legacy-trading-actions"><button type="button" class="small-btn" data-switch-jasper>Switch to Amber</button><a class="small-btn" href="#vault">Open vault</a><a class="legacy-settings-link" href="#settings">Version settings</a></div></div></section>';
     root.querySelector('[data-switch-jasper]').addEventListener('click',function(){
-      localStorage.setItem('floatsheets-contract-version-v1','jasper');
-      window.dispatchEvent(new CustomEvent('floatsheets-contract-version-change',{detail:{version:'jasper'}}));
+      localStorage.setItem('floatsheets-contract-version-v1','amber');
+      window.dispatchEvent(new CustomEvent('floatsheets-contract-version-change',{detail:{version:'amber'}}));
     });
     return true;
   }

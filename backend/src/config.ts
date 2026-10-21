@@ -2,7 +2,7 @@ import { z } from "zod";
 import { privateKeyToAccount } from "viem/accounts";
 
 const address = z.string().regex(/^0x[a-fA-F0-9]{40}$/, "must be an EVM address");
-export const contractVersionSchema = z.enum(["jasper", "meadow", "legacy-orion"]);
+export const contractVersionSchema = z.enum(["amber", "jasper", "meadow", "legacy-orion"]);
 export type ContractVersion = z.infer<typeof contractVersionSchema>;
 
 const schema = z.object({
@@ -10,6 +10,9 @@ const schema = z.object({
   FLOAT_CLEARING_HOUSE_ADDRESS: address,
   FLOAT_ORACLE_ADDRESS: address,
   FLOAT_VAULT_ADDRESS: address,
+  AMBER_FLOAT_CLEARING_HOUSE_ADDRESS: address.optional(),
+  AMBER_FLOAT_ORACLE_ADDRESS: address.optional(),
+  AMBER_FLOAT_VAULT_ADDRESS: address.optional(),
   MEADOW_FLOAT_CLEARING_HOUSE_ADDRESS: address.default("0xc1AfA648C30090Aa8fDd3fbca384bd65b52B58Dd"),
   MEADOW_FLOAT_ORACLE_ADDRESS: address.default("0x7Fda40E8FD27cA067C9Ee23EA0Fd0cb8Bb786A8a"),
   MEADOW_FLOAT_VAULT_ADDRESS: address.default("0xb74eD266A95d8393cDaF2Fa6cADd98b5a1D91875"),
@@ -45,6 +48,12 @@ const schema = z.object({
 export type AppConfig = z.infer<typeof schema>;
 
 export function contractConfigForVersion(config: AppConfig, version: ContractVersion): AppConfig {
+  if (version === "amber") {
+    const clearingHouse = config.AMBER_FLOAT_CLEARING_HOUSE_ADDRESS ?? (config.NODE_ENV === "test" ? config.FLOAT_CLEARING_HOUSE_ADDRESS : "0x022Cc8DFf79414DcB56812Bd93601854E2b7A700");
+    const oracle = config.AMBER_FLOAT_ORACLE_ADDRESS ?? (config.NODE_ENV === "test" ? config.FLOAT_ORACLE_ADDRESS : "0x71B5FBd2df7eF976d02A4b4090450EEE24F77Ce0");
+    const vault = config.AMBER_FLOAT_VAULT_ADDRESS ?? (config.NODE_ENV === "test" ? config.FLOAT_VAULT_ADDRESS : "0xD5B0461F09C0Cb67AEd9Ca8e73569EAfa3a2E445");
+    return { ...config, FLOAT_CLEARING_HOUSE_ADDRESS: clearingHouse, FLOAT_ORACLE_ADDRESS: oracle, FLOAT_VAULT_ADDRESS: vault };
+  }
   if (version === "jasper") {
     const clearingHouse = config.JASPER_FLOAT_CLEARING_HOUSE_ADDRESS ?? (config.NODE_ENV === "test" ? config.MEADOW_FLOAT_CLEARING_HOUSE_ADDRESS : undefined);
     const oracle = config.JASPER_FLOAT_ORACLE_ADDRESS ?? (config.NODE_ENV === "test" ? config.MEADOW_FLOAT_ORACLE_ADDRESS : undefined);
