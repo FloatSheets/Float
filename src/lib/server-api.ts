@@ -47,6 +47,7 @@ export const getMarket = createServerFn({ method: "GET" }).validator(symbolInput
 export const getMarketQuotes = createServerFn({ method: "GET" }).validator(symbolInput).handler(({ data }): Promise<any> => getJson(`/v1/markets/${data}/quotes`));
 export const getMarketRisk = createServerFn({ method: "GET" }).validator(symbolInput).handler(({ data }): Promise<any> => getJson(`/v1/markets/${data}/risk`));
 export const getKeeperStatus = createServerFn({ method: "GET" }).handler((): Promise<any> => getJson("/v1/keeper", "goldlake"));
+export const getStatus = createServerFn({ method: "GET" }).handler((): Promise<any> => getJson("/v1/status", "goldlake"));
 export const getWeekendAllowance = createServerFn({ method: "GET" })
   .validator((input: unknown) => {
     const data = input as JsonRecord;

@@ -57,6 +57,7 @@ const schema = z.object({
   // is published in steps of this size instead of tripping the breaker.
   ORACLE_STEP_BPS: z.coerce.number().int().min(100).max(1_950).default(1_900),
   ORACLE_STEP_AFTER_SECONDS: z.coerce.number().int().min(60).max(86_400).default(900),
+  STATUS_CHECK_INTERVAL_SECONDS: z.coerce.number().int().min(15).max(3_600).default(60),
   KEEPER_ENABLED: z.enum(["true", "false"]).default("true"),
   KEEPER_INTERVAL_SECONDS: z.coerce.number().int().min(10).max(3_600).default(30),
   // Optional dedicated keeper wallet. Defaults to the oracle publisher wallet;

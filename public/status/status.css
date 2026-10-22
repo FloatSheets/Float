@@ -1,0 +1,33 @@
+.status-page[data-status="degraded"] .status-hero{background:#ffe3b8}
+.status-page[data-status="outage"] .status-hero{background:#ffc2c9}
+.status-body{padding:80px 7% 110px;display:grid;gap:80px;max-width:1200px}
+.status-section h2{font-size:42px;line-height:1.1;letter-spacing:-.04em;font-weight:500;margin:18px 0 32px}
+.status-section>.eyebrow{display:block;color:#6677a2}
+.status-components{display:grid;gap:14px}
+.status-component,.status-incident,.status-event{border:1px solid #dce2ed;padding:22px 24px;background:#fff}
+.status-component-head{display:flex;justify-content:space-between;align-items:center;gap:16px}
+.status-component-head strong{font-size:18px;font-weight:500;letter-spacing:-.02em}
+.status-pill{font-size:11px;letter-spacing:.06em;text-transform:uppercase;padding:5px 9px;border:1px solid;white-space:nowrap}
+.status-pill.operational,.status-pill.resolved{background:#e5f5ef;border-color:#d4eae2;color:#207563}
+.status-pill.degraded{background:#fff4e0;border-color:#f3dcae;color:#8a5a00}
+.status-pill.outage{background:#fce7ec;border-color:#f4ccd7;color:#a63c64}
+.status-detail{font-size:14px;line-height:1.6;color:#596f9d;margin:12px 0 0}
+.status-bar{display:grid;grid-template-columns:repeat(90,1fr);gap:2px;height:34px;margin-top:18px}
+.status-day{display:block;border-radius:2px;background:#d7f0e6}
+.status-day.operational{background:#3fb68b}
+.status-day.degraded{background:#e6a93a}
+.status-day.outage{background:#d1496b}
+.status-day.none{background:#e7ebf3}
+.status-meta{display:flex;justify-content:space-between;font-size:12px;color:#8191af;margin-top:8px}
+.status-legend{display:flex;gap:22px;flex-wrap:wrap;font-size:13px;color:#596f9d;margin-top:22px}
+.status-legend span{display:flex;align-items:center;gap:8px}
+.status-legend i{width:12px;height:12px;display:inline-block}
+.status-event{display:flex;gap:16px;align-items:flex-start;margin-bottom:12px}
+.status-event p{margin:0;font-size:15px;line-height:1.6;color:#41557f}
+.status-incident{margin-bottom:14px}
+.status-incident.open{border-left:4px solid #d1496b}
+.status-incident-time{font-size:13px;color:#8191af;margin:8px 0 0}
+.status-postmortem{margin-top:16px;padding:16px 18px;background:#f5f7fc}
+.status-postmortem p{margin:8px 0 0;font-size:15px;line-height:1.6;color:#41557f}
+.status-empty,.status-loading{font-size:17px;line-height:1.7;color:#596f9d}
+@media(max-width:809px){.status-body{padding:50px 6% 70px;gap:55px}.status-section h2{font-size:30px}.status-bar{gap:1px;height:28px}.status-component,.status-incident,.status-event{padding:18px}.status-event{flex-direction:column;gap:10px}}

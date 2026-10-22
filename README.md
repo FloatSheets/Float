@@ -82,6 +82,7 @@ The production backend is available at [`https://api.floatsheets.app`](https://a
 | `GET /v1/markets/:symbol/quotes` | Latest complete executable quote sample matrix. |
 | `GET /v1/markets/:symbol/history?range=1H` | Stored TWAP/spot history; supported ranges are `1H`, `4H`, `1D`, `1W`, and `1M`. Add `format=candles` for candles. |
 | `GET /v1/keeper` | Protocol keeper status: watched positions, liquidations, expiry closes, and recent keeper transactions. |
+| `GET /v1/status` | Public system status shown at `/status/`: component health checked every minute, 90-day uptime, current market restrictions, and incidents that open after two failed checks and resolve on recovery. Administrators add post-mortems with `POST /v1/status/incidents/:id/postmortem`. |
 | `GET /v1/markets/halts` | Listing-exchange trading halts mirrored from the Nasdaq Trader halt feed. A halted market is close-only until the exchange resumes trading. |
 | `GET /v1/markets/weekend-bands` | Weekend and holiday price bands. While a market's underlying is closed, opens pause if its pool leaves the band around the last close, and oracle marks are held inside it. |
 | `GET /v1/markets/corporate-actions` | Upcoming splits and cash dividends from the Nasdaq calendars. Markets go close-only 7 days before a split (positions cannot be resized, and every open position reaches its 7-day limit first) and around dividends of 2% or more; smaller dividends show a notice with the expected price drop. |

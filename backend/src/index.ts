@@ -17,6 +17,8 @@ import { createProtocolTransactionsRouter } from "./routes/protocol-transactions
 import { effectiveOraclePublishIntervalSeconds, OraclePublisher } from "./oracle/publisher";
 import { createKeeperChain, PositionKeeper } from "./keeper/keeper";
 import { createKeeperRouter } from "./routes/keeper";
+import { createStatusRouter } from "./routes/status";
+import { StatusMonitor } from "./status/status";
 import { createEmailAlertsRouter } from "./routes/email-alerts";
 import { LiquidationAlertService } from "./alerts/liquidation-alerts";
 import { TelegramBotService } from "./alerts/telegram-bot";
@@ -50,6 +52,20 @@ app.use("/v1/markets", createMarketsRouter(db, config.ORACLE_PRICE_MAX_AGE_SECON
 }, weekendBandOptions(config), openingBellOptions(config), corporateActionOptions(config)));
 app.use("/ready", createReadinessRouter(db));
 app.use("/v1/keeper", createKeeperRouter(keeper));
+const statusOracle = (goldlakeConfig ?? silverlakeConfig ?? amberConfig).FLOAT_ORACLE_ADDRESS as `0x${string}`;
+const statusMonitor = new StatusMonitor(db, {
+  rpc,
+  oracle: statusOracle,
+  marketPollIntervalMs: config.MARKET_POLL_INTERVAL_MS,
+  keeperIntervalSeconds: config.KEEPER_INTERVAL_SECONDS,
+  keeperEnabled: config.KEEPER_ENABLED === "true",
+  haltFeedEnabled: config.HALT_FEED_ENABLED === "true",
+  haltPollSeconds: config.HALT_POLL_INTERVAL_SECONDS,
+  corporateActions: corporateActionOptions(config),
+  corporateActionPollSeconds: config.CORPORATE_ACTIONS_POLL_SECONDS,
+  keeperStatus: () => keeper.status()
+});
+app.use("/v1/status", createStatusRouter(statusMonitor, config, db));
 app.use("/v1/email-alerts", createEmailAlertsRouter(db, config));
 app.use("/v1/telegram-alerts", createTelegramAlertsRouter(db, config));
 app.use("/v1/news", createNewsRouter(db));
@@ -135,3 +151,9 @@ setInterval(() => void refreshMarkets(), config.MARKET_POLL_INTERVAL_MS).unref()
 setInterval(() => void refreshHalts(), config.HALT_POLL_INTERVAL_SECONDS * 1_000).unref();
 if (config.TELEGRAM_BOT_TOKEN) setInterval(() => void telegramBot.pollOnce(), 5_000).unref();
 setInterval(() => void refreshCorporateActions(), config.CORPORATE_ACTIONS_POLL_SECONDS * 1_000).unref();
+// Status checks start after the first market and feed refreshes have had time to run.
+setTimeout(() => {
+  const refreshStatus = () => void statusMonitor.refresh().catch((error) => console.error("FloatSheets status refresh failed", error));
+  refreshStatus();
+  setInterval(refreshStatus, config.STATUS_CHECK_INTERVAL_SECONDS * 1_000).unref();
+}, 90_000).unref();
