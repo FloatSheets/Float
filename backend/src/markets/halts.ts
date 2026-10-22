@@ -1,6 +1,9 @@
 import type { Pool } from "pg";
 
 import { safeErrorMessage } from "../safe-error";
+import { easternToUtc } from "./sessions";
+
+export { easternToUtc };
 
 export const NASDAQ_HALT_FEED_URL = "https://www.nasdaqtrader.com/rss.aspx?feed=tradehalts";
 const FETCH_TIMEOUT_MS = 10_000;
@@ -47,30 +50,6 @@ export type ActiveHalt = {
 function tag(item: string, name: string): string {
   const match = item.match(new RegExp(`<ndaq:${name}>([^<]*)</ndaq:${name}>`));
   return match?.[1]?.trim() ?? "";
-}
-
-function offsetMinutes(instant: Date): number {
-  const label = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", timeZoneName: "shortOffset" })
-    .formatToParts(instant).find((part) => part.type === "timeZoneName")?.value ?? "GMT-5";
-  const match = label.match(/GMT([+-])(\d{1,2})(?::(\d{2}))?/);
-  if (!match) return -300;
-  const minutes = Number(match[2]) * 60 + Number(match[3] ?? 0);
-  return match[1] === "-" ? -minutes : minutes;
-}
-
-/** Converts a feed date ("MM/DD/YYYY") and Eastern time ("HH:MM:SS.sss") to UTC. */
-export function easternToUtc(date: string, time: string): Date | null {
-  const day = date.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-  const clock = time.match(/^(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?$/);
-  if (!day || !clock) return null;
-  const [month, dayOfMonth, hour, minute, second] = [Number(day[1]), Number(day[2]), Number(clock[1]), Number(clock[2]), Number(clock[3])];
-  if (month < 1 || month > 12 || dayOfMonth < 1 || dayOfMonth > 31 || hour > 23 || minute > 59 || second > 59) return null;
-  const wall = Date.UTC(Number(day[3]), Number(day[1]) - 1, Number(day[2]), Number(clock[1]), Number(clock[2]), Number(clock[3]), Number((clock[4] ?? "0").padEnd(3, "0")));
-  // Resolve the Eastern offset at the target instant, then re-check once so
-  // times on a daylight-saving boundary land on the right side of it.
-  let utc = wall - offsetMinutes(new Date(wall)) * 60_000;
-  utc = wall - offsetMinutes(new Date(utc)) * 60_000;
-  return new Date(utc);
 }
 
 export function parseHaltFeed(xml: string): FeedHalt[] {

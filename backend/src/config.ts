@@ -34,6 +34,11 @@ const schema = z.object({
   HALT_FEED_ENABLED: z.enum(["true", "false"]).default("true"),
   HALT_FEED_URL: z.url().default("https://www.nasdaqtrader.com/rss.aspx?feed=tradehalts"),
   HALT_POLL_INTERVAL_SECONDS: z.coerce.number().int().min(15).max(3_600).default(60),
+  WEEKEND_BANDS_ENABLED: z.enum(["true", "false"]).default("true"),
+  // Band half-width cap. The effective width is min(1 / max leverage, this).
+  WEEKEND_BAND_MAX_BPS: z.coerce.number().int().min(50).max(5_000).default(500),
+  WEEKEND_BAND_SHIFT_AFTER_SECONDS: z.coerce.number().int().min(300).max(86_400).default(3_600),
+  WEEKEND_BAND_MAX_SHIFTS: z.coerce.number().int().min(0).max(10).default(2),
   KEEPER_ENABLED: z.enum(["true", "false"]).default("true"),
   KEEPER_INTERVAL_SECONDS: z.coerce.number().int().min(10).max(3_600).default(30),
   // Optional dedicated keeper wallet. Defaults to the oracle publisher wallet;

@@ -20,6 +20,7 @@ import type { OraclePublisher } from "../oracle/publisher";
 import { snapshotTimeOnChain } from "../oracle/publisher";
 import { safeErrorMessage } from "../safe-error";
 import { haltMessage, readActiveHalt } from "../markets/halts";
+import { weekendBandOptions, weekendBandRefusal, WeekendBands } from "../markets/weekend-bands";
 
 const address = z.string().regex(/^0x[0-9a-fA-F]{40}$/);
 const uint = z.string().regex(/^\d+$/).max(78);
@@ -206,6 +207,7 @@ function createProtocolTransactionsRouterForConfig(
   const router = Router();
   const masterAdmin = requireMasterAdmin(config);
   const adminRateLimit = createAdminRateLimit(database);
+  const weekendBands = database ? new WeekendBands(database, weekendBandOptions(config)) : null;
 
   router.get("/payouts/:account", async (request, response) => {
     try {
@@ -327,6 +329,8 @@ function createProtocolTransactionsRouterForConfig(
       if (riskIncreasing && await readBadDebt(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address) !== 0n) throw new Error("new positions are paused while vault bad debt is outstanding");
       const adminHalt = riskIncreasing ? await readActiveHalt(database, symbol) : null;
       if (adminHalt) throw new Error(haltMessage(adminHalt));
+      const adminBand = riskIncreasing && weekendBands ? await weekendBandRefusal(database, weekendBands, symbol) : null;
+      if (adminBand) throw new Error(adminBand);
       const signature = await signTradeQuote(config.QUOTE_SIGNER_PRIVATE_KEY as Hex, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, value);
       response.json({ quote: input, signature, transaction: executeTrade(config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, value, signature) });
     } catch (error) { protocolError(response, error); }
@@ -410,6 +414,9 @@ function createProtocolTransactionsRouterForConfig(
         // The listing exchange has halted the underlying: no new exposure until it resumes.
         const halt = await readActiveHalt(database, symbol);
         if (halt) throw new Error(haltMessage(halt));
+        // Underlying closed and the pool has left the weekend band: no new exposure.
+        const band = weekendBands ? await weekendBandRefusal(database, weekendBands, symbol) : null;
+        if (band) throw new Error(band);
         if (await readBadDebt(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address) !== 0n) throw new Error("new positions are paused while vault bad debt is outstanding");
         const [exposure, vaultAssets] = await Promise.all([
           readClearingExposure(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, id),
@@ -474,6 +481,8 @@ function createProtocolTransactionsRouterForConfig(
       if (riskIncreasing) {
         const halt = await readActiveHalt(database, symbol);
         if (halt) return reject(haltMessage(halt));
+        const band = weekendBands ? await weekendBandRefusal(database, weekendBands, symbol) : null;
+        if (band) return reject(band);
         if (await readBadDebt(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address) !== 0n) return reject("New positions are paused while vault bad debt is outstanding.");
         const [exposure, vaultAssets] = await Promise.all([
           readClearingExposure(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, id),

@@ -635,6 +635,19 @@
     value.className=change>=0?'positive':'negative';
     value.textContent=(change>=0?'+':'')+change.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4})+'%';
   }
+  function paintWeekendBand(band){
+    const stats=root.querySelector('.chart-stats');
+    if(!stats)return;
+    let notice=root.querySelector('#weekend-band-notice');
+    if(!band){notice?.remove();return;}
+    if(!notice){notice=document.createElement('div');notice.id='weekend-band-notice';notice.className='info-note band-note';notice.setAttribute('role','status');stats.parentElement.insertBefore(notice,stats);}
+    const usd=function(value){return '$'+Number(value).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});};
+    const reopens=new Date(band.reopens_at).toLocaleString([], {weekday:'short',hour:'numeric',minute:'2-digit'});
+    const width=(band.band_bps/100).toLocaleString(undefined,{maximumFractionDigits:2});
+    const shifted=band.shifts_up||band.shifts_down?' The band has shifted '+(band.shifts_up?band.shifts_up+'× up':'')+(band.shifts_up&&band.shifts_down?' and ':'')+(band.shifts_down?band.shifts_down+'× down':'')+' after a sustained move.':'';
+    const position=band.pool_outside?'<strong class="band-outside">Pool is trading '+escapeHtml(band.pool_outside)+' the band at '+usd(band.pool_price_usdg)+'.</strong> New positions are paused until it returns; you can still close.':'Pool price '+(band.pool_price_usdg?usd(band.pool_price_usdg)+' is inside the band.':'is inside the band.');
+    notice.innerHTML='<strong>Weekend band · '+usd(band.lower_usdg)+' – '+usd(band.upper_usdg)+'</strong> (±'+width+'% around the last close of '+usd(band.anchor_price_usdg)+'). The real stock is closed until '+escapeHtml(reopens)+'. Oracle marks stay inside this band, so a thin-liquidity wick cannot liquidate you. '+position+shifted;
+  }
   function paintExchangeHalt(halt){
     const stats=root.querySelector('.chart-stats');
     if(!stats)return;
@@ -661,10 +674,11 @@
     }
     if(stateValue){
       stateValue.className='state '+data.state;
-      stateValue.textContent=data.state==='LIVE'?'LIVE':data.state==='READY'?'READY':data.state==='HALTED'?'HALTED':data.state==='EXCHANGE_HALT'?'EXCHANGE HALT':data.state==='CLOSE_ONLY'?'CLOSE ONLY':'UNAVAILABLE';
+      stateValue.textContent=data.state==='LIVE'?'LIVE':data.state==='READY'?'READY':data.state==='HALTED'?'HALTED':data.state==='EXCHANGE_HALT'?'EXCHANGE HALT':data.state==='WEEKEND_BAND'?'WEEKEND BAND':data.state==='CLOSE_ONLY'?'CLOSE ONLY':'UNAVAILABLE';
       stateValue.title=data.state==='READY'?'A current oracle price is published when you request a quote.':data.exchange_halt?'Halted on '+data.exchange_halt.listing_market+': '+data.exchange_halt.reason:'Current on-chain market and oracle check';
     }
     paintExchangeHalt(data.exchange_halt);
+    paintWeekendBand(data.exchange_halt?null:data.weekend_band);
   }
   function abortable(promise,signal){
     return new Promise(function(resolve,reject){

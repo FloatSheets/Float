@@ -20,7 +20,9 @@ const config = loadConfig({
   ORACLE_PRICE_MAX_AGE_SECONDS: "120", ORACLE_PUBLISHER_ADDRESS: account, ORACLE_PUBLISHER_PRIVATE_KEY: key,
   ORACLE_PUBLISH_INTERVAL_SECONDS: "110", ORACLE_SIGNER_ADDRESS: account, ORACLE_SIGNER_PRIVATE_KEY: key,
   QUOTE_TTL_SECONDS: "15", QUOTE_SIGNER_ADDRESS: account, QUOTE_SIGNER_PRIVATE_KEY: key,
-  RHC_ID: "4663", RHC_RPC_URL: "https://rpc.mainnet.chain.robinhood.com", UNISWAP_TWAP_WINDOW_SECONDS: "1800"
+  RHC_ID: "4663", RHC_RPC_URL: "https://rpc.mainnet.chain.robinhood.com", UNISWAP_TWAP_WINDOW_SECONDS: "1800",
+  // Weekend bands depend on the wall clock; their behavior is covered in weekend-bands tests.
+  WEEKEND_BANDS_ENABLED: "false"
 });
 
 test("does not spend publisher gas on inactive markets", async () => {

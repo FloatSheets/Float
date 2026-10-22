@@ -9,12 +9,26 @@ import type { RpcTransport } from '../chain/rpc';
 import type { Address } from 'viem';
 import { contractVersionFromRequest } from '../contract-version';
 import { HALT_FEED_STALE_SECONDS, readActiveHalts } from '../markets/halts';
+import { closedWindow } from '../markets/sessions';
+import { decimalToE18, readPoolPriceE18, weekendBandView, WeekendBands, type WeekendBandOptions, type WeekendBandView } from '../markets/weekend-bands';
 
 type LiveMarketDependencies = { rpc: RpcTransport; clearingHouse: Address; oracle: Address };
 type VersionedLiveMarketDependencies = Partial<Record<'goldlake' | 'silverlake' | 'amber' | 'jasper' | 'meadow' | 'legacy-orion', LiveMarketDependencies>>;
 
-export function createMarketsRouter(database: Pool, maxPriceAgeSeconds = 120, live?: LiveMarketDependencies | VersionedLiveMarketDependencies): Router {
+export function createMarketsRouter(
+  database: Pool,
+  maxPriceAgeSeconds = 120,
+  live?: LiveMarketDependencies | VersionedLiveMarketDependencies,
+  bandOptions: WeekendBandOptions = { enabled: false, maxBandBps: 500, shiftAfterSeconds: 3_600, maxShifts: 2 }
+): Router {
   const router = Router();
+  const bands = new WeekendBands(database, bandOptions);
+  async function bandView(symbol: string, poolPrice?: string | null): Promise<WeekendBandView | null> {
+    const band = await bands.band(symbol);
+    if (!band) return null;
+    const pool = poolPrice ? decimalToE18(String(poolPrice)) : await readPoolPriceE18(database, symbol);
+    return weekendBandView(band, pool, bandOptions.maxShifts);
+  }
 
   router.get("/", async (request, response, next) => {
     try {
@@ -32,7 +46,11 @@ export function createMarketsRouter(database: Pool, maxPriceAgeSeconds = 120, li
          ORDER BY m.symbol`
       );
       const halts = await readActiveHalts(database);
-      const rows = result.rows.map((row) => ({ ...row, exchange_halt: halts.get(String(row.symbol).toUpperCase()) ?? null }));
+      const rows = await Promise.all(result.rows.map(async (row) => ({
+        ...row,
+        exchange_halt: halts.get(String(row.symbol).toUpperCase()) ?? null,
+        weekend_band: await bandView(String(row.symbol), row.twap_price_usdg)
+      })));
       if (!live) return response.json({ markets: rows });
       const selectedLive = 'rpc' in live ? live : live[contractVersionFromRequest(request)];
       if (!selectedLive) return response.status(503).json({ error: 'live market reads are unavailable for this contract version' });
@@ -52,7 +70,25 @@ export function createMarketsRouter(database: Pool, maxPriceAgeSeconds = 120, li
     }
   });
 
-  // Registered before /:symbol so "halts" is never read as a market symbol.
+  // Registered before /:symbol so these paths are never read as market symbols.
+  router.get('/weekend-bands', async (_request, response, next) => {
+    try {
+      const window = bandOptions.enabled ? closedWindow(new Date()) : null;
+      const symbols = await database.query<{ symbol: string; twap_price_usdg: string | null }>(
+        `SELECT m.symbol, s.twap_price_usdg::text FROM public.markets m LEFT JOIN LATERAL (
+           SELECT twap_price_usdg FROM public.pool_snapshots WHERE market_id=m.id ORDER BY observed_at DESC LIMIT 1
+         ) s ON true ORDER BY m.symbol`
+      );
+      response.json({
+        enabled: bandOptions.enabled,
+        underlying_closed: window !== null,
+        reopens_at: window?.reopensAt.toISOString() ?? null,
+        bands: window ? (await Promise.all(symbols.rows.map((row) => bandView(row.symbol, row.twap_price_usdg)))).filter(Boolean) : []
+      });
+    } catch (error) { next(error); }
+  });
+
+
   router.get('/halts', async (_request, response, next) => {
     try {
       const [halts, feed] = await Promise.all([
@@ -122,8 +158,9 @@ export function createMarketsRouter(database: Pool, maxPriceAgeSeconds = 120, li
       const oracleAgeSeconds=Number(BigInt(Math.floor(Date.now()/1_000))-oracle.timestamp);
       const oracleFresh=oracle.sequence!==0n&&oracleAgeSeconds<=maxPriceAgeSeconds&&!oracle.circuitBroken;
       const exchangeHalt=(await readActiveHalts(database)).get(symbol)??null;
-      const state=onchainMarket.state===0?'HALTED':onchainMarket.state===2?'CLOSE_ONLY':exchangeHalt?'EXCHANGE_HALT':(monitoredState!=='active'?'CLOSE_ONLY':(oracleFresh?'LIVE':'READY'));
-      response.json({market:symbol,state,exchange_halt:exchangeHalt,monitored_state:monitoredState,onchain_market_state:onchainMarket.state,
+      const weekendBand=await bandView(symbol);
+      const state=onchainMarket.state===0?'HALTED':onchainMarket.state===2?'CLOSE_ONLY':exchangeHalt?'EXCHANGE_HALT':weekendBand?.pool_outside?'WEEKEND_BAND':(monitoredState!=='active'?'CLOSE_ONLY':(oracleFresh?'LIVE':'READY'));
+      response.json({market:symbol,state,exchange_halt:exchangeHalt,weekend_band:weekendBand,monitored_state:monitoredState,onchain_market_state:onchainMarket.state,
         oracle_confidence_bps:oracle.confidenceBps.toString(),oracle_confidence_limit_bps:onchainMarket.maxOracleConfidenceBps.toString(),
         oracle_age_seconds:oracleAgeSeconds,oracle_circuit_broken:oracle.circuitBroken,oracle_fresh:oracleFresh});
     } catch (error) { next(error); }
