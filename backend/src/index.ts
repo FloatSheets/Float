@@ -19,7 +19,6 @@ import { createEmailAlertsRouter } from "./routes/email-alerts";
 import { LiquidationAlertService } from "./alerts/liquidation-alerts";
 import { TelegramBotService } from "./alerts/telegram-bot";
 import { createTelegramAlertsRouter } from "./routes/telegram-alerts";
-import { createNewsRouter } from "./routes/news";
 
 const config = loadConfig();
 const meadowConfig = contractConfigForVersion(config, "meadow");
@@ -50,7 +49,6 @@ app.use("/ready", createReadinessRouter(db));
 app.use("/v1/keeper", createKeeperRouter(keeper));
 app.use("/v1/email-alerts", createEmailAlertsRouter(db, config));
 app.use("/v1/telegram-alerts", createTelegramAlertsRouter(db, config));
-app.use("/v1/news", createNewsRouter(db));
 app.use("/v1/protocol", createProtocolRouter(config));
 app.use("/v1/protocol/transactions", createProtocolTransactionsRouter(config, db, rpc, oraclePublisher));
 let lastOraclePublishAt = 0;
