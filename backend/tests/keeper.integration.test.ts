@@ -158,3 +158,17 @@ test.serial("serves keeper status for the dashboard", async () => {
   expect(silverlake).toEqual({ contract_version: "silverlake", scanned_through_block: LATEST.toString(), tracked_positions: 0 });
   expect(response.body.recent_actions[0].reason).toBe("liquidation");
 }, 60_000);
+
+test("rescans from the deployment block when a cursor is ahead of the chain", async () => {
+  const start = KEEPER_START_BLOCKS.silverlake;
+  await db.query("INSERT INTO public.keeper_cursors (contract_version, next_block) VALUES ('silverlake', $1)", [(LATEST + 5_000_000n).toString()]);
+  const logs: TradeLog[] = [{ trader: trader(7), marketId: market(7), blockNumber: start + 50n }];
+  const positions = new Map<string, FakePosition>([[`${trader(7)}:${market(7)}`, { sizeE18: 1n, openedAt: NOW, liquidatable: false }]]);
+  const { chain } = fakeChain(logs, positions);
+  await new PositionKeeper(db, chain, config).runOnce();
+
+  const tracked = await db.query("SELECT 1 FROM public.keeper_positions WHERE trader=$1", [trader(7)]);
+  expect(tracked.rowCount).toBe(1);
+  const cursor = await db.query<{ next_block: string }>("SELECT next_block FROM public.keeper_cursors WHERE contract_version='silverlake'");
+  expect(BigInt(cursor.rows[0]!.next_block)).toBe(LATEST + 1n);
+}, 60_000);

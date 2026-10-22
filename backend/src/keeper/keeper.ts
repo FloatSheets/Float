@@ -191,6 +191,12 @@ export class PositionKeeper {
       "SELECT next_block FROM public.keeper_cursors WHERE contract_version=$1", [version]
     );
     let from = cursor.rows[0] ? BigInt(cursor.rows[0].next_block) : KEEPER_START_BLOCKS[version];
+    if (from > latestBlock + 1n) {
+      // A cursor past the chain head cannot be real (for example, written by a
+      // test against the wrong database) and would hide every new position.
+      console.warn(JSON.stringify({ event: "keeper_cursor_reset", version, cursor: from.toString(), chain_head: latestBlock.toString() }));
+      from = KEEPER_START_BLOCKS[version];
+    }
     let span = MAX_LOG_SPAN;
     const clearingHouse = this.clearingHouse(version);
     while (from <= latestBlock) {
