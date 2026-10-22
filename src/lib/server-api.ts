@@ -46,6 +46,14 @@ export const getMarket = createServerFn({ method: "GET" }).validator(symbolInput
 export const getMarketQuotes = createServerFn({ method: "GET" }).validator(symbolInput).handler(({ data }): Promise<any> => getJson(`/v1/markets/${data}/quotes`));
 export const getMarketRisk = createServerFn({ method: "GET" }).validator(symbolInput).handler(({ data }): Promise<any> => getJson(`/v1/markets/${data}/risk`));
 export const getKeeperStatus = createServerFn({ method: "GET" }).handler((): Promise<any> => getJson("/v1/keeper", "goldlake"));
+export const getWeekendAllowance = createServerFn({ method: "GET" })
+  .validator((input: unknown) => {
+    const data = input as JsonRecord;
+    const trader = String(data["trader"] ?? "");
+    if (!/^0x[0-9a-fA-F]{40}$/.test(trader)) throw new Error("A valid wallet address is required.");
+    return { symbol: symbolInput(data["symbol"]), trader, version: versionOf(data["version"]) };
+  })
+  .handler(({ data }): Promise<any> => getJson(`/v1/protocol/transactions/weekend-allowance?market=${data.symbol}&trader=${data.trader}`, data.version));
 
 type VersionedMarketInput = { symbol: string; version: ContractVersion };
 function versionedMarketInput(input: unknown): VersionedMarketInput {

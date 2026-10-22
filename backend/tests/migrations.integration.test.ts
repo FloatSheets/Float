@@ -47,6 +47,6 @@ test("is idempotent within its isolated schema", async () => {
        'liquidation_alert_cursors','liquidation_alert_events'
      )`, [schema]
   );
-  expect(migrations.rows[0]?.count).toBe("8");
+  expect(migrations.rows[0]?.count).toBe("9");
   expect(alertTables.rows[0]?.count).toBe("4");
 }, 60_000);

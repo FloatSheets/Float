@@ -39,6 +39,10 @@ const schema = z.object({
   WEEKEND_BAND_MAX_BPS: z.coerce.number().int().min(50).max(5_000).default(500),
   WEEKEND_BAND_SHIFT_AFTER_SECONDS: z.coerce.number().int().min(300).max(86_400).default(3_600),
   WEEKEND_BAND_MAX_SHIFTS: z.coerce.number().int().min(0).max(10).default(2),
+  WEEKEND_WALLET_LIMITS_ENABLED: z.enum(["true", "false"]).default("true"),
+  // Per-wallet, per-market weekend allowance as a share of the market's max ticket.
+  WEEKEND_WALLET_CAP_BPS: z.coerce.number().int().min(100).max(10_000).default(2_500),
+  WEEKEND_WALLET_COOLDOWN_SECONDS: z.coerce.number().int().min(0).max(86_400).default(300),
   KEEPER_ENABLED: z.enum(["true", "false"]).default("true"),
   KEEPER_INTERVAL_SECONDS: z.coerce.number().int().min(10).max(3_600).default(30),
   // Optional dedicated keeper wallet. Defaults to the oracle publisher wallet;

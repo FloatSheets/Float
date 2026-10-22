@@ -635,6 +635,20 @@
     value.className=change>=0?'positive':'negative';
     value.textContent=(change>=0?'+':'')+change.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4})+'%';
   }
+  async function paintWeekendAllowance(notice,symbol){
+    const wallet=walletState(),api=window.__FLOATSHEETS_SERVER_API__;
+    if(!wallet?.connected||!wallet.address||!api?.getWeekendAllowance)return;
+    try{
+      const payload=await api.getWeekendAllowance(symbol,wallet.address,selectedContractVersion());
+      const allowance=payload&&payload.allowance;
+      if(!allowance||!notice.isConnected)return;
+      const usd=function(value){return '$'+Number(value).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});};
+      const cooldown=allowance.cooldown_until?' Next weekend open available at '+new Date(allowance.cooldown_until).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})+'.':'';
+      let line=notice.querySelector('.weekend-allowance');
+      if(!line){line=document.createElement('span');line.className='weekend-allowance';notice.appendChild(line);}
+      line.innerHTML=' <strong>Your weekend allowance on '+escapeHtml(allowance.market)+': '+usd(allowance.remaining_usdg)+' of '+usd(allowance.cap_usdg)+' left.</strong>'+cooldown;
+    }catch(error){console.warn('FloatSheets weekend allowance failed',error);}
+  }
   function paintWeekendBand(band){
     const stats=root.querySelector('.chart-stats');
     if(!stats)return;
@@ -647,6 +661,7 @@
     const shifted=band.shifts_up||band.shifts_down?' The band has shifted '+(band.shifts_up?band.shifts_up+'× up':'')+(band.shifts_up&&band.shifts_down?' and ':'')+(band.shifts_down?band.shifts_down+'× down':'')+' after a sustained move.':'';
     const position=band.pool_outside?'<strong class="band-outside">Pool is trading '+escapeHtml(band.pool_outside)+' the band at '+usd(band.pool_price_usdg)+'.</strong> New positions are paused until it returns; you can still close.':'Pool price '+(band.pool_price_usdg?usd(band.pool_price_usdg)+' is inside the band.':'is inside the band.');
     notice.innerHTML='<strong>Weekend band · '+usd(band.lower_usdg)+' – '+usd(band.upper_usdg)+'</strong> (±'+width+'% around the last close of '+usd(band.anchor_price_usdg)+'). The real stock is closed until '+escapeHtml(reopens)+'. Oracle marks stay inside this band, so a thin-liquidity wick cannot liquidate you. '+position+shifted;
+    void paintWeekendAllowance(notice,band.symbol);
   }
   function paintExchangeHalt(halt){
     const stats=root.querySelector('.chart-stats');

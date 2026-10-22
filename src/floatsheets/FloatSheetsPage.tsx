@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { pages } from "./pages";
 import { installWalletButton } from "@/lib/walletconnect";
-import { getKeeperStatus, getLiveMarket, getMarketHistory, getMarkets } from "@/lib/server-api";
+import { getKeeperStatus, getLiveMarket, getMarketHistory, getMarkets, getWeekendAllowance } from "@/lib/server-api";
 
 type DashboardContractVersion = "goldlake" | "silverlake" | "amber" | "meadow" | "legacy-orion";
 type DashboardServerApi = {
@@ -9,6 +9,7 @@ type DashboardServerApi = {
   getLiveMarket: (symbol: string, version: DashboardContractVersion) => Promise<any>;
   getMarketHistory: (symbol: string, range: string, version: DashboardContractVersion) => Promise<any>;
   getKeeperStatus: () => Promise<any>;
+  getWeekendAllowance: (symbol: string, trader: string, version: DashboardContractVersion) => Promise<any>;
 };
 
 export type FloatPage = (typeof pages)[number];
@@ -89,6 +90,7 @@ export function FloatSheetsPage({ page }: { page: FloatPage }) {
       getLiveMarket: (symbol, version) => getLiveMarket({ data: { symbol, version } }),
       getMarketHistory: (symbol, range, version) => getMarketHistory({ data: { symbol, range, version } }),
       getKeeperStatus: () => getKeeperStatus(),
+      getWeekendAllowance: (symbol, trader, version) => getWeekendAllowance({ data: { symbol, trader, version } }),
     };
     const dashboardWindow = window as Window & { __FLOATSHEETS_SERVER_API__?: DashboardServerApi };
     dashboardWindow.__FLOATSHEETS_SERVER_API__ = serverApi;

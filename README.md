@@ -84,6 +84,7 @@ The production backend is available at [`https://api.floatsheets.app`](https://a
 | `GET /v1/keeper` | Protocol keeper status: watched positions, liquidations, expiry closes, and recent keeper transactions. |
 | `GET /v1/markets/halts` | Listing-exchange trading halts mirrored from the Nasdaq Trader halt feed. A halted market is close-only until the exchange resumes trading. |
 | `GET /v1/markets/weekend-bands` | Weekend and holiday price bands. While a market's underlying is closed, opens pause if its pool leaves the band around the last close, and oracle marks are held inside it. |
+| `GET /v1/protocol/transactions/weekend-allowance?market=&trader=` | A wallet's remaining weekend allowance on a market. While the underlying is closed, each wallet may add up to 25% of the market's max ticket per closure, with a 5-minute cooldown between executed opens. Closes are never limited. |
 | `GET /v1/markets/:symbol/risk` | Monitored risk state and latest snapshot age. |
 
 ### What the backend database stores
