@@ -15,6 +15,10 @@ import { decimalToE18, readPoolPriceE18, weekendBandView, WeekendBands, type Wee
 type LiveMarketDependencies = { rpc: RpcTransport; clearingHouse: Address; oracle: Address };
 type VersionedLiveMarketDependencies = Partial<Record<'goldlake' | 'silverlake' | 'amber' | 'jasper' | 'meadow' | 'legacy-orion', LiveMarketDependencies>>;
 
+export function effectiveMaxTicketUsdg(backendCap: number | string, onchainCapE6: bigint): number {
+  return Math.min(Number(backendCap), Number(onchainCapE6) / 1_000_000);
+}
+
 export function createMarketsRouter(
   database: Pool,
   maxPriceAgeSeconds = 120,
@@ -60,7 +64,7 @@ export function createMarketsRouter(
         return {
           ...row,
           max_leverage: Number(market.maxLeverageE18) / 1e18,
-          max_ticket_usdg: Number(market.maxPositionNotionalUsdg) / 1e6,
+          max_ticket_usdg: effectiveMaxTicketUsdg(row.max_ticket_usdg, market.maxPositionNotionalUsdg),
           onchain_market_state: market.state
         };
       }));
