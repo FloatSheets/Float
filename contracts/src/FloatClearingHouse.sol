@@ -76,6 +76,7 @@ contract FloatClearingHouse {
     uint256 public constant MAX_QUOTE_ORACLE_DEVIATION_BPS = 750;
     uint64 public constant CONFIG_DELAY = 0;
     uint256 public constant BORROW_FEE_DENOMINATOR = BPS * 1 hours;
+    uint256 public constant BORROW_FEE_USDG_DENOMINATOR = E18 * USDG_TO_E18;
     uint256 public constant MAX_MARKETS = 10;
     /// @notice Positions must be closed or permissionlessly settled within this period.
     uint256 public constant MAX_POSITION_DURATION = 7 days;
@@ -121,6 +122,14 @@ contract FloatClearingHouse {
         uint64 openedAt;
     }
 
+    struct MarketBorrowIndex {
+        // Accumulated price-weighted borrow rates. Exposure changes checkpoint
+        // the old skew before a new rate can affect any existing position.
+        uint256 longIndexE18;
+        uint256 shortIndexE18;
+        uint64 updatedAt;
+    }
+
     struct TradeQuote {
         bytes32 marketId;
         address trader;
@@ -151,11 +160,14 @@ contract FloatClearingHouse {
     mapping(bytes32 => Market) public markets;
     mapping(bytes32 => MarketExposure) public marketExposure;
     mapping(bytes32 => MarketEntryValue) public marketEntryValue;
+    mapping(bytes32 => MarketBorrowIndex) public marketBorrowIndex;
     mapping(address => mapping(bytes32 => Position)) private positions;
+    // Each position pays only the side-index growth since its last checkpoint.
+    mapping(address => mapping(bytes32 => uint256)) public positionBorrowIndex;
+    mapping(address => mapping(bytes32 => bool)) private positionBorrowIndexInitialized;
     mapping(address => mapping(bytes32 => uint256)) public borrowFeeRemainder;
     mapping(bytes32 => Market) public pendingMarkets;
     mapping(bytes32 => uint64) public pendingMarketAt;
-    mapping(address => mapping(bytes32 => uint64)) public lastBorrowAccrualAt;
     mapping(address => mapping(uint64 => bool)) public quoteUsed;
     mapping(address => uint64) public minimumValidNonce;
     mapping(address => uint256) public claimableBalance;
@@ -589,9 +601,13 @@ contract FloatClearingHouse {
     function _applyPositionTrade(TradeQuote calldata quote, Position storage position, int256 nextSize) private {
         int256 previousSize = position.sizeE18;
         uint256 previousEntry = position.entryPriceE18;
+        _accrueMarketBorrowIndex(quote.marketId);
         _accrueBorrowFee(msg.sender, quote.marketId, position);
         _applyTrade(position, quote.sizeDeltaE18, quote.executionPriceE18, nextSize == 0, msg.sender);
         _updateExposure(quote.marketId, previousSize, previousEntry, position.sizeE18, position.entryPriceE18);
+        positionBorrowIndex[msg.sender][quote.marketId] = _borrowIndexForPosition(quote.marketId, position.sizeE18);
+        positionBorrowIndexInitialized[msg.sender][quote.marketId] = position.sizeE18 != 0;
+        if (position.sizeE18 == 0) delete borrowFeeRemainder[msg.sender][quote.marketId];
         if (previousSize == 0 && nextSize != 0) {
             ++activePositionCount;
             position.openedAt = uint64(block.timestamp);
@@ -610,6 +626,7 @@ contract FloatClearingHouse {
         uint256 price = _currentPrice(marketId, markets[marketId]);
         if (!expired && _meetsMaintenanceMargin(position, price, markets[marketId])) revert PositionNotLiquidatable();
         uint256 marginBeforeAccrual = position.marginUsdg;
+        _accrueMarketBorrowIndex(marketId);
         _accrueBorrowFee(trader, marketId, position);
         totalOpenPositionMarginUsdg -= marginBeforeAccrual;
         totalOpenPositionMarginUsdg += position.marginUsdg;
@@ -631,6 +648,9 @@ contract FloatClearingHouse {
         (uint256 penalty, uint256 liquidatorReward, uint256 returned) =
             _settleMargin(position, pnl, positionNotional, expired, trader);
         delete positions[trader][marketId];
+        delete positionBorrowIndex[trader][marketId];
+        delete positionBorrowIndexInitialized[trader][marketId];
+        delete borrowFeeRemainder[trader][marketId];
         --activePositionCount;
         _creditClaimable(msg.sender, liquidatorReward);
         _creditClaimable(trader, returned);
@@ -694,42 +714,69 @@ contract FloatClearingHouse {
 
     function _accrueBorrowFee(address trader, bytes32 marketId, Position storage position) private {
         if (position.sizeE18 == 0) {
-            lastBorrowAccrualAt[trader][marketId] = uint64(block.timestamp);
             return;
         }
-        uint64 last = lastBorrowAccrualAt[trader][marketId];
-        lastBorrowAccrualAt[trader][marketId] = uint64(block.timestamp);
-        if (last == 0 || block.timestamp <= last) return;
-        (uint256 rate, uint256 notional, bool feeApplies) = _borrowFeeParameters(marketId, position);
-        if (!feeApplies) return;
-        uint256 numerator = notional * rate * (block.timestamp - last) + borrowFeeRemainder[trader][marketId];
-        uint256 fee = numerator / BORROW_FEE_DENOMINATOR;
-        borrowFeeRemainder[trader][marketId] = numerator % BORROW_FEE_DENOMINATOR;
+        uint256 currentIndex = _borrowIndexForPosition(marketId, position.sizeE18);
+        uint256 previousIndex = positionBorrowIndex[trader][marketId];
+        if (!positionBorrowIndexInitialized[trader][marketId]) {
+            positionBorrowIndex[trader][marketId] = currentIndex;
+            positionBorrowIndexInitialized[trader][marketId] = true;
+            return;
+        }
+        if (currentIndex <= previousIndex) return;
+        uint256 numerator =
+            _abs(position.sizeE18) * (currentIndex - previousIndex) + borrowFeeRemainder[trader][marketId];
+        uint256 fee = numerator / BORROW_FEE_USDG_DENOMINATOR;
+        borrowFeeRemainder[trader][marketId] = numerator % BORROW_FEE_USDG_DENOMINATOR;
+        positionBorrowIndex[trader][marketId] = currentIndex;
         if (fee > position.marginUsdg) fee = position.marginUsdg;
         if (fee != 0) {
             position.marginUsdg -= fee;
             _safeApprove(address(vault), fee);
             IFloatVaultInsurance(address(vault)).fundInsuranceFromClearingHouse(fee);
-            emit BorrowFeeCharged(trader, marketId, fee, rate);
+            emit BorrowFeeCharged(trader, marketId, fee, _currentBorrowRateBpsPerHour(marketId, position));
         }
     }
 
-    function _borrowFeeParameters(bytes32 marketId, Position storage position)
-        private
-        view
-        returns (uint256 rate, uint256 notional, bool feeApplies)
-    {
+    function _accrueMarketBorrowIndex(bytes32 marketId) private {
+        MarketBorrowIndex storage index = marketBorrowIndex[marketId];
+        uint64 nowAt = uint64(block.timestamp);
+        if (index.updatedAt == 0) {
+            index.updatedAt = nowAt;
+            return;
+        }
+        if (nowAt <= index.updatedAt) return;
+        uint256 elapsed = nowAt - index.updatedAt;
+        index.updatedAt = nowAt;
         MarketExposure memory exposure = marketExposure[marketId];
-        uint256 longNotional = _notionalUsdgRoundingUp(_asInt256(exposure.longBaseE18), _lastKnownPrice(marketId));
-        uint256 shortNotional = _notionalUsdgRoundingUp(_asInt256(exposure.shortBaseE18), _lastKnownPrice(marketId));
+        uint256 price = _lastKnownPrice(marketId);
+        uint256 longNotional = _notionalUsdgRoundingUp(_asInt256(exposure.longBaseE18), price);
+        uint256 shortNotional = _notionalUsdgRoundingUp(_asInt256(exposure.shortBaseE18), price);
         uint256 gross = longNotional + shortNotional;
-        if (gross == 0 || longNotional == shortNotional) return (0, 0, false);
-        bool longCrowded = longNotional > shortNotional;
-        if ((position.sizeE18 > 0) != longCrowded) return (0, 0, false);
+        if (gross == 0 || longNotional == shortNotional) return;
         uint256 skew = longNotional > shortNotional ? longNotional - shortNotional : shortNotional - longNotional;
-        rate = BASE_BORROW_FEE_BPS_PER_HOUR + MAX_SKEW_BORROW_FEE_BPS_PER_HOUR * skew / gross;
-        notional = _notionalUsdgRoundingUp(position.sizeE18, _lastKnownPrice(marketId));
-        feeApplies = true;
+        uint256 rate = BASE_BORROW_FEE_BPS_PER_HOUR + MAX_SKEW_BORROW_FEE_BPS_PER_HOUR * skew / gross;
+        uint256 increment = price * rate * elapsed / BORROW_FEE_DENOMINATOR;
+        if (longNotional > shortNotional) index.longIndexE18 += increment;
+        else index.shortIndexE18 += increment;
+    }
+
+    function _borrowIndexForPosition(bytes32 marketId, int256 sizeE18) private view returns (uint256) {
+        MarketBorrowIndex memory index = marketBorrowIndex[marketId];
+        return sizeE18 >= 0 ? index.longIndexE18 : index.shortIndexE18;
+    }
+
+    function _currentBorrowRateBpsPerHour(bytes32 marketId, Position storage position) private view returns (uint256) {
+        MarketExposure memory exposure = marketExposure[marketId];
+        uint256 price = _lastKnownPrice(marketId);
+        uint256 longNotional = _notionalUsdgRoundingUp(_asInt256(exposure.longBaseE18), price);
+        uint256 shortNotional = _notionalUsdgRoundingUp(_asInt256(exposure.shortBaseE18), price);
+        uint256 gross = longNotional + shortNotional;
+        if (gross == 0 || longNotional == shortNotional || ((position.sizeE18 > 0) != (longNotional > shortNotional))) {
+            return 0;
+        }
+        uint256 skew = longNotional > shortNotional ? longNotional - shortNotional : shortNotional - longNotional;
+        return BASE_BORROW_FEE_BPS_PER_HOUR + MAX_SKEW_BORROW_FEE_BPS_PER_HOUR * skew / gross;
     }
 
     function _enforceExposureLimits(bytes32 tradedMarketId, uint256 executionPrice) private view {

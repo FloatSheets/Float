@@ -3,7 +3,7 @@ import { createPublicClient, createWalletClient, http, parseAbi, type Address, t
 import { privateKeyToAccount } from "viem/accounts";
 import { defineChain } from "viem";
 
-import { contractConfigForVersion, type AppConfig, type ContractVersion } from "../config";
+import { contractConfigForVersion, isSilverlakeConfigured, type AppConfig, type ContractVersion } from "../config";
 import { safeErrorMessage } from "../safe-error";
 import { marketId } from "../chain/protocol";
 import type { RpcTransport } from "../chain/rpc";
@@ -60,11 +60,12 @@ export class OraclePublisher {
     );
     // One publisher wallet serves both contracts. Send in sequence so concurrent
     // writes cannot race for the same account nonce.
-    for (const row of rows) for (const version of ["amber", "jasper", "meadow", "legacy-orion"] as const) {
+    for (const row of rows) for (const version of ["silverlake", "amber", "jasper", "meadow", "legacy-orion"] as const) {
       try {
+        if (version === "silverlake" && !isSilverlakeConfigured(this.config)) continue;
         const versionConfig = contractConfigForVersion(this.config, version);
         const id = marketId(row.symbol);
-        if (version === "amber") {
+        if (version === "silverlake" || version === "amber") {
           const [market, snapshot] = await Promise.all([
             readClearingMarket(this.rpc, versionConfig.FLOAT_CLEARING_HOUSE_ADDRESS as Address, id),
             this.database.query<{ status: string; oracle_tradable: boolean | null }>(
@@ -88,7 +89,7 @@ export class OraclePublisher {
   }
 
   /** Refreshes a market immediately before an API-issued open or close quote. */
-  async ensureFreshMarket(symbol: string, version: ContractVersion = "amber"): Promise<void> {
+  async ensureFreshMarket(symbol: string, version: ContractVersion = "silverlake"): Promise<void> {
     const normalized = symbol.trim().toUpperCase();
     const key = `${version}:${normalized}`;
     const inFlight = this.refreshing.get(key);

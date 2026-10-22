@@ -1,10 +1,11 @@
 import { createServerFn } from "@tanstack/react-start";
+import { getRequestIP } from "@tanstack/react-start/server";
 
 type JsonRecord = Record<string, unknown>;
-type ContractVersion = "amber" | "jasper" | "meadow" | "legacy-orion";
+type ContractVersion = "silverlake" | "amber" | "jasper" | "meadow" | "legacy-orion";
 
 function versionOf(value: unknown): ContractVersion {
-  return value === "legacy-orion" ? "legacy-orion" : value === "jasper" ? "jasper" : value === "meadow" ? "meadow" : "amber";
+  return value === "legacy-orion" ? "legacy-orion" : value === "jasper" ? "jasper" : value === "meadow" ? "meadow" : value === "amber" ? "amber" : "silverlake";
 }
 
 function apiOrigin() {
@@ -13,8 +14,23 @@ function apiOrigin() {
   return origin.replace(/\/$/, "");
 }
 
+function apiHeaders(version: ContractVersion, json = false): HeadersInit {
+  const headers: Record<string, string> = {
+    accept: "application/json",
+    "x-floatsheets-contract-version": version,
+  };
+  if (json) headers["content-type"] = "application/json";
+  const secret = process.env["FLOATSHEETS_SERVER_API_SECRET"];
+  const clientIp = getRequestIP({ xForwardedFor: true });
+  if (secret) {
+    headers["x-floatsheets-server-secret"] = secret;
+    if (clientIp) headers["x-floatsheets-client-ip"] = clientIp;
+  }
+  return headers;
+}
+
 async function getJson<T extends JsonRecord>(path: string, version: ContractVersion = "amber"): Promise<T> {
-  const response = await fetch(`${apiOrigin()}${path}`, { headers: { accept: "application/json", "x-floatsheets-contract-version": version } });
+  const response = await fetch(`${apiOrigin()}${path}`, { headers: apiHeaders(version) });
   if (!response.ok) throw new Error(`FloatSheets API returned ${response.status} for ${path}.`);
   return (await response.json()) as T;
 }
@@ -64,7 +80,7 @@ export const getTradeTransaction = createServerFn({ method: "POST" })
     const version = versionOf(data["contractVersion"]);
     const response = await fetch(`${apiOrigin()}/v1/protocol/transactions/trade-quote`, {
       method: "POST",
-      headers: { accept: "application/json", "content-type": "application/json", "x-floatsheets-contract-version": version },
+      headers: apiHeaders(version, true),
       body: JSON.stringify(data),
     });
     if (!response.ok) {
@@ -87,7 +103,7 @@ export const checkTrade = createServerFn({ method: "POST" })
   .handler(async ({ data }): Promise<any> => {
     const version = versionOf(data["contractVersion"]);
     const response = await fetch(`${apiOrigin()}/v1/protocol/transactions/trade-check`, {
-      method: "POST", headers: { accept: "application/json", "content-type": "application/json", "x-floatsheets-contract-version": version }, body: JSON.stringify(data),
+      method: "POST", headers: apiHeaders(version, true), body: JSON.stringify(data),
     });
     if (!response.ok) {
       const body = await response.json().catch(() => ({})) as { error?: string };
@@ -109,7 +125,7 @@ export const getCloseTransaction = createServerFn({ method: "POST" })
     const version = versionOf(data["contractVersion"]);
     const response = await fetch(`${apiOrigin()}/v1/protocol/transactions/close-quote`, {
       method: "POST",
-      headers: { accept: "application/json", "content-type": "application/json", "x-floatsheets-contract-version": version },
+      headers: apiHeaders(version, true),
       body: JSON.stringify(data),
     });
     if (!response.ok) {
@@ -137,7 +153,7 @@ export const getTransactionCalldata = createServerFn({ method: "POST" })
     const version = versionOf(data["contractVersion"]);
     const response = await fetch(`${apiOrigin()}/v1/protocol/transactions/${String(data["action"] ?? "")}`, {
       method: "POST",
-      headers: { accept: "application/json", "content-type": "application/json", "x-floatsheets-contract-version": version },
+      headers: apiHeaders(version, true),
       body: JSON.stringify(data["payload"] ?? {}),
     });
     if (!response.ok) throw new Error(`Transaction request failed with ${response.status}.`);

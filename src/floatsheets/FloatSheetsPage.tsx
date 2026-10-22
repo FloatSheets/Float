@@ -3,7 +3,7 @@ import { pages } from "./pages";
 import { installWalletButton } from "@/lib/walletconnect";
 import { getLiveMarket, getMarketHistory, getMarkets } from "@/lib/server-api";
 
-type DashboardContractVersion = "amber" | "meadow" | "legacy-orion";
+type DashboardContractVersion = "silverlake" | "amber" | "meadow" | "legacy-orion";
 type DashboardServerApi = {
   getMarkets: (version: DashboardContractVersion) => Promise<any>;
   getLiveMarket: (symbol: string, version: DashboardContractVersion) => Promise<any>;

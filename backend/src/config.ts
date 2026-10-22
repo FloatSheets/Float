@@ -2,7 +2,7 @@ import { z } from "zod";
 import { privateKeyToAccount } from "viem/accounts";
 
 const address = z.string().regex(/^0x[a-fA-F0-9]{40}$/, "must be an EVM address");
-export const contractVersionSchema = z.enum(["amber", "jasper", "meadow", "legacy-orion"]);
+export const contractVersionSchema = z.enum(["silverlake", "amber", "jasper", "meadow", "legacy-orion"]);
 export type ContractVersion = z.infer<typeof contractVersionSchema>;
 
 const schema = z.object({
@@ -13,6 +13,9 @@ const schema = z.object({
   AMBER_FLOAT_CLEARING_HOUSE_ADDRESS: address.optional(),
   AMBER_FLOAT_ORACLE_ADDRESS: address.optional(),
   AMBER_FLOAT_VAULT_ADDRESS: address.optional(),
+  SILVERLAKE_FLOAT_CLEARING_HOUSE_ADDRESS: address.default("0xC197d8F546CC56A4148b30A74d3A2c5975255C6A"),
+  SILVERLAKE_FLOAT_ORACLE_ADDRESS: address.default("0xf935b2439E4B74F9Bd100148e4eFe3dE94DEF315"),
+  SILVERLAKE_FLOAT_VAULT_ADDRESS: address.default("0x9DA17d606453552bc7CD54f4d44813C8Acff55c4"),
   MEADOW_FLOAT_CLEARING_HOUSE_ADDRESS: address.default("0xc1AfA648C30090Aa8fDd3fbca384bd65b52B58Dd"),
   MEADOW_FLOAT_ORACLE_ADDRESS: address.default("0x7Fda40E8FD27cA067C9Ee23EA0Fd0cb8Bb786A8a"),
   MEADOW_FLOAT_VAULT_ADDRESS: address.default("0xb74eD266A95d8393cDaF2Fa6cADd98b5a1D91875"),
@@ -42,12 +45,29 @@ const schema = z.object({
   QUOTE_SIGNER_PRIVATE_KEY: z.string().regex(/^0x[a-fA-F0-9]{64}$/, "must be a 32-byte private key"),
   RHC_ID: z.coerce.number().int().refine((value) => value === 4663, "must be Robinhood Chain (4663)"),
   RHC_RPC_URL: z.url(),
+  SERVER_API_SHARED_SECRET: z.string().min(32).optional(),
   UNISWAP_TWAP_WINDOW_SECONDS: z.coerce.number().int().min(60).max(86_400)
 });
 
 export type AppConfig = z.infer<typeof schema>;
 
+export function isSilverlakeConfigured(config: AppConfig): boolean {
+  return config.NODE_ENV === "test" || Boolean(
+    config.SILVERLAKE_FLOAT_CLEARING_HOUSE_ADDRESS
+    && config.SILVERLAKE_FLOAT_ORACLE_ADDRESS
+    && config.SILVERLAKE_FLOAT_VAULT_ADDRESS
+  );
+}
+
 export function contractConfigForVersion(config: AppConfig, version: ContractVersion): AppConfig {
+  if (version === "silverlake") {
+    if (!isSilverlakeConfigured(config)) throw new Error("Silverlake contract addresses are not configured");
+    const clearingHouse = config.SILVERLAKE_FLOAT_CLEARING_HOUSE_ADDRESS ?? (config.NODE_ENV === "test" ? config.FLOAT_CLEARING_HOUSE_ADDRESS : undefined);
+    const oracle = config.SILVERLAKE_FLOAT_ORACLE_ADDRESS ?? (config.NODE_ENV === "test" ? config.FLOAT_ORACLE_ADDRESS : undefined);
+    const vault = config.SILVERLAKE_FLOAT_VAULT_ADDRESS ?? (config.NODE_ENV === "test" ? config.FLOAT_VAULT_ADDRESS : undefined);
+    if (!clearingHouse || !oracle || !vault) throw new Error("Silverlake contract addresses are not configured");
+    return { ...config, FLOAT_CLEARING_HOUSE_ADDRESS: clearingHouse, FLOAT_ORACLE_ADDRESS: oracle, FLOAT_VAULT_ADDRESS: vault };
+  }
   if (version === "amber") {
     const clearingHouse = config.AMBER_FLOAT_CLEARING_HOUSE_ADDRESS ?? (config.NODE_ENV === "test" ? config.FLOAT_CLEARING_HOUSE_ADDRESS : "0x022Cc8DFf79414DcB56812Bd93601854E2b7A700");
     const oracle = config.AMBER_FLOAT_ORACLE_ADDRESS ?? (config.NODE_ENV === "test" ? config.FLOAT_ORACLE_ADDRESS : "0x71B5FBd2df7eF976d02A4b4090450EEE24F77Ce0");

@@ -27,6 +27,9 @@ const config = loadConfig({
   AMBER_FLOAT_CLEARING_HOUSE_ADDRESS: "0x6666666666666666666666666666666666666666",
   AMBER_FLOAT_ORACLE_ADDRESS: "0x7777777777777777777777777777777777777777",
   AMBER_FLOAT_VAULT_ADDRESS: "0x8888888888888888888888888888888888888888",
+  SILVERLAKE_FLOAT_CLEARING_HOUSE_ADDRESS: "0x9999999999999999999999999999999999999999",
+  SILVERLAKE_FLOAT_ORACLE_ADDRESS: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  SILVERLAKE_FLOAT_VAULT_ADDRESS: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   LEGACY_ORION_FLOAT_CLEARING_HOUSE_ADDRESS: "0x2222222222222222222222222222222222222222",
   LEGACY_ORION_FLOAT_ORACLE_ADDRESS: "0x3333333333333333333333333333333333333333",
   LEGACY_ORION_FLOAT_VAULT_ADDRESS: "0x4444444444444444444444444444444444444444",
@@ -70,18 +73,18 @@ async function listening(app: express.Express): Promise<Server> {
 const server = await listening(app);
 afterAll(() => new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())));
 
-test("publishes Amber addresses by default and supports paused and legacy selections", async () => {
+test("publishes Silverlake addresses by default and supports retired and legacy selections", async () => {
   const response = await request(server).get("/v1/protocol");
   expect(response.status).toBe(200);
   expect(response.body).toEqual({
     chain_id: 4663,
     settlement_asset: "USDG",
     settlement_asset_address: config.USDG_ADDRESS,
-    contract_version: "amber",
-    contract_name: "FloatSheets Amber",
-    oracle: config.AMBER_FLOAT_ORACLE_ADDRESS,
-    vault: config.AMBER_FLOAT_VAULT_ADDRESS,
-    clearing_house: config.AMBER_FLOAT_CLEARING_HOUSE_ADDRESS,
+    contract_version: "silverlake",
+    contract_name: "FloatSheets Silverlake",
+    oracle: config.SILVERLAKE_FLOAT_ORACLE_ADDRESS,
+    vault: config.SILVERLAKE_FLOAT_VAULT_ADDRESS,
+    clearing_house: config.SILVERLAKE_FLOAT_CLEARING_HOUSE_ADDRESS,
     oracle_signer: config.ORACLE_SIGNER_ADDRESS,
     quote_signer: config.QUOTE_SIGNER_ADDRESS,
     max_position_duration_seconds: 604800,
@@ -153,7 +156,7 @@ test("blocks new position issuance for retired versions", async () => {
       .set("x-floatsheets-contract-version", version)
       .send({ market: "NVDA", trader: "0x1111111111111111111111111111111111111111", isLong: true, notionalUsdg: "1000000" });
     expect(response.status).toBe(409);
-    expect(response.body.error).toContain("Amber");
+    expect(response.body.error).toContain("Silverlake");
   }
 });
 

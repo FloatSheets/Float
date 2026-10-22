@@ -5,7 +5,7 @@ import type { Address } from "viem";
 import type { Hex } from "viem";
 import type { Pool } from "pg";
 
-import { contractConfigForVersion, type AppConfig } from "../config";
+import { contractConfigForVersion, isSilverlakeConfigured, type AppConfig } from "../config";
 import { contractVersionFromRequest } from "../contract-version";
 import {
   approveUsdG, claimDeferredPayout, claimProtocolBalance, claimVaultDeposit, claimVaultWithdrawal, configureMarket, depositMargin, depositVault, enableMarket, liquidate, marketId, settleVaultQueue, startVaultQueueEpoch, withdrawMargin, withdrawVault
@@ -156,6 +156,9 @@ export function createProtocolTransactionsRouter(
 ): Router {
   const router = Router();
   const versions = {
+    ...(isSilverlakeConfigured(config) ? {
+      silverlake: createProtocolTransactionsRouterForConfig(contractConfigForVersion(config, "silverlake"), database, rpc, oraclePublisher)
+    } : {}),
     amber: createProtocolTransactionsRouterForConfig(contractConfigForVersion(config, "amber"), database, rpc, oraclePublisher),
     jasper: createProtocolTransactionsRouterForConfig(contractConfigForVersion(config, "jasper"), database, rpc, oraclePublisher),
     meadow: createProtocolTransactionsRouterForConfig(contractConfigForVersion(config, "meadow"), database, rpc, oraclePublisher),
@@ -163,11 +166,16 @@ export function createProtocolTransactionsRouter(
   };
   router.use((request, response, next) => {
     const version = contractVersionFromRequest(request);
-    if (version !== "amber" && ["/trade-quote", "/trade-check", "/quote"].includes(request.path)) {
-      response.status(409).json({ error: `New position opens are disabled on ${version}; select FloatSheets Amber.` });
+    if (version !== "silverlake" && ["/trade-quote", "/trade-check", "/quote"].includes(request.path)) {
+      response.status(409).json({ error: `New position opens are disabled on ${version}; select FloatSheets Silverlake.` });
       return;
     }
-    versions[version](request, response, next);
+    const versionRouter = versions[version as keyof typeof versions];
+    if (!versionRouter) {
+      response.status(503).json({ error: "Silverlake contracts are not deployed or configured" });
+      return;
+    }
+    versionRouter(request, response, next);
   });
   return router;
 }

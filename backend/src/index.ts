@@ -2,7 +2,7 @@ import "dotenv/config";
 
 import { app } from "./app";
 import { createRpcTransport } from "./chain/rpc";
-import { contractConfigForVersion, loadConfig } from "./config";
+import { contractConfigForVersion, isSilverlakeConfigured, loadConfig } from "./config";
 import { db } from "./db";
 import { migrate } from "./db/migrate";
 import { MarketMonitor } from "./markets/monitor";
@@ -15,6 +15,7 @@ import { OraclePublisher } from "./oracle/publisher";
 const config = loadConfig();
 const meadowConfig = contractConfigForVersion(config, "meadow");
 const jasperConfig = contractConfigForVersion(config, "jasper");
+const silverlakeConfig = isSilverlakeConfigured(config) ? contractConfigForVersion(config, "silverlake") : null;
 const amberConfig = contractConfigForVersion(config, "amber");
 const legacyConfig = contractConfigForVersion(config, "legacy-orion");
 const port = Number(process.env.PORT ?? 3001);
@@ -24,6 +25,7 @@ await migrate();
 const monitor = new MarketMonitor(db, rpc, config.UNISWAP_TWAP_WINDOW_SECONDS);
 const oraclePublisher = new OraclePublisher(db, rpc, config);
 app.use("/v1/markets", createMarketsRouter(db, config.ORACLE_PRICE_MAX_AGE_SECONDS, {
+  ...(silverlakeConfig ? { silverlake: { rpc, clearingHouse: silverlakeConfig.FLOAT_CLEARING_HOUSE_ADDRESS as `0x${string}`, oracle: silverlakeConfig.FLOAT_ORACLE_ADDRESS as `0x${string}` } } : {}),
   amber: { rpc, clearingHouse: amberConfig.FLOAT_CLEARING_HOUSE_ADDRESS as `0x${string}`, oracle: amberConfig.FLOAT_ORACLE_ADDRESS as `0x${string}` },
   jasper: { rpc, clearingHouse: jasperConfig.FLOAT_CLEARING_HOUSE_ADDRESS as `0x${string}`, oracle: jasperConfig.FLOAT_ORACLE_ADDRESS as `0x${string}` },
   meadow: { rpc, clearingHouse: meadowConfig.FLOAT_CLEARING_HOUSE_ADDRESS as `0x${string}`, oracle: meadowConfig.FLOAT_ORACLE_ADDRESS as `0x${string}` },

@@ -5,7 +5,7 @@ import {Script} from "forge-std/Script.sol";
 import {FloatOracle} from "../src/FloatOracle.sol";
 import {FloatClearingHouse} from "../src/FloatClearingHouse.sol";
 
-/// @notice Registers Amber launch markets immediately. Any scheduled market or
+/// @notice Registers Silverlake launch markets immediately. Any scheduled market or
 /// oracle change can be applied immediately because configuration delay is zero.
 contract ConfigureFloatMarkets is Script {
     error InvalidBatch();

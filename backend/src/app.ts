@@ -1,5 +1,6 @@
 import express from "express";
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
+import { isIP } from "node:net";
 
 import { healthRouter } from "./routes/health";
 
@@ -9,10 +10,15 @@ type RateWindow = { count: number; resetAt: number };
 const rateWindows = new Map<string, RateWindow>();
 const RATE_WINDOW_MS = 60_000;
 const GENERAL_RATE_LIMIT = 120;
-const TRANSACTION_RATE_LIMIT = 30;
+const OPEN_QUOTE_RATE_LIMIT = 30;
+const CLOSE_QUOTE_RATE_LIMIT = 180;
+const OTHER_TRANSACTION_RATE_LIMIT = 60;
+const serverApiSecret = process.env["SERVER_API_SHARED_SECRET"];
 
 app.disable("x-powered-by");
-app.set("trust proxy", 1);
+// Trust the browser IP forwarded by the frontend server only when it proves
+// possession of the server-to-server secret. Ignore client supplied XFF.
+app.set("trust proxy", false);
 app.use(express.json({ limit: "1mb" }));
 
 app.use((request, response, next) => {
@@ -24,8 +30,27 @@ app.use((request, response, next) => {
 
   const now = Date.now();
   const transactionRoute = request.path.startsWith("/v1/protocol/transactions");
-  const limit = transactionRoute ? TRANSACTION_RATE_LIMIT : GENERAL_RATE_LIMIT;
-  const key = `${request.ip ?? request.socket.remoteAddress ?? "unknown"}:${transactionRoute ? "transactions" : "api"}`;
+  const suppliedSecret = request.header("x-floatsheets-server-secret");
+  const trustedSecret = Boolean(serverApiSecret && suppliedSecret
+    && Buffer.byteLength(serverApiSecret) === Buffer.byteLength(suppliedSecret)
+    && timingSafeEqual(Buffer.from(serverApiSecret), Buffer.from(suppliedSecret)));
+  if (transactionRoute && process.env["NODE_ENV"] === "production" && !trustedSecret) {
+    response.status(503).json({ error: "Trusted frontend server request required" });
+    return;
+  }
+  const suppliedIp = request.header("x-floatsheets-client-ip")?.trim();
+  const clientIp = trustedSecret && suppliedIp && isIP(suppliedIp) ? suppliedIp : request.socket.remoteAddress ?? "unknown";
+  const path = request.path;
+  const closeQuote = path === "/v1/protocol/transactions/close-quote";
+  const openQuote = path === "/v1/protocol/transactions/trade-quote" || path === "/v1/protocol/transactions/trade-check" || path === "/v1/protocol/transactions/quote";
+  const trader = typeof request.body?.trader === "string" && /^0x[0-9a-fA-F]{40}$/.test(request.body.trader)
+    ? request.body.trader.toLowerCase()
+    : "anonymous";
+  const limit = transactionRoute
+    ? closeQuote ? CLOSE_QUOTE_RATE_LIMIT : openQuote ? OPEN_QUOTE_RATE_LIMIT : OTHER_TRANSACTION_RATE_LIMIT
+    : GENERAL_RATE_LIMIT;
+  const bucket = transactionRoute ? closeQuote ? "close" : openQuote ? "open" : path : "api";
+  const key = transactionRoute ? `${clientIp}:${trader}:${bucket}` : `${clientIp}:api`;
   let window = rateWindows.get(key);
   if (!window || window.resetAt <= now) {
     window = { count: 0, resetAt: now + RATE_WINDOW_MS };

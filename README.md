@@ -26,12 +26,19 @@ AMC and GME remain excluded until their direct stock/USDG pool quotes pass valid
 
 | Version | Status | Dashboard behavior |
 | --- | --- | --- |
-| FloatSheets Amber | Deployed and runtime-bytecode verified; configuration has zero delay; 7 markets active and 3 close-only | Selected by default |
+| FloatSheets Silverlake | Deployed and markets registered; oracle publishing needs publisher gas | Default |
+| FloatSheets Amber | Deployed predecessor; retain for existing position close and vault access | Retired, disabled in selector |
 | FloatSheets Jasper | Paused on-chain | Visible in settings, disabled |
 | FloatSheets Meadow | Paused on-chain | Visible in settings, disabled |
 | FloatSheets Legacy Orion | Legacy deployment | Vault viewing and withdrawals; trade, portfolio, oracle, and listings pages are disabled |
 
-Amber is not an upgrade to Jasper or Meadow. Its clearing house, oracle, and vault are new addresses. Jasper and Meadow markets are paused; existing positions can still be reduced and vault withdrawals remain available. Amber markets are registered and oracle-enabled without a time delay. The oracle publisher must post fresh prices before trade quotes can execute. The machine-readable deployment record is [`contracts/deployments/amber-4663.json`](contracts/deployments/amber-4663.json).
+Silverlake is a new immutable release because the borrow-fee fix changes contract logic. Its cumulative, side-specific indexes ensure market-skew changes only affect fees accrued after that skew was in effect. Runtime bytecode matches the local build and its market configuration transactions are recorded in [`contracts/deployments/silverlake-4663.json`](contracts/deployments/silverlake-4663.json). Amber, Jasper, and Meadow remain separate releases; new positions should use Silverlake after fresh oracle prices are publishing.
+
+| Silverlake contract | Robinhood Chain address |
+| --- | --- |
+| Clearing house | `0xC197d8F546CC56A4148b30A74d3A2c5975255C6A` |
+| Oracle | `0xf935b2439E4B74F9Bd100148e4eFe3dE94DEF315` |
+| Vault | `0x9DA17d606453552bc7CD54f4d44813C8Acff55c4` |
 
 | Amber contract | Robinhood Chain address |
 | --- | --- |
@@ -121,13 +128,13 @@ Use a Render **Native Environment** service rooted at `backend`:
 | Start command | `bun run start` |
 | Health check | `/health` |
 
-Set `DATABASE_URL`, `DATABASE_PASSWORD`, `RHC_ID`, `RHC_RPC_URL`, `PROTOCOL_FEE_WALLET`, `FRONTEND_URL`, `NODE_ENV=production`, and Render’s `PORT`. The backend defaults to the deployed Amber addresses; the `AMBER_FLOAT_*_ADDRESS` variables in `backend/.env.example` can override them. Keep Jasper, Meadow, and Orion address variables populated for retired-version display and vault flows. The API applies migrations during startup.
+Set `DATABASE_URL`, `DATABASE_PASSWORD`, `RHC_ID`, `RHC_RPC_URL`, `PROTOCOL_FEE_WALLET`, `FRONTEND_URL`, `NODE_ENV=production`, and Render’s `PORT`. Set `SILVERLAKE_FLOAT_*_ADDRESS` in Render to the verified deployment addresses below (the backend code also defaults to these addresses). Keep Amber, Jasper, Meadow, and Orion address variables populated for retired-version display and vault flows. Set `SERVER_API_SHARED_SECRET` to the same random value used by Vercel's `FLOATSHEETS_SERVER_API_SECRET`; these authenticate forwarded client IPs for close-quote rate limits. The API applies migrations during startup.
 
 The public repository's GitHub workflow also publishes `ghcr.io/floatsheets/float-backend:latest` and a SHA-tagged image. If Render is configured to pull the GHCR image instead, provide registry credentials when the package is private. Set `RENDER_DEPLOY_HOOK_URL` in the public repository's Actions secrets to have successful backend image builds trigger Render automatically.
 
 ### Vercel frontend
 
-Connect the repository with the root directory set to the repository root and use `bun run build` as the build command. Set `FLOATSHEETS_API_URL` to the deployed backend URL as a server-only Vercel environment variable. Browser market-data and protocol requests go through TanStack Start server functions; do not expose the backend origin through a `VITE_` variable. Never prefix `MASTER_ADMIN_KEY` with `VITE_`.
+Connect the repository with the root directory set to the repository root and use `bun run build` as the build command. Set `FLOATSHEETS_API_URL` to the deployed backend URL and `FLOATSHEETS_SERVER_API_SECRET` to the shared server-to-server secret as server-only Vercel environment variables. Browser market-data and protocol requests go through TanStack Start server functions; do not expose the backend origin or secret through a `VITE_` variable. Never prefix `MASTER_ADMIN_KEY` with `VITE_`.
 
 ## Roadmap
 

@@ -1,6 +1,6 @@
 # FloatSheets contracts
 
-This is the Foundry workspace for FloatSheets on Robinhood Chain (chain ID `4663`). FloatSheets Amber is the new immutable contract set. Jasper and Meadow are retained retired releases; Legacy Orion remains available for vault access.
+This is the Foundry workspace for FloatSheets on Robinhood Chain (chain ID `4663`). FloatSheets Silverlake is the current immutable contract set; Amber, Jasper, and Meadow are retained retired releases, and Legacy Orion remains available for vault access.
 
 FloatSheets Amber is a pool-vs-trader deployment: a single USDG vault backs every market, while traders use isolated USDG margin per market. It has no order book and never matches one trader against another.
 
@@ -10,9 +10,22 @@ FloatSheets Amber is a pool-vs-trader deployment: a single USDG vault backs ever
 
 Jasper risk defaults are explicit, conservative starting values rather than calibrated parameters: 25% stress move on net market skew, a 50% NAV cap on aggregate stress reserves, and borrow fees of 1 bp/hour plus up to 9 bp/hour as skew approaches one-sided. They should be monitored and independently reviewed before increasing risk.
 
-Amber adds no-delay owner, signer, and market configuration, a fixed 7.5% quote/oracle deviation cap, price-jump circuit breaking, borrow-fee remainder accounting, fee floors, queue rounding conservation, and an hourly payout cap whose excess remains claimable. Initial market registration and first oracle enablement are immediate. These changes require an independent review. The source and tests do not alter Jasper or Meadow's deployed bytecode.
+Silverlake retains Amber's no-delay configuration, fixed 7.5% quote/oracle deviation cap, price-jump circuit breaker, fee floors, queue rounding conservation, and hourly payout cap. It replaces retroactive borrow-fee calculation with cumulative side-specific indexes checkpointed before exposure changes. Existing positions remain on their original contracts.
 
-### Current Amber deployment
+### Silverlake deployment
+
+- Oracle: `0xf935b2439E4B74F9Bd100148e4eFe3dE94DEF315`
+- Vault: `0x9DA17d606453552bc7CD54f4d44813C8Acff55c4`
+- Clearing house: `0xC197d8F546CC56A4148b30A74d3A2c5975255C6A`
+- Deployment record: `deployments/silverlake-4663.json`
+- Owner/deployer: `0x4a4c4e9Ad9afc8c5603ef5EA91cEf98CCdFE91f3`
+
+The vault is linked to the clearing house. Ten launch markets are registered;
+NVDA, SPCX, CRCL, MU, TSLA, RDDT, and MSTR are active, while HIMS, PLTR, and
+QUBT are close-only. The backend publisher must have RH ETH to keep its oracle
+attestations fresh.
+
+### Retired Amber deployment
 
 - Oracle: `0x71B5FBd2df7eF976d02A4b4090450EEE24F77Ce0`
 - Vault: `0xD5B0461F09C0Cb67AEd9Ca8e73569EAfa3a2E445`

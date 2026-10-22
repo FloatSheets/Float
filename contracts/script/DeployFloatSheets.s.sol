@@ -6,7 +6,7 @@ import {FloatOracle} from "../src/FloatOracle.sol";
 import {FloatVault} from "../src/FloatVault.sol";
 import {FloatClearingHouse} from "../src/FloatClearingHouse.sol";
 
-/// @notice Deploys a new immutable FloatSheets Amber contract set to Robinhood Chain.
+/// @notice Deploys a new immutable FloatSheets Silverlake contract set to Robinhood Chain.
 ///
 /// Required environment variables:
 /// - USDG_ADDRESS
@@ -31,6 +31,9 @@ contract DeployFloatSheets is Script {
         address feeRecipient = vm.envAddress("PROTOCOL_FEE_WALLET");
         uint64 oracleMaxAge = uint64(vm.envOr("ORACLE_MAX_AGE_SECONDS", uint256(DEFAULT_ORACLE_MAX_AGE_SECONDS)));
 
+        if (owner != deployer) revert("deployer must be the initial owner");
+        // Sign with the CLI-selected keystore or hardware wallet. This keeps the
+        // deployer secret out of process environment variables and script logs.
         vm.startBroadcast();
         oracle = new FloatOracle(owner, oracleSigner);
         vault = new FloatVault(owner, usdg);

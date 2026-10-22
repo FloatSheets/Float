@@ -1,7 +1,7 @@
 import { Router } from "express";
 
 import type { AppConfig } from "../config";
-import { contractConfigForVersion } from "../config";
+import { contractConfigForVersion, isSilverlakeConfigured } from "../config";
 import { contractVersionFromRequest } from "../contract-version";
 
 export function createProtocolRouter(config: AppConfig): Router {
@@ -9,10 +9,14 @@ export function createProtocolRouter(config: AppConfig): Router {
 
   router.get("/", (request, response) => {
     const version = contractVersionFromRequest(request);
+    if (version === "silverlake" && !isSilverlakeConfigured(config)) {
+      response.status(503).json({ error: "Silverlake contracts are not deployed or configured" });
+      return;
+    }
     const versionConfig = contractConfigForVersion(config, version);
     response.json({
       contract_version: version,
-      contract_name: version === "amber" ? "FloatSheets Amber" : version === "jasper" ? "FloatSheets Jasper" : version === "meadow" ? "FloatSheets Meadow" : "FloatSheets Legacy Orion",
+      contract_name: version === "silverlake" ? "FloatSheets Silverlake" : version === "amber" ? "FloatSheets Amber" : version === "jasper" ? "FloatSheets Jasper" : version === "meadow" ? "FloatSheets Meadow" : "FloatSheets Legacy Orion",
       chain_id: config.RHC_ID,
       settlement_asset: "USDG",
       settlement_asset_address: config.USDG_ADDRESS,
