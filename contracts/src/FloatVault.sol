@@ -13,6 +13,7 @@ interface IFloatClearingLiquidity {
     function activePositionCount() external view returns (uint256);
     function unrealizedPnlUsdg() external view returns (int256);
     function totalOpenPositionMarginUsdg() external view returns (uint256);
+    function navPricesFresh() external view returns (bool);
 }
 
 /// @notice A single USDG liquidity vault. The clearing house alone may realize trader PnL.
@@ -32,6 +33,7 @@ contract FloatVault {
     error QueueAlreadySettled();
     error NothingQueued();
     error InsufficientQueuedShares();
+    error StaleNav();
 
     IERC20 public immutable asset;
     address public owner;
@@ -101,6 +103,7 @@ contract FloatVault {
     );
     event QueuedDepositClaimed(uint64 indexed epoch, address indexed account, uint256 shares);
     event QueuedWithdrawalClaimed(uint64 indexed epoch, address indexed account, uint256 assets);
+    event QueuedWithdrawalCancelled(uint64 indexed epoch, address indexed account, uint256 shares);
     event InsuranceFunded(address indexed payer, uint256 assets);
     event InsuranceUsed(uint256 assets);
     event OwnershipTransferStarted(address indexed pendingOwner, uint64 effectiveAt);
@@ -150,7 +153,9 @@ contract FloatVault {
         uint256 seniorClaims = totalPayoutOwed + totalWithdrawalOwed + pendingDepositAssets + insuranceAssets;
         uint256 cashAssets = balance > seniorClaims ? balance - seniorClaims : 0;
         if (clearingHouse == address(0)) return cashAssets;
-        int256 pnl = IFloatClearingLiquidity(clearingHouse).unrealizedPnlUsdg();
+        IFloatClearingLiquidity clearing = IFloatClearingLiquidity(clearingHouse);
+        if (!clearing.navPricesFresh()) return 0;
+        int256 pnl = clearing.unrealizedPnlUsdg();
         if (pnl > 0) {
             uint256 liability = uint256(pnl);
             return liability >= cashAssets ? 0 : cashAssets - liability;
@@ -214,13 +219,18 @@ contract FloatVault {
     function settleQueue() external nonReentrant {
         if (queueEpochSettled) revert QueueAlreadySettled();
         if (block.timestamp < uint256(queueEpochStartedAt) + QUEUE_EPOCH_DURATION) revert QueueNotReady();
+        if (!IFloatClearingLiquidity(clearingHouse).navPricesFresh()) revert StaleNav();
         uint256 nav = totalAssets();
         uint256 supply = totalShares;
         uint256 depositShares = pendingDepositAssets * (supply + VIRTUAL_SHARES) / (nav + VIRTUAL_ASSETS);
         uint256 withdrawalShares = _queuedWithdrawalShares(queueEpoch);
         uint256 withdrawalAssets = withdrawalShares * (nav + VIRTUAL_ASSETS) / (supply + VIRTUAL_SHARES);
         if (withdrawalAssets > IFloatClearingLiquidity(clearingHouse).availableLiquidity()) {
-            revert InsufficientAvailableLiquidity();
+            // Settle deposits and roll the epoch forward even when the complete
+            // withdrawal batch cannot be funded. LPs can cancel these queued
+            // requests and retry in a later epoch after liquidity improves.
+            withdrawalShares = 0;
+            withdrawalAssets = 0;
         }
         settledNav = nav;
         settledShareSupply = supply;
@@ -239,7 +249,7 @@ contract FloatVault {
             withdrawalShares: withdrawalShares,
             withdrawalAssets: withdrawalAssets,
             withdrawalRemaining: withdrawalAssets,
-            withdrawalClaimsRemaining: queuedWithdrawalAccountsCount[queueEpoch],
+            withdrawalClaimsRemaining: withdrawalShares == 0 ? 0 : queuedWithdrawalAccountsCount[queueEpoch],
             settled: true
         });
         totalShares = supply + depositShares - withdrawalShares;
@@ -282,7 +292,8 @@ contract FloatVault {
             ? settlement.withdrawalRemaining
             : shares * (settlement.nav + VIRTUAL_ASSETS) / (settlement.shareSupply + VIRTUAL_SHARES);
         uint256 balance = asset.balanceOf(address(this));
-        uint256 protected = totalPayoutOwed + insuranceAssets + (totalWithdrawalOwed - settlement.withdrawalRemaining);
+        uint256 protected = totalPayoutOwed + insuranceAssets + pendingDepositAssets
+            + (totalWithdrawalOwed - settlement.withdrawalRemaining);
         uint256 available = balance > protected ? balance - protected : 0;
         if (assets > available) revert InsufficientAvailableLiquidity();
         withdrawalClaimed[epoch][msg.sender] = true;
@@ -301,6 +312,20 @@ contract FloatVault {
             totalWithdrawalOwed -= settlement.withdrawalRemaining;
             settlement.withdrawalRemaining = 0;
         }
+    }
+
+    /// @notice Releases a withdrawal request that an underfunded epoch did not settle.
+    function cancelQueuedWithdrawal(uint64 epoch) external nonReentrant returns (uint256 shares) {
+        QueueSettlement storage settlement = queueSettlements[epoch];
+        if (!settlement.settled || settlement.withdrawalShares != 0) revert QueueNotReady();
+        if (withdrawalClaimed[epoch][msg.sender]) revert NothingQueued();
+        shares = queuedWithdrawalOf[epoch][msg.sender];
+        if (shares == 0) revert NothingQueued();
+        withdrawalClaimed[epoch][msg.sender] = true;
+        queuedWithdrawalOf[epoch][msg.sender] = 0;
+        lockedWithdrawalShares[msg.sender] -= shares;
+        --queuedWithdrawalClaimsRemaining;
+        emit QueuedWithdrawalCancelled(epoch, msg.sender, shares);
     }
 
     function startNextQueueEpoch() external nonReentrant {
@@ -370,7 +395,7 @@ contract FloatVault {
             }
             uint256 remaining = allowed - insured;
             uint256 balance = asset.balanceOf(address(this));
-            uint256 protected = totalPayoutOwed + totalWithdrawalOwed + insuranceAssets;
+            uint256 protected = totalPayoutOwed + totalWithdrawalOwed + pendingDepositAssets + insuranceAssets;
             uint256 freeBalance = balance > protected ? balance - protected : 0;
             uint256 lpPaid = remaining < freeBalance ? remaining : freeBalance;
             if (lpPaid != 0) {
@@ -409,7 +434,7 @@ contract FloatVault {
         }
         uint256 balance = asset.balanceOf(address(this));
         uint256 otherOwed = totalPayoutOwed - owed;
-        uint256 protected = otherOwed + totalWithdrawalOwed + insuranceAssets;
+        uint256 protected = otherOwed + totalWithdrawalOwed + pendingDepositAssets + insuranceAssets;
         uint256 available = balance > protected ? balance - protected : 0;
         uint256 lpPaid = allowed - insurancePaid;
         if (lpPaid > owed) lpPaid = owed;

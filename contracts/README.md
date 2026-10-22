@@ -1,6 +1,6 @@
 # FloatSheets contracts
 
-This is the Foundry workspace for FloatSheets on Robinhood Chain (chain ID `4663`). FloatSheets Silverlake is the current immutable contract set; Amber, Jasper, and Meadow are retained retired releases, and Legacy Orion remains available for vault access.
+This is the Foundry workspace for FloatSheets on Robinhood Chain (chain ID `4663`). FloatSheets Goldlake is the current immutable contract set; Silverlake and Amber are retained for existing positions and vault access, Jasper and Meadow are paused, and Legacy Orion remains available for legacy vault access.
 
 FloatSheets Amber is a pool-vs-trader deployment: a single USDG vault backs every market, while traders use isolated USDG margin per market. It has no order book and never matches one trader against another.
 
@@ -11,6 +11,8 @@ FloatSheets Amber is a pool-vs-trader deployment: a single USDG vault backs ever
 Jasper risk defaults are explicit, conservative starting values rather than calibrated parameters: 25% stress move on net market skew, a 50% NAV cap on aggregate stress reserves, and borrow fees of 1 bp/hour plus up to 9 bp/hour as skew approaches one-sided. They should be monitored and independently reviewed before increasing risk.
 
 Silverlake retains Amber's no-delay configuration, fixed 7.5% quote/oracle deviation cap, price-jump circuit breaker, fee floors, queue rounding conservation, and hourly payout cap. It replaces retroactive borrow-fee calculation with cumulative side-specific indexes checkpointed before exposure changes. Existing positions remain on their original contracts.
+
+Goldlake is the current release. In addition to Silverlake's borrow-fee indexing, its oracle does not refresh the timestamp for a rejected price jump. The clearing house exposes NAV freshness for every exposed market and blocks liquidation on a circuit-broken mark. The vault protects pending deposits from payouts, blocks settlement on unsafe NAV, and lets LPs cancel an unfunded withdrawal request after the epoch settles without withdrawals.
 
 ### Silverlake deployment
 
@@ -24,6 +26,16 @@ The vault is linked to the clearing house. Ten launch markets are registered;
 NVDA, SPCX, CRCL, MU, TSLA, RDDT, and MSTR are active, while HIMS, PLTR, and
 QUBT are close-only. The backend publisher must have RH ETH to keep its oracle
 attestations fresh.
+
+### Goldlake deployment
+
+- Oracle: `0xe47c7ab6e236e44CB888Ab08CE96f5839887C5Ec`
+- Vault: `0x24B530f2ef4c76D10003e861182208ceA4120C45`
+- Clearing house: `0xA1329C69e8EDA292cdA849BaBB990fbD05198cDb`
+- Deployment record: `deployments/goldlake-4663.json`
+- Owner/deployer: `0x4a4c4e9Ad9afc8c5603ef5EA91cEf98CCdFE91f3`
+
+Runtime bytecode was compared with the local Foundry artifacts after masking immutable constructor values. Ten markets are registered; NVDA, SPCX, CRCL, MU, TSLA, RDDT, and MSTR are active, while HIMS, PLTR, and QUBT are close-only. The oracle publisher wallet must keep sufficient RH ETH to refresh enabled active market prices.
 
 ### Retired Amber deployment
 

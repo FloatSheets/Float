@@ -2,10 +2,10 @@ import { createServerFn } from "@tanstack/react-start";
 import { getRequestIP } from "@tanstack/react-start/server";
 
 type JsonRecord = Record<string, unknown>;
-type ContractVersion = "silverlake" | "amber" | "jasper" | "meadow" | "legacy-orion";
+type ContractVersion = "goldlake" | "silverlake" | "amber" | "jasper" | "meadow" | "legacy-orion";
 
 function versionOf(value: unknown): ContractVersion {
-  return value === "legacy-orion" ? "legacy-orion" : value === "jasper" ? "jasper" : value === "meadow" ? "meadow" : value === "amber" ? "amber" : "silverlake";
+  return value === "legacy-orion" ? "legacy-orion" : value === "silverlake" ? "silverlake" : value === "jasper" ? "jasper" : value === "meadow" ? "meadow" : value === "amber" ? "amber" : "goldlake";
 }
 
 function apiOrigin() {
@@ -29,7 +29,7 @@ function apiHeaders(version: ContractVersion, json = false): HeadersInit {
   return headers;
 }
 
-async function getJson<T extends JsonRecord>(path: string, version: ContractVersion = "amber"): Promise<T> {
+async function getJson<T extends JsonRecord>(path: string, version: ContractVersion = "goldlake"): Promise<T> {
   const response = await fetch(`${apiOrigin()}${path}`, { headers: apiHeaders(version) });
   if (!response.ok) throw new Error(`FloatSheets API returned ${response.status} for ${path}.`);
   return (await response.json()) as T;
@@ -144,7 +144,8 @@ export const getTransactionCalldata = createServerFn({ method: "POST" })
     if (action !== "approve" && action !== "deposit" && action !== "withdraw" && action !== "liquidate"
       && action !== "vault-approve" && action !== "vault-deposit" && action !== "vault-withdraw"
       && action !== "vault-settle-queue" && action !== "vault-start-next-epoch"
-      && action !== "vault-claim-deposit" && action !== "vault-claim-withdrawal") {
+      && action !== "vault-claim-deposit" && action !== "vault-claim-withdrawal"
+      && action !== "vault-cancel-withdrawal") {
       throw new Error("Unsupported wallet transaction.");
     }
     return value;

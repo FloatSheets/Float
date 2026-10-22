@@ -2,7 +2,7 @@
 
 ## Project scope
 
-Contributions are welcome across the frontend, backend API and market-data service, Solidity contracts, deployment tooling, security controls, tests, and documentation. Silverlake is the intended version for new trading; Amber, Jasper, and Meadow remain separate retired deployments, and Legacy Orion remains available for vault access. Changes involving contracts or protocol transactions should identify the affected version and preserve legacy withdrawals.
+Contributions are welcome across the frontend, backend API and market-data service, Solidity contracts, deployment tooling, security controls, tests, and documentation. Goldlake is the intended version for new trading; Silverlake remains available for existing position management and vault access, while Amber, Jasper, Meadow, and Legacy Orion remain separate older deployments. Changes involving contracts or protocol transactions should identify the affected version and preserve legacy withdrawals.
 
 The contracts manage real on-chain positions and vault liquidity. Production deployments and configuration changes require explicit maintainer authorization. Describe required deployment and environment changes in the pull request.
 

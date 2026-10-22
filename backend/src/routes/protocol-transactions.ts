@@ -5,10 +5,10 @@ import type { Address } from "viem";
 import type { Hex } from "viem";
 import type { Pool } from "pg";
 
-import { contractConfigForVersion, isSilverlakeConfigured, type AppConfig } from "../config";
+import { contractConfigForVersion, isGoldlakeConfigured, isSilverlakeConfigured, type AppConfig } from "../config";
 import { contractVersionFromRequest } from "../contract-version";
 import {
-  approveUsdG, claimDeferredPayout, claimProtocolBalance, claimVaultDeposit, claimVaultWithdrawal, configureMarket, depositMargin, depositVault, enableMarket, liquidate, marketId, settleVaultQueue, startVaultQueueEpoch, withdrawMargin, withdrawVault
+  approveUsdG, cancelVaultWithdrawal, claimDeferredPayout, claimProtocolBalance, claimVaultDeposit, claimVaultWithdrawal, configureMarket, depositMargin, depositVault, enableMarket, liquidate, marketId, settleVaultQueue, startVaultQueueEpoch, withdrawMargin, withdrawVault
 } from "../chain/protocol";
 import { publishOracle, executeTrade } from "../chain/protocol";
 import { requireMasterAdmin } from "../auth/master-admin";
@@ -17,6 +17,7 @@ import type { PriceAttestation, TradeQuote } from "../signing/types";
 import type { RpcTransport } from "../chain/rpc";
 import { readBadDebt, readClearingExposure, readClearingMarket, readClearingPosition, readOraclePrice, readPayoutBalances, readVaultAssets } from "../chain/protocol-read";
 import type { OraclePublisher } from "../oracle/publisher";
+import { snapshotTimeOnChain } from "../oracle/publisher";
 import { safeErrorMessage } from "../safe-error";
 
 const address = z.string().regex(/^0x[0-9a-fA-F]{40}$/);
@@ -90,6 +91,11 @@ function usdgDecimal(value: bigint): string {
   return `${whole}.${fraction}`;
 }
 
+function priceDecimalToE18(value: string): bigint {
+  const [whole, fraction = ""] = value.split(".");
+  return BigInt(`${whole}${fraction.padEnd(18, "0").slice(0, 18)}`);
+}
+
 function deviationBps(a: bigint, b: bigint): bigint {
   const delta = a > b ? a - b : b - a;
   return delta * 10_000n / b;
@@ -156,6 +162,9 @@ export function createProtocolTransactionsRouter(
 ): Router {
   const router = Router();
   const versions = {
+    ...(isGoldlakeConfigured(config) ? {
+      goldlake: createProtocolTransactionsRouterForConfig(contractConfigForVersion(config, "goldlake"), database, rpc, oraclePublisher)
+    } : {}),
     ...(isSilverlakeConfigured(config) ? {
       silverlake: createProtocolTransactionsRouterForConfig(contractConfigForVersion(config, "silverlake"), database, rpc, oraclePublisher)
     } : {}),
@@ -166,13 +175,13 @@ export function createProtocolTransactionsRouter(
   };
   router.use((request, response, next) => {
     const version = contractVersionFromRequest(request);
-    if (version !== "silverlake" && ["/trade-quote", "/trade-check", "/quote"].includes(request.path)) {
-      response.status(409).json({ error: `New position opens are disabled on ${version}; select FloatSheets Silverlake.` });
+    if (version !== "goldlake" && ["/trade-quote", "/trade-check", "/quote"].includes(request.path)) {
+      response.status(409).json({ error: `New position opens are disabled on ${version}; select FloatSheets Goldlake.` });
       return;
     }
     const versionRouter = versions[version as keyof typeof versions];
     if (!versionRouter) {
-      response.status(503).json({ error: "Silverlake contracts are not deployed or configured" });
+      response.status(503).json({ error: "Goldlake contracts are not deployed or configured" });
       return;
     }
     versionRouter(request, response, next);
@@ -206,6 +215,7 @@ function createProtocolTransactionsRouterForConfig(
   router.post("/oracle-attestation", adminRateLimit, masterAdmin, async (request, response) => {
     try {
       const input = attestation.parse(request.body) as Record<string, string>;
+      if (!database || !rpc) throw new Error("oracle attestation validation dependencies are unavailable");
       const now = BigInt(Math.floor(Date.now() / 1_000));
       const price = bigint(input.priceE18);
       const spot = bigint(input.spotPriceE18);
@@ -218,6 +228,31 @@ function createProtocolTransactionsRouterForConfig(
         || expiry <= now || expiry > timestamp + BigInt(config.ORACLE_PRICE_MAX_AGE_SECONDS)) {
         throw new Error("attestation fields exceed protocol bounds");
       }
+      const markets = await database.query<{
+        symbol: string; status: string; observed_at: Date | null; twap_price_usdg: string | null;
+        spot_price_usdg: string | null; oracle_tradable: boolean | null;
+      }>(
+        `SELECT m.symbol,m.status,s.observed_at,s.twap_price_usdg,s.spot_price_usdg,s.oracle_tradable
+         FROM public.markets m LEFT JOIN LATERAL (
+           SELECT observed_at,twap_price_usdg,spot_price_usdg,oracle_tradable
+           FROM public.pool_snapshots WHERE market_id=m.id ORDER BY observed_at DESC LIMIT 1
+         ) s ON true WHERE m.status != 'disabled'`
+      );
+      const market = markets.rows.find((row) => marketId(row.symbol).toLowerCase() === input.marketId.toLowerCase());
+      if (!market || market.status !== "active" || market.oracle_tradable !== true
+        || !market.observed_at || !market.twap_price_usdg || !market.spot_price_usdg
+        || (Date.now() - market.observed_at.getTime()) / 1_000 > config.ORACLE_PRICE_MAX_AGE_SECONDS
+        || price !== priceDecimalToE18(market.twap_price_usdg)
+        || spot !== priceDecimalToE18(market.spot_price_usdg)) {
+        throw new Error("attestation prices must match the latest tradable market snapshot");
+      }
+      if (!rpc.getBlockTimestamp) throw new Error("oracle attestation chain-time validation is unavailable");
+      const wallNow = BigInt(Math.floor(Date.now() / 1_000));
+      const chainNow = await rpc.getBlockTimestamp();
+      const snapshotTimestamp = snapshotTimeOnChain(market.observed_at, wallNow, chainNow);
+      if (timestamp !== snapshotTimestamp) throw new Error("attestation timestamp must match the market snapshot time");
+      const currentPrice = await readOraclePrice(rpc, config.FLOAT_ORACLE_ADDRESS as Address, marketId(market.symbol));
+      if (sequence !== currentPrice.sequence + 1n) throw new Error("attestation sequence is not the next oracle sequence");
       const value: PriceAttestation = {
         marketId: input.marketId as Hex, priceE18: price, spotPriceE18: spot, confidenceBps: confidence,
         timestamp, sequence, expiry
@@ -552,6 +587,13 @@ function createProtocolTransactionsRouterForConfig(
     try {
       const body = z.object({ epoch: uint, receiver: address }).parse(request.body);
       response.json({ transaction: claimVaultWithdrawal(config.FLOAT_VAULT_ADDRESS as Address, bigint(body.epoch), body.receiver as Address) });
+    } catch (error) { protocolError(response, error); }
+  });
+
+  router.post("/vault-cancel-withdrawal", (request, response) => {
+    try {
+      const body = z.object({ epoch: uint }).parse(request.body);
+      response.json({ transaction: cancelVaultWithdrawal(config.FLOAT_VAULT_ADDRESS as Address, bigint(body.epoch)) });
     } catch (error) { protocolError(response, error); }
   });
 

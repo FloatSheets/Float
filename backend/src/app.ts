@@ -1,6 +1,8 @@
 import express from "express";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { isIP } from "node:net";
+import { createHash } from "node:crypto";
+import type { Pool } from "pg";
 
 import { healthRouter } from "./routes/health";
 
@@ -8,6 +10,8 @@ export const app = express();
 
 type RateWindow = { count: number; resetAt: number };
 const rateWindows = new Map<string, RateWindow>();
+let rateLimitDatabase: Pool | undefined;
+let rateLimitCleanupCounter = 0;
 const RATE_WINDOW_MS = 60_000;
 const GENERAL_RATE_LIMIT = 120;
 const OPEN_QUOTE_RATE_LIMIT = 30;
@@ -17,6 +21,11 @@ const serverApiSecret = process.env["SERVER_API_SHARED_SECRET"];
 
 export function resetRateLimitsForTest(): void {
   rateWindows.clear();
+  rateLimitDatabase = undefined;
+}
+
+export function setRateLimitDatabase(database: Pool): void {
+  rateLimitDatabase = database;
 }
 
 app.disable("x-powered-by");
@@ -55,6 +64,36 @@ app.use((request, response, next) => {
     : GENERAL_RATE_LIMIT;
   const bucket = transactionRoute ? closeQuote ? "close" : openQuote ? "open" : path : "api";
   const key = transactionRoute ? `${clientIp}:${trader}:${bucket}` : `${clientIp}:api`;
+  if (rateLimitDatabase && (request.path.startsWith("/v1/") || transactionRoute)) {
+    const bucketKey = createHash("sha256").update(key).digest("hex");
+    void (async () => {
+      try {
+        const result = await rateLimitDatabase!.query<{ hits: number }>(
+          `INSERT INTO public.api_rate_limits(bucket_key, window_start, hit_count)
+           VALUES ($1, date_trunc('minute', now()), 1)
+           ON CONFLICT (bucket_key, window_start) DO UPDATE
+             SET hit_count=api_rate_limits.hit_count+1
+           RETURNING hit_count AS hits`, [bucketKey]
+        );
+        const hits = result.rows[0]?.hits ?? 1;
+        if (++rateLimitCleanupCounter % 300 === 0) {
+          await rateLimitDatabase!.query("DELETE FROM public.api_rate_limits WHERE window_start < now() - interval '1 hour'");
+        }
+        response.setHeader("RateLimit-Limit", limit);
+        response.setHeader("RateLimit-Remaining", Math.max(0, limit - hits));
+        response.setHeader("RateLimit-Reset", Math.ceil((now + 60_000) / 1_000));
+        if (hits > limit) {
+          response.setHeader("Retry-After", 60);
+          response.status(429).json({ error: "Too many requests" });
+          return;
+        }
+        next();
+      } catch {
+        response.status(503).json({ error: "Shared rate limit is unavailable" });
+      }
+    })();
+    return;
+  }
   let window = rateWindows.get(key);
   if (!window || window.resetAt <= now) {
     window = { count: 0, resetAt: now + RATE_WINDOW_MS };

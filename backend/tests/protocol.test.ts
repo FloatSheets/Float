@@ -10,6 +10,7 @@ import { loadConfig } from "../src/config";
 import { createProtocolRouter } from "../src/routes/protocol";
 import { createProtocolTransactionsRouter } from "../src/routes/protocol-transactions";
 import type { RpcTransport } from "../src/chain/rpc";
+import { marketId } from "../src/chain/protocol";
 
 const signerKey = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const signer = privateKeyToAccount(signerKey).address;
@@ -27,9 +28,9 @@ const config = loadConfig({
   AMBER_FLOAT_CLEARING_HOUSE_ADDRESS: "0x6666666666666666666666666666666666666666",
   AMBER_FLOAT_ORACLE_ADDRESS: "0x7777777777777777777777777777777777777777",
   AMBER_FLOAT_VAULT_ADDRESS: "0x8888888888888888888888888888888888888888",
-  SILVERLAKE_FLOAT_CLEARING_HOUSE_ADDRESS: "0x9999999999999999999999999999999999999999",
-  SILVERLAKE_FLOAT_ORACLE_ADDRESS: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  SILVERLAKE_FLOAT_VAULT_ADDRESS: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  GOLDLAKE_FLOAT_CLEARING_HOUSE_ADDRESS: "0x9999999999999999999999999999999999999999",
+  GOLDLAKE_FLOAT_ORACLE_ADDRESS: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  GOLDLAKE_FLOAT_VAULT_ADDRESS: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   LEGACY_ORION_FLOAT_CLEARING_HOUSE_ADDRESS: "0x2222222222222222222222222222222222222222",
   LEGACY_ORION_FLOAT_ORACLE_ADDRESS: "0x3333333333333333333333333333333333333333",
   LEGACY_ORION_FLOAT_VAULT_ADDRESS: "0x4444444444444444444444444444444444444444",
@@ -50,7 +51,7 @@ const config = loadConfig({
   QUOTE_SIGNER_PRIVATE_KEY: signerKey,
   RHC_ID: "4663",
   RHC_RPC_URL: "https://rpc.mainnet.chain.robinhood.com",
-  UNISWAP_TWAP_WINDOW_SECONDS: "1800"
+  UNISWAP_TWAP_WINDOW_SECONDS: "300"
 });
 
 const app = express();
@@ -73,18 +74,18 @@ async function listening(app: express.Express): Promise<Server> {
 const server = await listening(app);
 afterAll(() => new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())));
 
-test("publishes Silverlake addresses by default and supports retired and legacy selections", async () => {
+test("publishes Goldlake addresses by default and supports retired and legacy selections", async () => {
   const response = await request(server).get("/v1/protocol");
   expect(response.status).toBe(200);
   expect(response.body).toEqual({
     chain_id: 4663,
     settlement_asset: "USDG",
     settlement_asset_address: config.USDG_ADDRESS,
-    contract_version: "silverlake",
-    contract_name: "FloatSheets Silverlake",
-    oracle: config.SILVERLAKE_FLOAT_ORACLE_ADDRESS,
-    vault: config.SILVERLAKE_FLOAT_VAULT_ADDRESS,
-    clearing_house: config.SILVERLAKE_FLOAT_CLEARING_HOUSE_ADDRESS,
+    contract_version: "goldlake",
+    contract_name: "FloatSheets Goldlake",
+    oracle: config.GOLDLAKE_FLOAT_ORACLE_ADDRESS,
+    vault: config.GOLDLAKE_FLOAT_VAULT_ADDRESS,
+    clearing_house: config.GOLDLAKE_FLOAT_CLEARING_HOUSE_ADDRESS,
     oracle_signer: config.ORACLE_SIGNER_ADDRESS,
     quote_signer: config.QUOTE_SIGNER_ADDRESS,
     max_position_duration_seconds: 604800,
@@ -119,27 +120,31 @@ test("builds a real USDG approval transaction", async () => {
     amountUsdg: "1000000", receiver: "0x1111111111111111111111111111111111111111"
   });
   expect(vaultDeposit.status).toBe(200);
-  expect(vaultDeposit.body.transaction.to).toBe(config.SILVERLAKE_FLOAT_VAULT_ADDRESS);
+  expect(vaultDeposit.body.transaction.to).toBe(config.GOLDLAKE_FLOAT_VAULT_ADDRESS);
   expect(vaultDeposit.body.transaction.data).toMatch(/^0x6e553f65/);
 
   const vaultWithdraw = await request(server).post("/v1/protocol/transactions/vault-withdraw").send({
     shares: "1000000000000", receiver: "0x1111111111111111111111111111111111111111"
   });
   expect(vaultWithdraw.status).toBe(200);
-  expect(vaultWithdraw.body.transaction.to).toBe(config.SILVERLAKE_FLOAT_VAULT_ADDRESS);
+  expect(vaultWithdraw.body.transaction.to).toBe(config.GOLDLAKE_FLOAT_VAULT_ADDRESS);
   expect(vaultWithdraw.body.transaction.data).toMatch(/^0x00f714ce/);
 
   const settleQueue = await request(server).post("/v1/protocol/transactions/vault-settle-queue").send({});
   expect(settleQueue.status).toBe(200);
-  expect(settleQueue.body.transaction.to).toBe(config.SILVERLAKE_FLOAT_VAULT_ADDRESS);
+  expect(settleQueue.body.transaction.to).toBe(config.GOLDLAKE_FLOAT_VAULT_ADDRESS);
   const claimDeposit = await request(server).post("/v1/protocol/transactions/vault-claim-deposit").send({ epoch: "3" });
   expect(claimDeposit.status).toBe(200);
-  expect(claimDeposit.body.transaction.to).toBe(config.SILVERLAKE_FLOAT_VAULT_ADDRESS);
+  expect(claimDeposit.body.transaction.to).toBe(config.GOLDLAKE_FLOAT_VAULT_ADDRESS);
   const claimWithdrawal = await request(server).post("/v1/protocol/transactions/vault-claim-withdrawal").send({
     epoch: "3", receiver: "0x1111111111111111111111111111111111111111"
   });
   expect(claimWithdrawal.status).toBe(200);
-  expect(claimWithdrawal.body.transaction.to).toBe(config.SILVERLAKE_FLOAT_VAULT_ADDRESS);
+  expect(claimWithdrawal.body.transaction.to).toBe(config.GOLDLAKE_FLOAT_VAULT_ADDRESS);
+  const cancelWithdrawal = await request(server).post("/v1/protocol/transactions/vault-cancel-withdrawal").send({ epoch: "3" });
+  expect(cancelWithdrawal.status).toBe(200);
+  expect(cancelWithdrawal.body.transaction.to).toBe(config.GOLDLAKE_FLOAT_VAULT_ADDRESS);
+  expect(cancelWithdrawal.body.transaction.data).toMatch(/^0x20cbeedf/);
 
   const claim = await request(server).post("/v1/protocol/transactions/claim").send({ receiver: "0x1111111111111111111111111111111111111111" });
   expect(claim.status).toBe(200);
@@ -156,7 +161,7 @@ test("blocks new position issuance for retired versions", async () => {
       .set("x-floatsheets-contract-version", version)
       .send({ market: "NVDA", trader: "0x1111111111111111111111111111111111111111", isLong: true, notionalUsdg: "1000000" });
     expect(response.status).toBe(409);
-    expect(response.body.error).toContain("Silverlake");
+    expect(response.body.error).toContain("Goldlake");
   }
 });
 
@@ -177,14 +182,35 @@ test("rejects signer issuance without the master admin key", async () => {
   expect(response.status).toBe(401);
 });
 
-test("signs an oracle attestation only with the master admin key", async () => {
+test("rejects oracle signing without live snapshot validation dependencies", async () => {
   const now = Math.floor(Date.now() / 1_000);
   const response = await request(server).post("/v1/protocol/transactions/oracle-attestation")
     .set("x-master-admin-key", config.MASTER_ADMIN_KEY)
     .send({ marketId: "0x" + "11".repeat(32), priceE18: "1000000000000000000", spotPriceE18: "1000000000000000000", confidenceBps: "50", timestamp: String(now), sequence: "1", expiry: String(now + 60) });
-  expect(response.status).toBe(200);
-  expect(response.body.signature).toMatch(/^0x[0-9a-f]{130}$/);
-  expect(response.body.transaction.to).toBe(config.SILVERLAKE_FLOAT_ORACLE_ADDRESS);
+  expect(response.status).toBe(400);
+  expect(response.body.error).toContain("validation dependencies");
+});
+
+test("refuses admin oracle attestations that differ from the latest pool snapshot", async () => {
+  const now = Math.floor(Date.now() / 1_000);
+  const database = {
+    query: async (sql: string) => sql.includes("INSERT INTO public.api_rate_limits")
+      ? { rows: [{ hits: 1 }], rowCount: 1 }
+      : { rows: [{ symbol: "NVDA", status: "active", observed_at: new Date(), twap_price_usdg: "101", spot_price_usdg: "101", oracle_tradable: true }], rowCount: 1 }
+  } as unknown as Pool;
+  const routerApp = express();
+  routerApp.use(express.json());
+  routerApp.use("/v1/protocol/transactions", createProtocolTransactionsRouter(config, database, { call: async () => { throw new Error("unexpected oracle read"); } }));
+  const routerServer = await listening(routerApp);
+  try {
+    const response = await request(routerServer).post("/v1/protocol/transactions/oracle-attestation")
+      .set("x-master-admin-key", config.MASTER_ADMIN_KEY)
+      .send({ marketId: marketId("NVDA"), priceE18: "100000000000000000000", spotPriceE18: "100000000000000000000", confidenceBps: "50", timestamp: String(now), sequence: "1", expiry: String(now + 60) });
+    expect(response.status).toBe(400);
+    expect(response.body.error).toContain("latest tradable market snapshot");
+  } finally {
+    await new Promise<void>((resolve, reject) => routerServer.close((error) => error ? reject(error) : resolve()));
+  }
 });
 
 test("bounds and database-rate-limits admin market configuration", async () => {
@@ -225,7 +251,7 @@ test("builds a trader quote and execution transaction without exposing the quote
   let circuitBroken = false;
   const rpc: RpcTransport = {
     call: async ({ to, data }) => {
-      if (to.toLowerCase() !== config.SILVERLAKE_FLOAT_CLEARING_HOUSE_ADDRESS!.toLowerCase()) {
+      if (to.toLowerCase() !== config.GOLDLAKE_FLOAT_CLEARING_HOUSE_ADDRESS!.toLowerCase()) {
         return encodeFunctionResult({ abi: oracleAbi, functionName: "getPrice", result: [100_000000000000000000n, 100_000000000000000000n, 25n, 0n, BigInt(Math.floor(Date.now() / 1000)), 9n, circuitBroken] });
       }
       const positionSelector = "0x" + encodeFunctionData({
@@ -257,7 +283,7 @@ test("builds a trader quote and execution transaction without exposing the quote
     expect(response.body.quote.feeUsdg).toBe("600000");
     expect(BigInt(response.body.quote.expiry) - BigInt(Math.floor(Date.now() / 1_000))).toBeLessThanOrEqual(15n);
     expect(response.body.signature).toMatch(/^0x[0-9a-f]{130}$/);
-    expect(response.body.transaction.to).toBe(config.SILVERLAKE_FLOAT_CLEARING_HOUSE_ADDRESS);
+    expect(response.body.transaction.to).toBe(config.GOLDLAKE_FLOAT_CLEARING_HOUSE_ADDRESS);
     expect(refreshedMarkets).toEqual([]);
 
     const closeResponse = await request(quoteServer).post("/v1/protocol/transactions/close-quote").send({
@@ -265,7 +291,7 @@ test("builds a trader quote and execution transaction without exposing the quote
     });
     expect(closeResponse.status).toBe(200);
     expect(closeResponse.body.quote.sizeDeltaE18).toBe("-10000000000000000000");
-    expect(closeResponse.body.transaction.to).toBe(config.SILVERLAKE_FLOAT_CLEARING_HOUSE_ADDRESS);
+    expect(closeResponse.body.transaction.to).toBe(config.GOLDLAKE_FLOAT_CLEARING_HOUSE_ADDRESS);
     expect(refreshedMarkets).toEqual([]);
     circuitBroken = true;
     const breakerClose = await request(quoteServer).post("/v1/protocol/transactions/close-quote").send({
@@ -293,7 +319,7 @@ test("accepts a signed, in-band improvement from the live buy matrix", async () 
     }
   } as unknown as Pool;
   const rpc: RpcTransport = {
-    call: async ({ to, data }) => to.toLowerCase() === config.SILVERLAKE_FLOAT_CLEARING_HOUSE_ADDRESS!.toLowerCase()
+    call: async ({ to, data }) => to.toLowerCase() === config.GOLDLAKE_FLOAT_CLEARING_HOUSE_ADDRESS!.toLowerCase()
       ? data.startsWith(encodeFunctionData({ abi: clearingAbi, functionName: "badDebtUsdg" }).slice(0, 10))
         ? encodeFunctionResult({ abi: clearingAbi, functionName: "badDebtUsdg", result: 0n })
         : data.startsWith(encodeFunctionData({ abi: clearingAbi, functionName: "getPosition", args: ["0x1111111111111111111111111111111111111111", (`0x${"00".repeat(32)}`) as `0x${string}`] }).slice(0, 10))
@@ -338,8 +364,8 @@ test("rejects an unfunded or vault-capacity-exceeding opening quote before walle
   } as unknown as Pool;
   const rpc: RpcTransport = {
     call: async ({ to, data }) => {
-      if (to.toLowerCase() === config.SILVERLAKE_FLOAT_VAULT_ADDRESS!.toLowerCase()) return encodeFunctionResult({ abi: vaultAbi, functionName: "totalAssets", result: 2_750_000n });
-      if (to.toLowerCase() === config.SILVERLAKE_FLOAT_ORACLE_ADDRESS!.toLowerCase()) return encodeFunctionResult({ abi: oracleAbi, functionName: "getPrice", result: [100_000000000000000000n, 100_000000000000000000n, 25n, 0n, BigInt(Math.floor(Date.now() / 1000)), 9n, false] });
+      if (to.toLowerCase() === config.GOLDLAKE_FLOAT_VAULT_ADDRESS!.toLowerCase()) return encodeFunctionResult({ abi: vaultAbi, functionName: "totalAssets", result: 2_750_000n });
+      if (to.toLowerCase() === config.GOLDLAKE_FLOAT_ORACLE_ADDRESS!.toLowerCase()) return encodeFunctionResult({ abi: oracleAbi, functionName: "getPrice", result: [100_000000000000000000n, 100_000000000000000000n, 25n, 0n, BigInt(Math.floor(Date.now() / 1000)), 9n, false] });
       if (data.startsWith(positionSelector)) return encodeFunctionResult({ abi: clearingAbi, functionName: "getPosition", result: [0n, 0n, margin, 0n] });
       if (data.startsWith(exposureSelector)) return encodeFunctionResult({ abi: clearingAbi, functionName: "marketExposure", result: [0n, 0n] });
       if (data.startsWith(badDebtSelector)) return encodeFunctionResult({ abi: clearingAbi, functionName: "badDebtUsdg", result: 0n });

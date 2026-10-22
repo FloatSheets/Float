@@ -9,7 +9,8 @@ const vaultAbi = parseAbi([
   "function settleQueue()",
   "function startNextQueueEpoch()",
   "function claimDeposit(uint64 epoch) returns (uint256 shares)",
-  "function claimWithdrawal(uint64 epoch,address receiver) returns (uint256 assets)"
+  "function claimWithdrawal(uint64 epoch,address receiver) returns (uint256 assets)",
+  "function cancelQueuedWithdrawal(uint64 epoch) returns (uint256 shares)"
 ]);
 const oracleAbi = parseAbi([
   "function publish((bytes32 marketId,uint256 priceE18,uint256 spotPriceE18,uint256 confidenceBps,uint64 timestamp,uint64 sequence,uint64 expiry) attestation,bytes signature)",
@@ -63,6 +64,10 @@ export function claimVaultDeposit(vault: Address, epoch: bigint): ProtocolTransa
 
 export function claimVaultWithdrawal(vault: Address, epoch: bigint, receiver: Address): ProtocolTransaction {
   return tx(vault, encodeFunctionData({ abi: vaultAbi, functionName: "claimWithdrawal", args: [epoch, receiver] }));
+}
+
+export function cancelVaultWithdrawal(vault: Address, epoch: bigint): ProtocolTransaction {
+  return tx(vault, encodeFunctionData({ abi: vaultAbi, functionName: "cancelQueuedWithdrawal", args: [epoch] }));
 }
 
 export function withdrawMargin(clearingHouse: Address, id: Hex, amount: bigint): ProtocolTransaction {

@@ -26,13 +26,20 @@ AMC and GME remain excluded until their direct stock/USDG pool quotes pass valid
 
 | Version | Status | Dashboard behavior |
 | --- | --- | --- |
-| FloatSheets Silverlake | Deployed and markets registered; oracle publishing needs publisher gas | Default |
+| FloatSheets Goldlake | Deployed; markets registered and configured | Default for new positions |
+| FloatSheets Silverlake | Deployed predecessor; retain for existing positions and vault access | Existing positions only |
 | FloatSheets Amber | Deployed predecessor; retain for existing position close and vault access | Retired, disabled in selector |
 | FloatSheets Jasper | Paused on-chain | Visible in settings, disabled |
 | FloatSheets Meadow | Paused on-chain | Visible in settings, disabled |
 | FloatSheets Legacy Orion | Legacy deployment | Vault viewing and withdrawals; trade, portfolio, oracle, and listings pages are disabled |
 
-Silverlake is a new immutable release because the borrow-fee fix changes contract logic. Its cumulative, side-specific indexes ensure market-skew changes only affect fees accrued after that skew was in effect. Runtime bytecode matches the local build and its market configuration transactions are recorded in [`contracts/deployments/silverlake-4663.json`](contracts/deployments/silverlake-4663.json). Amber, Jasper, and Meadow remain separate releases; new positions should use Silverlake after fresh oracle prices are publishing.
+Goldlake is the current immutable release. It includes the oracle freshness, vault NAV, and queued-withdrawal protections described below. Its runtime bytecode matches the local Foundry artifacts, and deployment plus market configuration transactions are recorded in [`contracts/deployments/goldlake-4663.json`](contracts/deployments/goldlake-4663.json). Silverlake remains available for existing positions and vault access; new positions use Goldlake. Oracle publishing must remain funded for fresh prices.
+
+| Goldlake contract | Robinhood Chain address |
+| --- | --- |
+| Clearing house | `0xA1329C69e8EDA292cdA849BaBB990fbD05198cDb` |
+| Oracle | `0xe47c7ab6e236e44CB888Ab08CE96f5839887C5Ec` |
+| Vault | `0x24B530f2ef4c76D10003e861182208ceA4120C45` |
 
 | Silverlake contract | Robinhood Chain address |
 | --- | --- |
@@ -128,7 +135,7 @@ Use a Render **Native Environment** service rooted at `backend`:
 | Start command | `bun run start` |
 | Health check | `/health` |
 
-Set `DATABASE_URL`, `DATABASE_PASSWORD`, `RHC_ID`, `RHC_RPC_URL`, `PROTOCOL_FEE_WALLET`, `FRONTEND_URL`, `NODE_ENV=production`, and Render’s `PORT`. Set `SILVERLAKE_FLOAT_*_ADDRESS` in Render to the verified deployment addresses below (the backend code also defaults to these addresses). Keep Amber, Jasper, Meadow, and Orion address variables populated for retired-version display and vault flows. Set `SERVER_API_SHARED_SECRET` to the same random value used by Vercel's `FLOATSHEETS_SERVER_API_SECRET`; these authenticate forwarded client IPs for close-quote rate limits. The API applies migrations during startup.
+Set `DATABASE_URL`, `DATABASE_PASSWORD`, `RHC_ID`, `RHC_RPC_URL`, `PROTOCOL_FEE_WALLET`, `FRONTEND_URL`, `NODE_ENV=production`, and Render’s `PORT`. Goldlake addresses are the backend defaults; keep the Silverlake, Amber, Jasper, Meadow, and Orion address variables populated for existing positions and vault flows. Keep the oracle publisher wallet funded with RH ETH so price attestations stay fresh. Set `SERVER_API_SHARED_SECRET` to the same random value used by Vercel's `FLOATSHEETS_SERVER_API_SECRET`; these authenticate forwarded client IPs for close-quote rate limits. The API applies migrations during startup.
 
 The public repository's GitHub workflow also publishes `ghcr.io/floatsheets/float-backend:latest` and a SHA-tagged image. If Render is configured to pull the GHCR image instead, provide registry credentials when the package is private. Set `RENDER_DEPLOY_HOOK_URL` in the public repository's Actions secrets to have successful backend image builds trigger Render automatically.
 

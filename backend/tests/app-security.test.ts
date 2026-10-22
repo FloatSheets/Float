@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import request from "supertest";
 
-import { app, resetRateLimitsForTest } from "../src/app";
+import { app, resetRateLimitsForTest, setRateLimitDatabase } from "../src/app";
 
 test("sets API security headers and rate limits burst traffic", async () => {
   // Keep this burst isolated from requests made by other tests in this process.
@@ -21,4 +21,20 @@ test("sets API security headers and rate limits burst traffic", async () => {
   const limited = await client();
   expect(limited.status).toBe(429);
   expect(limited.headers["retry-after"]).toBeDefined();
+});
+
+test("uses the shared database counter for API rate limits", async () => {
+  resetRateLimitsForTest();
+  let hits = 0;
+  setRateLimitDatabase({ query: async () => ({ rows: [{ hits: ++hits }], rowCount: 1 }) } as never);
+  try {
+    let last = 0;
+    for (let index = 0; index < 120; index += 1) last = (await request(app).get("/v1/rate-limit-check")).status;
+    expect(last).toBe(404);
+    const limited = await request(app).get("/v1/rate-limit-check");
+    expect(limited.status).toBe(429);
+    expect(hits).toBe(121);
+  } finally {
+    resetRateLimitsForTest();
+  }
 });

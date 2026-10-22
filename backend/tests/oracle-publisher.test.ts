@@ -4,7 +4,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import type { Pool } from "pg";
 
 import { loadConfig } from "../src/config";
-import { OraclePublisher, snapshotTimeOnChain } from "../src/oracle/publisher";
+import { OraclePublisher, shouldPublishGoldlakeMarket, snapshotTimeOnChain } from "../src/oracle/publisher";
 import type { RpcTransport } from "../src/chain/rpc";
 
 const key = "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
@@ -51,9 +51,8 @@ test("does not spend publisher gas on inactive markets", async () => {
 
   await new OraclePublisher(database, rpc, config).publishFreshMarkets();
 
-  // Amber refreshes active, tradable markets even before the first position;
-  // retired deployments still inspect exposure and skip zero-exposure markets.
-  expect(exposureCalls).toBe(3);
+  // Every deployment checks exposure so close-only positions keep getting marks.
+  expect(exposureCalls).toBe(6);
   expect(unexpectedCalls).toBe(0);
 });
 
@@ -62,4 +61,16 @@ test("converts backend snapshot time into chain time when the server clock leads
   const chainTimestamp = snapshotTimeOnChain(snapshotAt, 1_000n, 990n);
   expect(chainTimestamp).toBe(985n);
   expect(990n - chainTimestamp).toBe(5n);
+});
+
+test("keeps oracle marks running for Goldlake close-only markets with open positions", () => {
+  expect(shouldPublishGoldlakeMarket({
+    state: 2, status: "restricted", oracleTradable: false, longBaseE18: 1n, shortBaseE18: 0n
+  })).toBe(true);
+  expect(shouldPublishGoldlakeMarket({
+    state: 2, status: "restricted", oracleTradable: false, longBaseE18: 0n, shortBaseE18: 0n
+  })).toBe(false);
+  expect(shouldPublishGoldlakeMarket({
+    state: 1, status: "active", oracleTradable: true, longBaseE18: 0n, shortBaseE18: 0n
+  })).toBe(true);
 });

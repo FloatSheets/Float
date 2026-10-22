@@ -188,7 +188,7 @@ contract FloatOracle {
                     previous.spotPriceE18,
                     previous.confidenceBps,
                     previous.spotTwapDeviationBps,
-                    attestation.timestamp,
+                    previous.timestamp,
                     attestation.sequence,
                     true
                 );
@@ -199,7 +199,7 @@ contract FloatOracle {
                     previous.spotTwapDeviationBps,
                     true,
                     attestation.sequence,
-                    attestation.timestamp
+                    previous.timestamp
                 );
                 return;
             }

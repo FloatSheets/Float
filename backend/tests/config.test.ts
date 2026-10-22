@@ -26,11 +26,19 @@ const validEnvironment = {
   QUOTE_SIGNER_PRIVATE_KEY: testPrivateKey,
   RHC_ID: "4663",
   RHC_RPC_URL: "https://rpc.mainnet.chain.robinhood.com",
-  UNISWAP_TWAP_WINDOW_SECONDS: "1800"
+  UNISWAP_TWAP_WINDOW_SECONDS: "300"
 };
 
 test("loads valid Robinhood Chain configuration", () => {
   expect(loadConfig(validEnvironment).RHC_ID).toBe(4663);
+});
+
+test("uses the deployed Goldlake addresses by default in production", () => {
+  const config = loadConfig({ ...validEnvironment, NODE_ENV: "production" });
+  const goldlake = contractConfigForVersion(config, "goldlake");
+  expect(goldlake.FLOAT_CLEARING_HOUSE_ADDRESS).toBe("0xA1329C69e8EDA292cdA849BaBB990fbD05198cDb");
+  expect(goldlake.FLOAT_ORACLE_ADDRESS).toBe("0xe47c7ab6e236e44CB888Ab08CE96f5839887C5Ec");
+  expect(goldlake.FLOAT_VAULT_ADDRESS).toBe("0x24B530f2ef4c76D10003e861182208ceA4120C45");
 });
 
 test("uses the current Amber addresses in production when no override is set", () => {

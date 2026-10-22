@@ -56,6 +56,14 @@ contract MockLiquidityView {
         margin = margin_;
     }
 
+    function setLiquidity(uint256 liquidity_) external {
+        liquidity = liquidity_;
+    }
+
+    function navPricesFresh() external pure returns (bool) {
+        return true;
+    }
+
     function availableLiquidity() external view returns (uint256) {
         return liquidity;
     }
@@ -70,6 +78,10 @@ contract MockLiquidityView {
 
     function totalOpenPositionMarginUsdg() external view returns (uint256) {
         return margin;
+    }
+
+    function payout(FloatVault vault, address receiver, uint256 amount) external returns (uint256) {
+        return vault.payout(receiver, amount);
     }
 }
 
@@ -137,8 +149,16 @@ contract FloatSecurityTest is Test {
         return 0;
     }
 
+    function navPricesFresh() external pure returns (bool) {
+        return true;
+    }
+
     function _settleVaultQueue() private {
         vm.warp(block.timestamp + vault.QUEUE_EPOCH_DURATION());
+        FloatOracle.Price memory marketA = oracle.getPrice(MARKET_A);
+        FloatOracle.Price memory marketB = oracle.getPrice(MARKET_B);
+        _publish(MARKET_A, marketA.sequence + 1, marketA.priceE18, marketA.priceE18);
+        _publish(MARKET_B, marketB.sequence + 1, marketB.priceE18, marketB.priceE18);
         vault.settleQueue();
         if (vault.queuedDepositOf(vault.queueEpoch(), address(this)) != 0) vault.claimDeposit(vault.queueEpoch());
         if (vault.queuedWithdrawalOf(vault.queueEpoch(), address(this)) != 0) {
@@ -338,15 +358,26 @@ contract FloatSecurityTest is Test {
         assertGt(clearing.availableLiquidity(), 0);
     }
 
-    function testStaleExposedMarketUsesLastKnownPriceWithoutGlobalFreeze() public {
+    function testStaleExposureMarksSharedVaultNavUnsafe() public {
         vm.prank(TRADER_TWO);
         clearing.depositMargin(MARKET_B, 20_000 * USDG);
         _execute(_quote(MARKET_B, TRADER_TWO, int256(250 * E18), 200 * E18, 1, 1, 0));
         vm.warp(block.timestamp + 121);
         _publish(MARKET_A, 2, 100 * E18, 100 * E18);
+        assertFalse(clearing.navPricesFresh());
+        assertEq(vault.totalAssets(), 0);
+        assertEq(clearing.availableLiquidity(), 0);
+    }
+
+    function testStaleExposedMarkIsExcludedFromVaultNavAndQueueSettlement() public {
         _depositMargin(20_000 * USDG);
-        _execute(_quote(MARKET_A, TRADER, int256(500 * E18), 100 * E18, 2, 1, 0));
-        assertGt(clearing.availableLiquidity(), 0);
+        _execute(_quote(MARKET_A, TRADER, int256(500 * E18), 100 * E18, 1, 1, 0));
+        vm.warp(block.timestamp + 121);
+        assertFalse(clearing.navPricesFresh());
+        assertEq(vault.totalAssets(), 0);
+        vm.warp(block.timestamp + vault.QUEUE_EPOCH_DURATION());
+        vm.expectRevert(FloatVault.StaleNav.selector);
+        vault.settleQueue();
     }
 
     function testEmptyMarketCanBeDeregistered() public {
@@ -665,7 +696,66 @@ contract FloatSecurityTest is Test {
         vm.expectRevert(FloatClearingHouse.MarketNotActive.selector);
         vm.prank(TRADER);
         clearing.execute(increase, _signQuote(increase));
+        vm.expectRevert(FloatClearingHouse.StaleOraclePrice.selector);
+        vm.prank(KEEPER);
+        clearing.liquidate(TRADER, MARKET_A);
         _execute(_quote(MARKET_A, TRADER, -int256(250 * E18), 100 * E18, 2, 3, 0));
+    }
+
+    function testLargeOracleJumpDoesNotRefreshFrozenPriceTimestamp() public {
+        uint64 previousTimestamp = oracle.getPrice(MARKET_A).timestamp;
+        vm.warp(block.timestamp + 30);
+        _publish(MARKET_A, 2, 125 * E18, 125 * E18);
+        FloatOracle.Price memory price = oracle.getPrice(MARKET_A);
+        assertEq(price.priceE18, 100 * E18);
+        assertEq(price.timestamp, previousTimestamp);
+        assertEq(price.sequence, 2);
+        assertTrue(price.circuitBroken);
+    }
+
+    function testPendingDepositAssetsAreReservedFromTraderPayouts() public {
+        MockUsdG localToken = new MockUsdG();
+        MockLiquidityView liquidity = new MockLiquidityView();
+        FloatVault localVault = new FloatVault(address(this), address(localToken));
+        localVault.setClearingHouse(address(liquidity));
+        localToken.mint(address(this), 250 * USDG);
+        localToken.approve(address(localVault), type(uint256).max);
+        localVault.deposit(100 * USDG, address(this));
+        vm.warp(block.timestamp + localVault.QUEUE_EPOCH_DURATION());
+        localVault.settleQueue();
+        localVault.claimDeposit(localVault.queueEpoch());
+        localVault.startNextQueueEpoch();
+        localVault.deposit(150 * USDG, address(this));
+        liquidity.set(-int256(2_000 * USDG), 2_000 * USDG);
+        uint256 paid = liquidity.payout(localVault, address(0xCAFE), 100 * USDG);
+        assertEq(paid, 100 * USDG);
+        assertEq(localToken.balanceOf(address(localVault)), localVault.pendingDepositAssets());
+    }
+
+    function testUnderfundedWithdrawalBatchDoesNotBlockQueueAndCanBeCancelled() public {
+        MockUsdG localToken = new MockUsdG();
+        MockLiquidityView liquidity = new MockLiquidityView();
+        FloatVault localVault = new FloatVault(address(this), address(localToken));
+        localVault.setClearingHouse(address(liquidity));
+        localToken.mint(address(this), 200 * USDG);
+        localToken.approve(address(localVault), type(uint256).max);
+        localVault.deposit(100 * USDG, address(this));
+        vm.warp(block.timestamp + localVault.QUEUE_EPOCH_DURATION());
+        localVault.settleQueue();
+        uint256 shares = localVault.claimDeposit(localVault.queueEpoch());
+        localVault.startNextQueueEpoch();
+        localVault.withdraw(shares, address(this));
+        localVault.deposit(100 * USDG, address(this));
+        liquidity.setLiquidity(0);
+        vm.warp(block.timestamp + localVault.QUEUE_EPOCH_DURATION());
+        localVault.settleQueue();
+        uint64 settledEpoch = localVault.queueEpoch();
+        assertEq(localVault.settledWithdrawalShares(), 0);
+        assertGt(localVault.claimDeposit(settledEpoch), 0);
+        assertEq(localVault.cancelQueuedWithdrawal(settledEpoch), shares);
+        localVault.startNextQueueEpoch();
+        localToken.mint(address(this), 1 * USDG);
+        localVault.deposit(1 * USDG, address(this));
     }
 
     function testBlacklistedTraderCannotBlockLiquidation() public {

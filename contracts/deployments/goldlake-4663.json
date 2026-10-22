@@ -1,0 +1,106 @@
+{
+  "chainId": 4663,
+  "network": "Robinhood Chain",
+  "version": "floatsheets-goldlake",
+  "settlementAsset": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+  "owner": "0x4a4c4e9Ad9afc8c5603ef5EA91cEf98CCdFE91f3",
+  "deployer": "0x4a4c4e9Ad9afc8c5603ef5EA91cEf98CCdFE91f3",
+  "oracle": "0xe47c7ab6e236e44cb888ab08ce96f5839887c5ec",
+  "vault": "0x24b530f2ef4c76d10003e861182208cea4120c45",
+  "clearingHouse": "0xa1329c69e8eda292cda849babb990fbd05198cdb",
+  "oracleSigner": "0x9417f45d924b43587fE1a03803001fA073ce3a5a",
+  "quoteSigner": "0x325Fd0FA56AC44dfe6015c6F4c2C426967aFb3ad",
+  "feeRecipient": "0x5140a99bf0fB56637a3DBDA7685cc4E190F15c94",
+  "deploymentTransactions": [
+    "0x829b13ffdb7cf3c7bb3a1c6f967aac35c8893575335049511fab3318b2a4d5ce",
+    "0xb12a5f22bd0b5db223314374b5fe5dff1e0d6d2acc659c6ced5c26255e04aac0",
+    "0xc40550a520d46739249898e2598d4a385d043bb61d752cc3453471975e612d6c",
+    "0x2fe7c6ca31372eba6d0a0d762f48c956986f38b6c6da59c0ed0a374c832c68b3"
+  ],
+  "deploymentBlock": 94807521,
+  "verification": {
+    "runtimeBytecode": "matches local Foundry artifacts after masking immutable constructor slots for all three contracts",
+    "vaultAsset": "matches USDG",
+    "vaultClearingHouseLink": "matches deployed clearing house",
+    "quoteSigner": "matches configured quote signer"
+  },
+  "markets": {
+    "active": [
+      "NVDA",
+      "SPCX",
+      "CRCL",
+      "MU",
+      "TSLA",
+      "RDDT",
+      "MSTR"
+    ],
+    "closeOnly": [
+      "HIMS",
+      "PLTR",
+      "QUBT"
+    ]
+  },
+  "configurationBatches": [
+    [
+      "0xbf0461becff675e77de290b1b6532bf359b9fec9521f96e1c406ce85a451fd8a",
+      "0xe5a6795d08cc320aca9eec7629b3c8d65b8dc3123e6c0a689b5c844c253558a3",
+      "0x8b0167069b81dae5a4e3913aa1dfda7abf560cd57d700fb36b4f7710edc02517",
+      "0x4de270d84d84833c5800d068deafc474d3b7a52761709a6690c6a090b8f32305",
+      "0xe2d186ad9af04aaabb1cb298b7348656497abdd3c349dd10bf59f61a284c884a",
+      "0xdd24853a411e03b87d6aead269fb2bf899af45a8fedba82019d01a4fe3ff1de9",
+      "0x2626b2a297a29646b2b0db078407aac16f34c1dbb8cb40c8abcf80e0c7fe7fca",
+      "0x5239b31259e9bbe0435b3ff49bd46942f991c8d3e5d7cfe8f47238683cf901ed"
+    ],
+    [
+      "0x96191f7f6582d54c3abc8a713474a02064c9b66913e817c03d0e0879747a0fcf",
+      "0x1f2db36049e7f09ed9d0f010ba8e19390ea4628ee02d84e1ed9135de4d0454fd",
+      "0x49b25483e1dfb2a13260a45eeef6505ec055133e7c2078f737c5e14d6541d9aa",
+      "0x3a45edeb847afaf468fd7713c1e3194c3048779b62a0d4b65a55dd2193a14d0f",
+      "0xfb7f362be74c96e718e6555ffc4b3666b8628521e9ffa5ef8e8f6615e5a57ab7",
+      "0x6ab688e494f59ae3ee2164e811ed3359ec181f9c05f6a7dfe587766a4a3f2be6",
+      "0x6bbe9a3aa0557ca6c4ded5af41919707acca78c864cd72f7688ed9a095d554b4",
+      "0x90851d3320874afc8191c377f69c2383d5cfe80bf679909232ffe124b84deda3"
+    ],
+    [
+      "0x77e5a62effe54f498bea63b2193d180b3d9a7519f144ffb351e050adc447a745",
+      "0x51d0159cbfa05a5823861dff267a4260694ea12daf29416835812e415c9b613f",
+      "0xd4d86fee6e5a2b2a3661af49470a4a66cbdf9cb5a94a7f5e7f08bf3b08b827b4",
+      "0x15156039fab87bc940d99a3007041d6873853e8a98678ed8bd2ee52cfb6ea30e"
+    ]
+  ],
+  "configurationTransactions": [
+    "0xbf0461becff675e77de290b1b6532bf359b9fec9521f96e1c406ce85a451fd8a",
+    "0xe5a6795d08cc320aca9eec7629b3c8d65b8dc3123e6c0a689b5c844c253558a3",
+    "0x8b0167069b81dae5a4e3913aa1dfda7abf560cd57d700fb36b4f7710edc02517",
+    "0x4de270d84d84833c5800d068deafc474d3b7a52761709a6690c6a090b8f32305",
+    "0xe2d186ad9af04aaabb1cb298b7348656497abdd3c349dd10bf59f61a284c884a",
+    "0xdd24853a411e03b87d6aead269fb2bf899af45a8fedba82019d01a4fe3ff1de9",
+    "0x2626b2a297a29646b2b0db078407aac16f34c1dbb8cb40c8abcf80e0c7fe7fca",
+    "0x5239b31259e9bbe0435b3ff49bd46942f991c8d3e5d7cfe8f47238683cf901ed",
+    "0x96191f7f6582d54c3abc8a713474a02064c9b66913e817c03d0e0879747a0fcf",
+    "0x1f2db36049e7f09ed9d0f010ba8e19390ea4628ee02d84e1ed9135de4d0454fd",
+    "0x49b25483e1dfb2a13260a45eeef6505ec055133e7c2078f737c5e14d6541d9aa",
+    "0x3a45edeb847afaf468fd7713c1e3194c3048779b62a0d4b65a55dd2193a14d0f",
+    "0xfb7f362be74c96e718e6555ffc4b3666b8628521e9ffa5ef8e8f6615e5a57ab7",
+    "0x6ab688e494f59ae3ee2164e811ed3359ec181f9c05f6a7dfe587766a4a3f2be6",
+    "0x6bbe9a3aa0557ca6c4ded5af41919707acca78c864cd72f7688ed9a095d554b4",
+    "0x90851d3320874afc8191c377f69c2383d5cfe80bf679909232ffe124b84deda3",
+    "0x77e5a62effe54f498bea63b2193d180b3d9a7519f144ffb351e050adc447a745",
+    "0x51d0159cbfa05a5823861dff267a4260694ea12daf29416835812e415c9b613f",
+    "0xd4d86fee6e5a2b2a3661af49470a4a66cbdf9cb5a94a7f5e7f08bf3b08b827b4",
+    "0x15156039fab87bc940d99a3007041d6873853e8a98678ed8bd2ee52cfb6ea30e"
+  ],
+  "initialOraclePrices": {
+    "status": "published",
+    "markets": {
+      "CRCL": "0xcb78731082ebc157720c480e4e11ea7ef97f4c40421545a1d8f32993fbfc074c",
+      "MSTR": "0x606f9045fc8d0aeca4129d3ea7e9356b14cff9ba78bfd8422b842cbcd532e14c",
+      "MU": "0x5b325b0adaf05c5ed09601e2d6d42bcb0583477cb2fa892868899801ce02e590",
+      "NVDA": "0x51d7d8169d4d7ca104325bd16de95e43807d60cbbeda544078d5ffeccbf5a199",
+      "RDDT": "0x406557357679333ddf741f4eb7b8c8674d6db2f1416439e65acfce2d0dbfd685",
+      "SPCX": "0x07333a97384fe7fba260315cda13bdbddc3cef1e49994c6ad8a130bec08b00cb",
+      "TSLA": "0x3f1538d5b554c22549b117b211251ede45cdf4a42cbfea9a9a064f2b5cd5729c"
+    },
+    "verification": "All seven active markets have nonzero oracle sequence, fresh marks, and no circuit breaker; close-only markets currently have no exposure."
+  }
+}

@@ -461,6 +461,22 @@ contract FloatClearingHouse {
         return stressReserve >= assets ? 0 : assets - stressReserve;
     }
 
+    /// @notice NAV must not treat stale or circuit-broken marks as current prices.
+    function navPricesFresh() external view returns (bool) {
+        for (uint256 i; i < marketIds.length; ++i) {
+            bytes32 marketId = marketIds[i];
+            MarketExposure memory exposure = marketExposure[marketId];
+            if ((exposure.longBaseE18 | exposure.shortBaseE18) == 0) continue;
+            IFloatOracle.Price memory price = oracle.getPrice(marketId);
+            if (
+                price.priceE18 == 0 || price.circuitBroken
+                    || price.confidenceBps > markets[marketId].maxOracleConfidenceBps
+                    || block.timestamp > uint256(price.timestamp) + oracleMaxAgeSeconds
+            ) return false;
+        }
+        return true;
+    }
+
     /// @notice Net trader PnL marked to each market's latest oracle price.
     function unrealizedPnlUsdg() external view returns (int256 pnlUsdg) {
         for (uint256 i; i < marketIds.length; ++i) {
@@ -623,7 +639,9 @@ contract FloatClearingHouse {
         Position storage position = positions[trader][marketId];
         if (position.sizeE18 == 0) revert PositionNotLiquidatable();
         bool expired = block.timestamp >= uint256(position.openedAt) + MAX_POSITION_DURATION;
-        uint256 price = _currentPrice(marketId, markets[marketId]);
+        IFloatOracle.Price memory mark = _oraclePrice(marketId, markets[marketId]);
+        if (mark.circuitBroken) revert StaleOraclePrice();
+        uint256 price = mark.priceE18;
         if (!expired && _meetsMaintenanceMargin(position, price, markets[marketId])) revert PositionNotLiquidatable();
         uint256 marginBeforeAccrual = position.marginUsdg;
         _accrueMarketBorrowIndex(marketId);

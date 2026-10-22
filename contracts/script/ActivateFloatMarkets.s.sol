@@ -5,8 +5,8 @@ import {Script} from "forge-std/Script.sol";
 import {FloatOracle} from "../src/FloatOracle.sol";
 import {FloatClearingHouse} from "../src/FloatClearingHouse.sol";
 
-/// @notice Applies any queued Silverlake market settings immediately, enables oracle
-/// markets, and publishes their initial signed marks. Silverlake has zero delay.
+/// @notice Applies any queued Goldlake market settings immediately, enables oracle
+/// markets, and publishes their initial signed marks. Goldlake has zero delay.
 contract ActivateFloatMarkets is Script {
     uint64 private constant ORACLE_MAX_AGE = 120;
     uint64 private constant MAX_ORACLE_CONFIDENCE_BPS = 50;

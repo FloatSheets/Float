@@ -2,7 +2,7 @@ import { z } from "zod";
 import { privateKeyToAccount } from "viem/accounts";
 
 const address = z.string().regex(/^0x[a-fA-F0-9]{40}$/, "must be an EVM address");
-export const contractVersionSchema = z.enum(["silverlake", "amber", "jasper", "meadow", "legacy-orion"]);
+export const contractVersionSchema = z.enum(["goldlake", "silverlake", "amber", "jasper", "meadow", "legacy-orion"]);
 export type ContractVersion = z.infer<typeof contractVersionSchema>;
 
 const schema = z.object({
@@ -16,6 +16,9 @@ const schema = z.object({
   SILVERLAKE_FLOAT_CLEARING_HOUSE_ADDRESS: address.default("0xC197d8F546CC56A4148b30A74d3A2c5975255C6A"),
   SILVERLAKE_FLOAT_ORACLE_ADDRESS: address.default("0xf935b2439E4B74F9Bd100148e4eFe3dE94DEF315"),
   SILVERLAKE_FLOAT_VAULT_ADDRESS: address.default("0x9DA17d606453552bc7CD54f4d44813C8Acff55c4"),
+  GOLDLAKE_FLOAT_CLEARING_HOUSE_ADDRESS: address.default("0xA1329C69e8EDA292cdA849BaBB990fbD05198cDb"),
+  GOLDLAKE_FLOAT_ORACLE_ADDRESS: address.default("0xe47c7ab6e236e44CB888Ab08CE96f5839887C5Ec"),
+  GOLDLAKE_FLOAT_VAULT_ADDRESS: address.default("0x24B530f2ef4c76D10003e861182208ceA4120C45"),
   MEADOW_FLOAT_CLEARING_HOUSE_ADDRESS: address.default("0xc1AfA648C30090Aa8fDd3fbca384bd65b52B58Dd"),
   MEADOW_FLOAT_ORACLE_ADDRESS: address.default("0x7Fda40E8FD27cA067C9Ee23EA0Fd0cb8Bb786A8a"),
   MEADOW_FLOAT_VAULT_ADDRESS: address.default("0xb74eD266A95d8393cDaF2Fa6cADd98b5a1D91875"),
@@ -59,7 +62,23 @@ export function isSilverlakeConfigured(config: AppConfig): boolean {
   );
 }
 
+export function isGoldlakeConfigured(config: AppConfig): boolean {
+  return config.NODE_ENV === "test" || Boolean(
+    config.GOLDLAKE_FLOAT_CLEARING_HOUSE_ADDRESS
+    && config.GOLDLAKE_FLOAT_ORACLE_ADDRESS
+    && config.GOLDLAKE_FLOAT_VAULT_ADDRESS
+  );
+}
+
 export function contractConfigForVersion(config: AppConfig, version: ContractVersion): AppConfig {
+  if (version === "goldlake") {
+    if (!isGoldlakeConfigured(config)) throw new Error("Goldlake contract addresses are not configured");
+    const clearingHouse = config.GOLDLAKE_FLOAT_CLEARING_HOUSE_ADDRESS ?? (config.NODE_ENV === "test" ? config.FLOAT_CLEARING_HOUSE_ADDRESS : undefined);
+    const oracle = config.GOLDLAKE_FLOAT_ORACLE_ADDRESS ?? (config.NODE_ENV === "test" ? config.FLOAT_ORACLE_ADDRESS : undefined);
+    const vault = config.GOLDLAKE_FLOAT_VAULT_ADDRESS ?? (config.NODE_ENV === "test" ? config.FLOAT_VAULT_ADDRESS : undefined);
+    if (!clearingHouse || !oracle || !vault) throw new Error("Goldlake contract addresses are not configured");
+    return { ...config, FLOAT_CLEARING_HOUSE_ADDRESS: clearingHouse, FLOAT_ORACLE_ADDRESS: oracle, FLOAT_VAULT_ADDRESS: vault };
+  }
   if (version === "silverlake") {
     if (!isSilverlakeConfigured(config)) throw new Error("Silverlake contract addresses are not configured");
     const clearingHouse = config.SILVERLAKE_FLOAT_CLEARING_HOUSE_ADDRESS ?? (config.NODE_ENV === "test" ? config.FLOAT_CLEARING_HOUSE_ADDRESS : undefined);

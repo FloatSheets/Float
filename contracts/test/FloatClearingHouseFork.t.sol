@@ -78,9 +78,13 @@ contract FloatClearingHouseForkTest is Test {
         _execute(_quote(true, 50_000 * USDG_UNIT, 1));
 
         vault.withdraw(lpShares * 99 / 100, address(this));
+        uint64 epoch = vault.queueEpoch();
         vm.warp(block.timestamp + vault.QUEUE_EPOCH_DURATION());
-        vm.expectRevert(FloatVault.InsufficientAvailableLiquidity.selector);
+        _publish(3, 228 * E18, 10);
         vault.settleQueue();
+        assertEq(vault.settledWithdrawalShares(), 0);
+        vault.cancelQueuedWithdrawal(epoch);
+        assertEq(vault.lockedWithdrawalShares(address(this)), 0);
     }
 
     function testStressReserveTracksNetExposureWhenLongAndShortExposureOffsets() public {

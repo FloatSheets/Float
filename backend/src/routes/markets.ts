@@ -10,7 +10,7 @@ import type { Address } from 'viem';
 import { contractVersionFromRequest } from '../contract-version';
 
 type LiveMarketDependencies = { rpc: RpcTransport; clearingHouse: Address; oracle: Address };
-type VersionedLiveMarketDependencies = Partial<Record<'silverlake' | 'amber' | 'jasper' | 'meadow' | 'legacy-orion', LiveMarketDependencies>>;
+type VersionedLiveMarketDependencies = Partial<Record<'goldlake' | 'silverlake' | 'amber' | 'jasper' | 'meadow' | 'legacy-orion', LiveMarketDependencies>>;
 
 export function createMarketsRouter(database: Pool, maxPriceAgeSeconds = 120, live?: LiveMarketDependencies | VersionedLiveMarketDependencies): Router {
   const router = Router();

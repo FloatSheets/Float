@@ -3,7 +3,7 @@ import { createPublicClient, createWalletClient, http, parseAbi, type Address, t
 import { privateKeyToAccount } from "viem/accounts";
 import { defineChain } from "viem";
 
-import { contractConfigForVersion, isSilverlakeConfigured, type AppConfig, type ContractVersion } from "../config";
+import { contractConfigForVersion, isGoldlakeConfigured, isSilverlakeConfigured, type AppConfig, type ContractVersion } from "../config";
 import { safeErrorMessage } from "../safe-error";
 import { marketId } from "../chain/protocol";
 import type { RpcTransport } from "../chain/rpc";
@@ -40,6 +40,19 @@ function circuitBroken(twapPriceE18: bigint, spotPriceE18: bigint): boolean {
   return delta * 10_000n / twapPriceE18 > 50n;
 }
 
+export function shouldPublishGoldlakeMarket(input: {
+  state: number;
+  status: string | undefined;
+  oracleTradable: boolean | null | undefined;
+  longBaseE18: bigint;
+  shortBaseE18: bigint;
+}): boolean {
+  const availableForNewPositions = input.state === 1
+    && input.status === "active"
+    && input.oracleTradable === true;
+  return availableForNewPositions || input.longBaseE18 !== 0n || input.shortBaseE18 !== 0n;
+}
+
 export class OraclePublisher {
   private readonly wallet;
   private readonly publicClient;
@@ -58,28 +71,35 @@ export class OraclePublisher {
          SELECT observed_at,twap_price_usdg,spot_price_usdg FROM public.pool_snapshots WHERE market_id=m.id ORDER BY observed_at DESC LIMIT 1
        ) s ON true WHERE m.status != 'disabled' ORDER BY m.symbol`
     );
-    // One publisher wallet serves both contracts. Send in sequence so concurrent
-    // writes cannot race for the same account nonce.
-    for (const row of rows) for (const version of ["silverlake", "amber", "jasper", "meadow", "legacy-orion"] as const) {
+    // Send in sequence so concurrent writes cannot race for the publisher nonce.
+    for (const row of rows) for (const version of ["goldlake", "silverlake", "amber", "jasper", "meadow", "legacy-orion"] as const) {
       try {
+        if (version === "goldlake" && !isGoldlakeConfigured(this.config)) continue;
         if (version === "silverlake" && !isSilverlakeConfigured(this.config)) continue;
         const versionConfig = contractConfigForVersion(this.config, version);
         const id = marketId(row.symbol);
-        if (version === "silverlake" || version === "amber") {
-          const [market, snapshot] = await Promise.all([
+        if (version === "goldlake") {
+          const [market, exposure, snapshot] = await Promise.all([
             readClearingMarket(this.rpc, versionConfig.FLOAT_CLEARING_HOUSE_ADDRESS as Address, id),
+            readClearingExposure(this.rpc, versionConfig.FLOAT_CLEARING_HOUSE_ADDRESS as Address, id),
             this.database.query<{ status: string; oracle_tradable: boolean | null }>(
               `SELECT m.status,s.oracle_tradable FROM public.markets m LEFT JOIN LATERAL (
                  SELECT oracle_tradable FROM public.pool_snapshots WHERE market_id=m.id ORDER BY observed_at DESC LIMIT 1
                ) s ON true WHERE m.symbol=$1`, [row.symbol])
           ]);
-          if (market.state !== 1 || snapshot.rows[0]?.status !== "active" || snapshot.rows[0]?.oracle_tradable !== true) continue;
+          if (!shouldPublishGoldlakeMarket({
+            state: market.state,
+            status: snapshot.rows[0]?.status,
+            oracleTradable: snapshot.rows[0]?.oracle_tradable,
+            longBaseE18: exposure.longBaseE18,
+            shortBaseE18: exposure.shortBaseE18
+          })) continue;
           await this.publishRow(row, false, version);
           continue;
         }
         const exposure = await readClearingExposure(this.rpc, versionConfig.FLOAT_CLEARING_HOUSE_ADDRESS as Address, id);
-        // Scheduled refreshes only serve markets with existing positions. A
-        // quote request still publishes on demand before a new position opens.
+        // Goldlake publishes active markets for new positions. Retired versions
+        // only need ongoing marks for markets with positions to close or liquidate.
         if (exposure.longBaseE18 === 0n && exposure.shortBaseE18 === 0n) continue;
         await this.publishRow(row, false, version);
       } catch (error) {
