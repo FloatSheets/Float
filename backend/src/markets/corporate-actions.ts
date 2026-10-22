@@ -178,15 +178,39 @@ type NasdaqDividendRow = { symbol?: string; dividend_Ex_Date?: string; dividend_
 
 /** Mirrors the Nasdaq split and dividend calendars for listed markets. */
 export class CorporateActionMonitor {
-  constructor(private readonly database: Pool, private readonly fetcher: typeof fetch = fetch) {}
+  constructor(
+    private readonly database: Pool,
+    private readonly fetcher: typeof fetch = fetch,
+    private readonly timeoutMs: number = FETCH_TIMEOUT_MS
+  ) {}
 
+  /**
+   * Nasdaq's edge can accept a connection and then stall the body for
+   * datacenter clients, so the deadline covers the whole response, not just
+   * the headers. A stall is recorded as an error instead of hanging forever.
+   */
   private async json<T>(url: string): Promise<T> {
-    const response = await this.fetcher(url, {
-      headers: { accept: "application/json", "user-agent": "Mozilla/5.0 (FloatSheets corporate action monitor)" },
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
-    });
-    if (!response.ok) throw new Error(`corporate action calendar returned HTTP ${response.status}`);
-    return await response.json() as T;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    try {
+      const response = await this.fetcher(url, {
+        headers: {
+          accept: "application/json, text/plain, */*",
+          "accept-language": "en-US,en;q=0.9",
+          origin: "https://www.nasdaq.com",
+          referer: "https://www.nasdaq.com/",
+          "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+        },
+        signal: controller.signal
+      });
+      if (!response.ok) throw new Error(`corporate action calendar returned HTTP ${response.status}`);
+      return JSON.parse(await response.text()) as T;
+    } catch (error) {
+      if (controller.signal.aborted) throw new Error(`corporate action calendar did not respond within ${Math.round(this.timeoutMs / 1_000)}s`);
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   async refresh(now: Date = new Date()): Promise<void> {

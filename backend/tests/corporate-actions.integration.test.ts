@@ -104,6 +104,19 @@ test("mirrors the Nasdaq calendars for listed markets and keeps admin entries", 
   expect(feed.rows[0]!.last_error).toContain("HTTP 503");
 }, 60_000);
 
+test("records a stalled calendar response as an error instead of hanging", async () => {
+  // Headers arrive, then the body never finishes until the request is aborted.
+  const stalled = (async (_url: string, init?: RequestInit) => new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('{"data":'));
+      init?.signal?.addEventListener("abort", () => controller.error(new DOMException("aborted", "AbortError")));
+    }
+  }))) as unknown as typeof fetch;
+  await new CorporateActionMonitor(db, stalled, 50).refresh();
+  const feed = await db.query<{ last_success_at: Date | null; last_error: string }>("SELECT last_success_at, last_error FROM public.corporate_action_feed");
+  expect(feed.rows[0]).toEqual({ last_success_at: null, last_error: "corporate action calendar did not respond within 0s" });
+}, 60_000);
+
 test("reports actions through the markets API using the latest pool price", async () => {
   const observedAt = new Date("2027-06-01T00:00:00.000Z");
   await db.query(
