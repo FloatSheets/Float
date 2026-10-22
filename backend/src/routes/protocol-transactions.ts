@@ -15,12 +15,13 @@ import { requireMasterAdmin } from "../auth/master-admin";
 import { signPriceAttestation, signTradeQuote } from "../signing/signer";
 import type { PriceAttestation, TradeQuote } from "../signing/types";
 import type { RpcTransport } from "../chain/rpc";
-import { readBadDebt, readClearingExposure, readClearingMarket, readClearingPosition, readOraclePrice, readPayoutBalances, readVaultAssets } from "../chain/protocol-read";
+import { readQuoteUsed, readBadDebt, readClearingExposure, readClearingMarket, readClearingPosition, readOraclePrice, readPayoutBalances, readVaultAssets } from "../chain/protocol-read";
 import type { OraclePublisher } from "../oracle/publisher";
 import { snapshotTimeOnChain } from "../oracle/publisher";
 import { safeErrorMessage } from "../safe-error";
 import { haltMessage, readActiveHalt } from "../markets/halts";
 import { weekendBandOptions, weekendBandRefusal, WeekendBands } from "../markets/weekend-bands";
+import { weekendLimitOptions, WeekendWalletLimits } from "../markets/weekend-limits";
 
 const address = z.string().regex(/^0x[0-9a-fA-F]{40}$/);
 const uint = z.string().regex(/^\d+$/).max(78);
@@ -208,6 +209,18 @@ function createProtocolTransactionsRouterForConfig(
   const masterAdmin = requireMasterAdmin(config);
   const adminRateLimit = createAdminRateLimit(database);
   const weekendBands = database ? new WeekendBands(database, weekendBandOptions(config)) : null;
+  const weekendLimits = database && rpc
+    ? new WeekendWalletLimits(database, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, weekendLimitOptions(config),
+      (trader, nonce) => readQuoteUsed(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, trader, nonce))
+    : null;
+
+  router.get("/weekend-allowance", async (request, response) => {
+    try {
+      const input = z.object({ market: z.string().regex(/^[A-Za-z0-9.-]{1,16}$/), trader: address }).parse(request.query);
+      const allowance = weekendLimits ? await weekendLimits.allowance(input.market, input.trader as Address) : null;
+      response.json({ allowance: allowance ? weekendLimits!.view(input.market, allowance) : null });
+    } catch (error) { protocolError(response, error); }
+  });
 
   router.get("/payouts/:account", async (request, response) => {
     try {
@@ -417,6 +430,8 @@ function createProtocolTransactionsRouterForConfig(
         // Underlying closed and the pool has left the weekend band: no new exposure.
         const band = weekendBands ? await weekendBandRefusal(database, weekendBands, symbol) : null;
         if (band) throw new Error(band);
+        const walletLimit = weekendLimits ? await weekendLimits.refusal(symbol, value.trader, requestedNotional) : null;
+        if (walletLimit) throw new Error(walletLimit);
         if (await readBadDebt(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address) !== 0n) throw new Error("new positions are paused while vault bad debt is outstanding");
         const [exposure, vaultAssets] = await Promise.all([
           readClearingExposure(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, id),
@@ -430,6 +445,8 @@ function createProtocolTransactionsRouterForConfig(
         if (marketSkew > vaultAssets * BPS_MARKET_SKEW_CAP / BPS) throw new Error(`this position exceeds current ${symbol} one-sided market capacity`);
       }
       const signature = await signTradeQuote(config.QUOTE_SIGNER_PRIVATE_KEY as Hex, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, value);
+      // Reserve weekend allowance for this executable quote until it expires.
+      if (riskIncreasing && weekendLimits) await weekendLimits.record(symbol, value.trader, value.nonce, requestedNotional, new Date(Number(value.expiry) * 1_000));
       response.json({
         quote: Object.fromEntries(Object.entries(value).map(([key, item]) => [key, typeof item === "bigint" ? item.toString() : item])),
         sampled_notional_usdg: sample.notional_usdg,
@@ -483,6 +500,8 @@ function createProtocolTransactionsRouterForConfig(
         if (halt) return reject(haltMessage(halt));
         const band = weekendBands ? await weekendBandRefusal(database, weekendBands, symbol) : null;
         if (band) return reject(band);
+        const walletLimit = weekendLimits ? await weekendLimits.refusal(symbol, input.trader as Address, requestedNotional) : null;
+        if (walletLimit) return reject(walletLimit);
         if (await readBadDebt(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address) !== 0n) return reject("New positions are paused while vault bad debt is outstanding.");
         const [exposure, vaultAssets] = await Promise.all([
           readClearingExposure(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, id),

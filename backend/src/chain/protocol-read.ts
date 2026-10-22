@@ -7,7 +7,8 @@ const clearingAbi = parseAbi([
   "function markets(bytes32) view returns (uint8,uint64,uint64,uint64,uint64,uint128)",
   "function marketExposure(bytes32) view returns (uint256 longBaseE18,uint256 shortBaseE18)",
   "function getPosition(address,bytes32) view returns (int256,uint256,uint256,uint64)",
-  "function badDebtUsdg() view returns (uint256)"
+  "function badDebtUsdg() view returns (uint256)",
+  "function quoteUsed(address,uint64) view returns (bool)"
 ]);
 const vaultAbi = parseAbi(["function totalAssets() view returns (uint256)"]);
 const payoutAbi = parseAbi([
@@ -45,6 +46,13 @@ export async function readBadDebt(rpc: RpcTransport, clearingHouse: Address): Pr
   const data = encodeFunctionData({ abi: clearingAbi, functionName: "badDebtUsdg" });
   const result = await rpc.call({ to: clearingHouse, data });
   return decodeFunctionResult({ abi: clearingAbi, functionName: "badDebtUsdg", data: result });
+}
+
+/** True once a signed quote nonce has been executed or cancelled on-chain. */
+export async function readQuoteUsed(rpc: RpcTransport, clearingHouse: Address, trader: Address, nonce: bigint): Promise<boolean> {
+  const data = encodeFunctionData({ abi: clearingAbi, functionName: "quoteUsed", args: [trader, nonce] });
+  const result = await rpc.call({ to: clearingHouse, data });
+  return decodeFunctionResult({ abi: clearingAbi, functionName: "quoteUsed", data: result });
 }
 
 export async function readClearingExposure(rpc: RpcTransport, clearingHouse: Address, id: Hex): Promise<ClearingExposure> {
