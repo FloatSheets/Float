@@ -11,6 +11,8 @@ import { createReadinessRouter } from "./routes/ready";
 import { createProtocolRouter } from "./routes/protocol";
 import { createProtocolTransactionsRouter } from "./routes/protocol-transactions";
 import { effectiveOraclePublishIntervalSeconds, OraclePublisher } from "./oracle/publisher";
+import { createKeeperChain, PositionKeeper } from "./keeper/keeper";
+import { createKeeperRouter } from "./routes/keeper";
 
 const config = loadConfig();
 const meadowConfig = contractConfigForVersion(config, "meadow");
@@ -26,6 +28,7 @@ await migrate();
 setRateLimitDatabase(db);
 const monitor = new MarketMonitor(db, rpc, Math.min(config.UNISWAP_TWAP_WINDOW_SECONDS, 300));
 const oraclePublisher = new OraclePublisher(db, rpc, config);
+const keeper = new PositionKeeper(db, createKeeperChain(config, rpc), config);
 app.use("/v1/markets", createMarketsRouter(db, config.ORACLE_PRICE_MAX_AGE_SECONDS, {
   ...(goldlakeConfig ? { goldlake: { rpc, clearingHouse: goldlakeConfig.FLOAT_CLEARING_HOUSE_ADDRESS as `0x${string}`, oracle: goldlakeConfig.FLOAT_ORACLE_ADDRESS as `0x${string}` } } : {}),
   ...(silverlakeConfig ? { silverlake: { rpc, clearingHouse: silverlakeConfig.FLOAT_CLEARING_HOUSE_ADDRESS as `0x${string}`, oracle: silverlakeConfig.FLOAT_ORACLE_ADDRESS as `0x${string}` } } : {}),
@@ -35,11 +38,19 @@ app.use("/v1/markets", createMarketsRouter(db, config.ORACLE_PRICE_MAX_AGE_SECON
   "legacy-orion": { rpc, clearingHouse: legacyConfig.FLOAT_CLEARING_HOUSE_ADDRESS as `0x${string}`, oracle: legacyConfig.FLOAT_ORACLE_ADDRESS as `0x${string}` }
 }));
 app.use("/ready", createReadinessRouter(db));
+app.use("/v1/keeper", createKeeperRouter(keeper));
 app.use("/v1/protocol", createProtocolRouter(config));
 app.use("/v1/protocol/transactions", createProtocolTransactionsRouter(config, db, rpc, oraclePublisher));
 let lastOraclePublishAt = 0;
+let lastKeeperRunAt = 0;
+
+let refreshing = false;
 
 async function refreshMarkets(): Promise<void> {
+  // A slow tick must not overlap the next one: the publisher and keeper may
+  // share a wallet, and concurrent sends would race for its nonce.
+  if (refreshing) return;
+  refreshing = true;
   try {
     await monitor.refreshAll();
     if (Date.now() - lastOraclePublishAt >= effectiveOraclePublishIntervalSeconds(config.ORACLE_PUBLISH_INTERVAL_SECONDS) * 1_000) {
@@ -49,6 +60,17 @@ async function refreshMarkets(): Promise<void> {
     console.log("FloatSheets market snapshots refreshed");
   } catch (error) {
     console.error("FloatSheets market refresh failed", error);
+  }
+  // Closing unsafe positions must not depend on pool sampling succeeding.
+  try {
+    if (config.KEEPER_ENABLED === "true" && Date.now() - lastKeeperRunAt >= config.KEEPER_INTERVAL_SECONDS * 1_000) {
+      lastKeeperRunAt = Date.now();
+      await keeper.runOnce();
+    }
+  } catch (error) {
+    console.error("FloatSheets keeper run failed", error);
+  } finally {
+    refreshing = false;
   }
 }
 

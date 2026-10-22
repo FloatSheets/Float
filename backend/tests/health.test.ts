@@ -1,7 +1,10 @@
-import { expect, test } from "bun:test";
+import { beforeEach, expect, test } from "bun:test";
 import request from "supertest";
 
-import { app } from "../src/app";
+import { app, resetRateLimitsForTest } from "../src/app";
+
+// The rate limiter is process-wide; other suites can exhaust the shared bucket.
+beforeEach(() => resetRateLimitsForTest());
 
 test("GET /health returns service metadata", async () => {
   const response = await request(app).get("/health").set("x-request-id", "test-request-id");
