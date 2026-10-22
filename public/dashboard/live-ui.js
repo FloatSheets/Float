@@ -216,8 +216,10 @@
           const wallet=walletApi();if(!wallet?.checkTrade) throw new Error('Trading checks are still loading.');
           const result=await wallet.checkTrade({market:selected.symbol,isLong:isLong,marginUsdg:margin.toString(),notionalUsdg:notional.toString(),targetLeverage:lev.toString()});
           if(request!==validationRequest||!ticket.isConnected)return;
-          tradeAccepted=result?.acceptable===true;
-          if(!tradeAccepted) showContractWarning(typeof result?.reason==='string'?result.reason:'This position is not available right now.',result?.field==='margin'?'margin':'leverage');
+          const firstPriceWillPublishOnQuote=result?.refresh_on_quote===true;
+          tradeAccepted=result?.acceptable===true||firstPriceWillPublishOnQuote;
+          if(firstPriceWillPublishOnQuote){warning.hidden=false;warning.textContent=typeof result?.reason==='string'?result.reason:'A first on-chain price will publish when you request a quote.';}
+          else if(!tradeAccepted) showContractWarning(typeof result?.reason==='string'?result.reason:'This position is not available right now.',result?.field==='margin'?'margin':'leverage');
         } catch(reason) {
           if(request!==validationRequest||!ticket.isConnected)return;
           tradeAccepted=false;showContractWarning(reason instanceof Error?reason.message:'This position could not be checked right now.','leverage');

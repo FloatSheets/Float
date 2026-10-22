@@ -521,7 +521,18 @@ function createProtocolTransactionsRouterForConfig(
       const fee = ceilingDiv(requestedNotional * TRADING_FEE_BPS, BPS);
       const requiredMargin = ceilingDiv(requestedNotional * E18, onchainMarket.maxLeverageE18) + fee;
       if (position.marginUsdg + requestedMargin < requiredMargin) return reject("Add more margin or choose lower leverage for this position.", "margin");
-      if (oraclePrice.sequence === 0n || oraclePrice.priceE18 === 0n || oraclePrice.circuitBroken) return reject("This market price is not ready for a new position. Try again shortly.");
+      if (oraclePrice.sequence === 0n || oraclePrice.priceE18 === 0n) {
+        // The trade form preflight stays read-only. Let it proceed to the
+        // explicit trade-quote request, which can initialize a missing mark
+        // on demand and then repeats the full live risk checks.
+        return response.json({
+          acceptable: false,
+          reason: "This market needs its first on-chain price. It will be published when you request the quote.",
+          field: "leverage",
+          refresh_on_quote: true
+        });
+      }
+      if (oraclePrice.circuitBroken) return reject("This market price is not ready for a new position. Try again shortly.");
 
       const nextSize = position.sizeE18 + sizeForNotional(requestedNotional, oraclePrice.priceE18, input.isLong);
       if (notionalForSize(nextSize, oraclePrice.priceE18) > onchainMarket.maxPositionNotionalUsdg) return reject("Lower your leverage or margin to stay within this market's position limit.");
