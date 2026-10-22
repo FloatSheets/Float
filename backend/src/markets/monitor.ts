@@ -6,10 +6,17 @@ import { safeErrorMessage } from "../safe-error";
 import { absoluteDeviationBps, quoteExactInputSingle, readPoolTwap } from "../chain/uniswap-v3";
 import { USDG_ADDRESS, USDG_DECIMALS } from "../chain/constants";
 
-const NOTIONALS = [5, 10, 1_000, 10_000, 50_000] as const;
 const MAX_SPOT_TWAP_DEVIATION_BPS = 50;
 
-type Market = { id: string; symbol: string; uniswap_v3_pool_address: Address; uniswap_v3_fee_tier: number };
+type Market = { id: string; symbol: string; uniswap_v3_pool_address: Address; uniswap_v3_fee_tier: number; max_ticket_usdg: string };
+
+export function quoteNotionalsForMarketCap(maxTicketUsdg: string): number[] {
+  const cap = Number(maxTicketUsdg);
+  if (!Number.isSafeInteger(cap) || cap < 100) throw new Error("Market ticket cap must be at least $100");
+  const values = [...new Set([5, 10, Math.floor(cap / 10), Math.floor(cap / 2), cap])].sort((a, b) => a - b);
+  if (values.length !== 5) throw new Error("Market ticket cap does not support five distinct quote sizes");
+  return values;
+}
 
 function units(value: number, decimals: number): bigint {
   return BigInt(Math.round(value * 10 ** decimals));
@@ -25,7 +32,7 @@ export class MarketMonitor {
 
   async refreshSymbol(symbol: string): Promise<void> {
     const { rows } = await this.database.query<Market>(
-      "SELECT id, symbol, uniswap_v3_pool_address, uniswap_v3_fee_tier FROM public.markets WHERE symbol=$1 AND status != 'disabled'",
+      "SELECT id, symbol, uniswap_v3_pool_address, uniswap_v3_fee_tier, max_ticket_usdg::text FROM public.markets WHERE symbol=$1 AND status != 'disabled'",
       [symbol.toUpperCase()]
     );
     const market = rows[0];
@@ -41,7 +48,7 @@ export class MarketMonitor {
     if (!runId) throw new Error("Unable to create monitor run");
     let succeeded = 0;
     const { rows } = await this.database.query<Market>(
-      "SELECT id, symbol, uniswap_v3_pool_address, uniswap_v3_fee_tier FROM public.markets WHERE status != 'disabled' ORDER BY symbol"
+      "SELECT id, symbol, uniswap_v3_pool_address, uniswap_v3_fee_tier, max_ticket_usdg::text FROM public.markets WHERE status != 'disabled' ORDER BY symbol"
     );
     try {
       for (const market of rows) {
@@ -83,7 +90,7 @@ export class MarketMonitor {
         [market.id, observedAt, twap.sqrtPriceX96.toString(), twap.liquidity.toString(), twap.usdgBalance.toString(), twap.priceUsdg, twap.spotPriceUsdg, spotTwapDeviationBps, spotTwapDeviationBps <= MAX_SPOT_TWAP_DEVIATION_BPS]
       );
 
-      for (const notional of NOTIONALS) {
+      for (const notional of quoteNotionalsForMarketCap(market.max_ticket_usdg)) {
         const buyOut = await quoteExactInputSingle(
           this.rpc, USDG_ADDRESS, twap.assetAddress, units(notional, USDG_DECIMALS), market.uniswap_v3_fee_tier
         );
