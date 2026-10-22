@@ -4,22 +4,11 @@ pragma solidity 0.8.30;
 import {IERC20, FloatVault} from "../src/FloatVault.sol";
 import {FloatOracle} from "../src/FloatOracle.sol";
 import {FloatClearingHouse} from "../src/FloatClearingHouse.sol";
+import {Test} from "forge-std/Test.sol";
 
-interface VmFork {
-    function createSelectFork(string calldata rpcUrl) external returns (uint256);
-    function envString(string calldata name) external returns (string memory);
-    function addr(uint256 privateKey) external returns (address);
-    function prank(address sender) external;
-    function sign(uint256 privateKey, bytes32 digest) external returns (uint8 v, bytes32 r, bytes32 s);
-    function expectRevert(bytes4) external;
-    function warp(uint256 timestamp) external;
-}
-
-/// @notice Fork tests use the real Robinhood Chain USDG token and a real NVDA/USDG pool balance; no test ERC-20 is used.
-contract FloatClearingHouseForkTest {
-    VmFork private constant vm = VmFork(address(uint160(uint256(keccak256("hevm cheat code")))));
+/// @notice Fork tests use the real Robinhood Chain USDG token and deployed bytecode, with deterministic test balances.
+contract FloatClearingHouseForkTest is Test {
     address private constant USDG = 0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168;
-    address private constant NVDA_USDG_POOL = 0xd4EB21209C4D6093f80B5b84f5C45cc093EA14a3;
     address private constant TRADER = 0x1111111111111111111111111111111111111111;
     address private constant KEEPER = 0x2222222222222222222222222222222222222222;
     bytes32 private constant MARKET = keccak256("NVDA-PERP");
@@ -62,8 +51,7 @@ contract FloatClearingHouseForkTest {
         oracle.applyMarketEnabled(MARKET);
         _publish(1, 228 * E18, 10);
 
-        vm.prank(NVDA_USDG_POOL);
-        require(usdg.transfer(address(this), 1_100_000 * USDG_UNIT), "fork USDG transfer");
+        deal(USDG, address(this), 1_100_000 * USDG_UNIT);
         usdg.approve(address(vault), type(uint256).max);
         lpShares = vault.deposit(1_000_000 * USDG_UNIT, address(this));
         vm.warp(block.timestamp + vault.QUEUE_EPOCH_DURATION());
@@ -71,7 +59,7 @@ contract FloatClearingHouseForkTest {
         vault.claimDeposit(vault.queueEpoch());
         vault.startNextQueueEpoch();
         _publish(2, 228 * E18, 10);
-        require(usdg.transfer(TRADER, 50_000 * USDG_UNIT), "trader funding");
+        deal(USDG, TRADER, 50_000 * USDG_UNIT);
         vm.prank(TRADER);
         usdg.approve(address(clearing), type(uint256).max);
     }
@@ -98,7 +86,7 @@ contract FloatClearingHouseForkTest {
     function testStressReserveTracksNetExposureWhenLongAndShortExposureOffsets() public {
         _depositTraderMargin(20_000 * USDG_UNIT);
         _execute(_quote(true, 50_000 * USDG_UNIT, 1));
-        require(usdg.transfer(KEEPER, 20_000 * USDG_UNIT), "second trader funding");
+        deal(USDG, KEEPER, 20_000 * USDG_UNIT);
         vm.prank(KEEPER);
         usdg.approve(address(clearing), type(uint256).max);
         vm.prank(KEEPER);
