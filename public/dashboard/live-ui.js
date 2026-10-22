@@ -678,6 +678,23 @@
     value.className=change>=0?'positive':'negative';
     value.textContent=(change>=0?'+':'')+change.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4})+'%';
   }
+  function paintOpeningBell(bell,symbol){
+    const stats=root.querySelector('.chart-stats');
+    if(!stats)return;
+    let notice=root.querySelector('#opening-bell-notice');
+    clearInterval(window.__FLOATSHEETS_BELL_TIMER__);
+    if(!bell){notice?.remove();return;}
+    if(!notice){notice=document.createElement('div');notice.id='opening-bell-notice';notice.className='info-note bell-note';notice.setAttribute('role','status');stats.parentElement.insertBefore(notice,stats);}
+    const endsAt=new Date(bell.ends_at).getTime();
+    const ticket=bell.max_ticket_usdg?'$'+Number(bell.max_ticket_usdg).toLocaleString(undefined,{maximumFractionDigits:0}):'half size';
+    const paint=function(){
+      const left=Math.max(0,Math.round((endsAt-Date.now())/1000));
+      if(left===0){clearInterval(window.__FLOATSHEETS_BELL_TIMER__);notice.remove();return;}
+      notice.innerHTML='<strong>🔔 Opening bell · '+Math.floor(left/60)+':'+String(left%60).padStart(2,'0')+' left</strong> The real '+escapeHtml(symbol||'')+' just opened and is repricing faster than its pool. Until '+new Date(endsAt).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})+', new positions pay +'+escapeHtml(bell.extra_spread_bps)+' bps and are limited to '+ticket+' per ticket, so nobody can trade the vault at a stale price. Closing is unchanged.';
+    };
+    paint();
+    window.__FLOATSHEETS_BELL_TIMER__=setInterval(paint,1000);
+  }
   async function paintWeekendAllowance(notice,symbol){
     const wallet=walletState(),api=window.__FLOATSHEETS_SERVER_API__;
     if(!wallet?.connected||!wallet.address||!api?.getWeekendAllowance)return;
@@ -737,6 +754,7 @@
     }
     paintExchangeHalt(data.exchange_halt);
     paintWeekendBand(data.exchange_halt?null:data.weekend_band);
+    paintOpeningBell(data.exchange_halt?null:data.opening_bell,data.market);
   }
   function abortable(promise,signal){
     return new Promise(function(resolve,reject){

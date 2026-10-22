@@ -98,3 +98,21 @@ export function closedWindow(now: Date): ClosedWindow | null {
   while (!isTradingDay(nextSession)) nextSession = addDays(nextSession, 1);
   return { anchorAt: at(lastSession, REGULAR_CLOSE), closedAt: at(lastSession, EXTENDED_CLOSE), reopensAt: at(nextSession, EXTENDED_OPEN) };
 }
+
+/** Regular-session open on trading days. */
+const REGULAR_OPEN = "09:30:00";
+
+export type OpeningBell = { startsAt: Date; endsAt: Date };
+
+/**
+ * The first minutes after the 9:30 ET open, when the underlying's opening
+ * auction can move it sharply and the pool TWAP is still catching up.
+ */
+export function openingBell(now: Date, minutes: number): OpeningBell | null {
+  if (minutes <= 0) return null;
+  const { date } = easternParts(now);
+  if (!isTradingDay(date)) return null;
+  const startsAt = at(date, REGULAR_OPEN);
+  const endsAt = new Date(startsAt.getTime() + minutes * 60_000);
+  return now >= startsAt && now < endsAt ? { startsAt, endsAt } : null;
+}

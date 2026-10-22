@@ -134,3 +134,4 @@
 .keeper-panel{margin-top:20px}.keeper-panel .panel-body{padding-top:22px}
 .state.EXCHANGE_HALT{background:#fce7ec;border-color:#f4ccd7;color:#a63c64}.halt-note{margin:16px 22px 0;border-left-color:#c13d4f}.halt-note strong{color:var(--blue);font-weight:600}.dashboard-dark .halt-note strong{color:#fff}
 .state.WEEKEND_BAND{background:#fff4e0;border-color:#f3dcae;color:#8a5a00}.band-note{margin:16px 22px 0;border-left-color:#153c92}.band-note strong{color:var(--blue);font-weight:600}.band-note .band-outside{color:#a63c64}.dashboard-dark .band-note strong{color:#fff}.dashboard-dark .band-note .band-outside{color:#fb8090}
+.bell-note{margin:16px 22px 0;border-left-color:#c9a227}.bell-note strong{color:var(--blue);font-weight:600;margin-right:6px}.dashboard-dark .bell-note strong{color:#fff}

@@ -10,7 +10,17 @@ import type { Address } from 'viem';
 import { contractVersionFromRequest } from '../contract-version';
 import { HALT_FEED_STALE_SECONDS, readActiveHalts } from '../markets/halts';
 import { closedWindow } from '../markets/sessions';
+import { openingBellTerms, openingBellTicket, type OpeningBellOptions } from '../markets/opening-bell';
 import { decimalToE18, readPoolPriceE18, weekendBandView, WeekendBands, type WeekendBandOptions, type WeekendBandView } from '../markets/weekend-bands';
+
+function usdgUnits(value: string): bigint {
+  const [whole, fraction = ''] = value.split('.');
+  return BigInt(`${whole}${fraction.padEnd(6, '0').slice(0, 6)}`);
+}
+
+function usdgDecimal(units: bigint): string {
+  return `${units / 1_000_000n}.${(units % 1_000_000n).toString().padStart(6, '0')}`;
+}
 
 type LiveMarketDependencies = { rpc: RpcTransport; clearingHouse: Address; oracle: Address };
 type VersionedLiveMarketDependencies = Partial<Record<'goldlake' | 'silverlake' | 'amber' | 'jasper' | 'meadow' | 'legacy-orion', LiveMarketDependencies>>;
@@ -23,7 +33,8 @@ export function createMarketsRouter(
   database: Pool,
   maxPriceAgeSeconds = 120,
   live?: LiveMarketDependencies | VersionedLiveMarketDependencies,
-  bandOptions: WeekendBandOptions = { enabled: false, maxBandBps: 500, shiftAfterSeconds: 3_600, maxShifts: 2 }
+  bandOptions: WeekendBandOptions = { enabled: false, maxBandBps: 500, shiftAfterSeconds: 3_600, maxShifts: 2 },
+  bellOptions: OpeningBellOptions = { enabled: false, minutes: 10, extraSpreadBps: 15, ticketBps: 5_000 }
 ): Router {
   const router = Router();
   const bands = new WeekendBands(database, bandOptions);
@@ -164,7 +175,11 @@ export function createMarketsRouter(
       const exchangeHalt=(await readActiveHalts(database)).get(symbol)??null;
       const weekendBand=await bandView(symbol);
       const state=onchainMarket.state===0?'HALTED':onchainMarket.state===2?'CLOSE_ONLY':exchangeHalt?'EXCHANGE_HALT':weekendBand?.pool_outside?'WEEKEND_BAND':(monitoredState!=='active'?'CLOSE_ONLY':(oracleFresh?'LIVE':'READY'));
-      response.json({market:symbol,state,exchange_halt:exchangeHalt,weekend_band:weekendBand,monitored_state:monitoredState,onchain_market_state:onchainMarket.state,
+      const bell=openingBellTerms(bellOptions);
+      const ticket=await database.query<{max_ticket_usdg:string}>('SELECT max_ticket_usdg::text FROM public.markets WHERE symbol=$1',[symbol]);
+      const openingBell=bell?{ends_at:bell.endsAt.toISOString(),extra_spread_bps:bell.extraSpreadBps,
+        max_ticket_usdg:ticket.rows[0]?usdgDecimal(openingBellTicket(usdgUnits(ticket.rows[0].max_ticket_usdg),bell)):null}:null;
+      response.json({market:symbol,state,exchange_halt:exchangeHalt,weekend_band:weekendBand,opening_bell:openingBell,monitored_state:monitoredState,onchain_market_state:onchainMarket.state,
         oracle_confidence_bps:oracle.confidenceBps.toString(),oracle_confidence_limit_bps:onchainMarket.maxOracleConfidenceBps.toString(),
         oracle_age_seconds:oracleAgeSeconds,oracle_circuit_broken:oracle.circuitBroken,oracle_fresh:oracleFresh});
     } catch (error) { next(error); }

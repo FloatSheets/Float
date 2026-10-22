@@ -78,7 +78,7 @@ The production backend is available at [`https://api.floatsheets.app`](https://a
 | `GET /ready/` | Database readiness check. |
 | `GET /v1/markets/` | Configured markets and each market's latest stored pool snapshot. |
 | `GET /v1/markets/:symbol` | Static market configuration. |
-| `GET /v1/markets/:symbol/live` | Current monitored and on-chain oracle/market state. |
+| `GET /v1/markets/:symbol/live` | Current monitored and on-chain oracle/market state. Includes `opening_bell` terms during the first 10 minutes after the 9:30 ET open, when new positions pay +15 bps and use half the max ticket. |
 | `GET /v1/markets/:symbol/quotes` | Latest complete executable quote sample matrix. |
 | `GET /v1/markets/:symbol/history?range=1H` | Stored TWAP/spot history; supported ranges are `1H`, `4H`, `1D`, `1W`, and `1M`. Add `format=candles` for candles. |
 | `GET /v1/keeper` | Protocol keeper status: watched positions, liquidations, expiry closes, and recent keeper transactions. |

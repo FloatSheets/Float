@@ -7,6 +7,7 @@ import { db } from "./db";
 import { migrate } from "./db/migrate";
 import { HaltMonitor } from "./markets/halts";
 import { weekendBandOptions } from "./markets/weekend-bands";
+import { openingBellOptions } from "./markets/opening-bell";
 import { MarketMonitor } from "./markets/monitor";
 import { createMarketsRouter } from "./routes/markets";
 import { createReadinessRouter } from "./routes/ready";
@@ -45,7 +46,7 @@ app.use("/v1/markets", createMarketsRouter(db, config.ORACLE_PRICE_MAX_AGE_SECON
   jasper: { rpc, clearingHouse: jasperConfig.FLOAT_CLEARING_HOUSE_ADDRESS as `0x${string}`, oracle: jasperConfig.FLOAT_ORACLE_ADDRESS as `0x${string}` },
   meadow: { rpc, clearingHouse: meadowConfig.FLOAT_CLEARING_HOUSE_ADDRESS as `0x${string}`, oracle: meadowConfig.FLOAT_ORACLE_ADDRESS as `0x${string}` },
   "legacy-orion": { rpc, clearingHouse: legacyConfig.FLOAT_CLEARING_HOUSE_ADDRESS as `0x${string}`, oracle: legacyConfig.FLOAT_ORACLE_ADDRESS as `0x${string}` }
-}, weekendBandOptions(config)));
+}, weekendBandOptions(config), openingBellOptions(config)));
 app.use("/ready", createReadinessRouter(db));
 app.use("/v1/keeper", createKeeperRouter(keeper));
 app.use("/v1/email-alerts", createEmailAlertsRouter(db, config));

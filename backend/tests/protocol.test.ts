@@ -1,5 +1,5 @@
 import express from "express";
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, expect, setSystemTime, test } from "bun:test";
 import request from "supertest";
 import type { Server } from "node:http";
 import { encodeFunctionData, encodeFunctionResult, parseAbi } from "viem";
@@ -54,7 +54,8 @@ const config = loadConfig({
   UNISWAP_TWAP_WINDOW_SECONDS: "300",
   // Weekend bands depend on the wall clock; their behavior is covered in weekend-bands tests.
   WEEKEND_BANDS_ENABLED: "false",
-  WEEKEND_WALLET_LIMITS_ENABLED: "false"
+  WEEKEND_WALLET_LIMITS_ENABLED: "false",
+  OPENING_BELL_ENABLED: "false"
 });
 
 const app = express();
@@ -362,6 +363,57 @@ test("accepts a signed, in-band improvement from the live buy matrix", async () 
     await new Promise<void>((resolve, reject) => quoteServer.close((error) => error ? reject(error) : resolve()));
   }
 });
+
+test("widens the spread and halves the ticket for opens during the opening bell", async () => {
+  // Monday 26 October 2026, 09:32 EDT: two minutes into the regular session.
+  setSystemTime(new Date("2026-10-26T13:32:00.000Z"));
+  const bellConfig = { ...config, OPENING_BELL_ENABLED: "true" as const };
+  const clearingAbi = parseAbi([
+    "function markets(bytes32) view returns (uint8,uint64,uint64,uint64,uint64,uint128)",
+    "function getPosition(address,bytes32) view returns (int256,uint256,uint256,uint64)",
+    "function badDebtUsdg() view returns (uint256)"
+  ]);
+  const oracleAbi = parseAbi(["function getPrice(bytes32) view returns (uint256,uint256,uint256,uint256,uint64,uint64,bool)"]);
+  const database = {
+    query: async (sql: string) => {
+      if (sql.includes("FROM public.markets")) return { rows: [{ id: "market-1", status: "active", max_ticket_usdg: "50000", max_half_spread_bps: 30, observed_at: new Date(), oracle_tradable: true }] };
+      if (sql.includes("SELECT notional_usdg")) return { rows: [{ notional_usdg: "5", execution_degradation_bps: -19 }] };
+      if (sql.includes("FROM public.exchange_halts")) return { rows: [] };
+      throw new Error(`unexpected query: ${sql}`);
+    }
+  } as unknown as Pool;
+  const rpc: RpcTransport = {
+    call: async ({ to, data }) => to.toLowerCase() === config.GOLDLAKE_FLOAT_CLEARING_HOUSE_ADDRESS!.toLowerCase()
+      ? data.startsWith(encodeFunctionData({ abi: clearingAbi, functionName: "badDebtUsdg" }).slice(0, 10))
+        ? encodeFunctionResult({ abi: clearingAbi, functionName: "badDebtUsdg", result: 0n })
+        : data.startsWith(encodeFunctionData({ abi: clearingAbi, functionName: "getPosition", args: ["0x1111111111111111111111111111111111111111", (`0x${"00".repeat(32)}`) as `0x${string}`] }).slice(0, 10))
+          ? encodeFunctionResult({ abi: clearingAbi, functionName: "getPosition", result: [0n, 0n, 100_000_000n, 0n] })
+          : encodeFunctionResult({ abi: clearingAbi, functionName: "markets", result: [1, 5_000000000000000000n, 1_000n, 30n, 50n, 50_000_000000n] })
+      : encodeFunctionResult({ abi: oracleAbi, functionName: "getPrice", result: [100_000000000000000000n, 100_000000000000000000n, 25n, 0n, BigInt(Math.floor(Date.now() / 1000)), 9n, false] })
+  };
+  const quoteApp = express();
+  quoteApp.use(express.json());
+  quoteApp.use("/v1/protocol/transactions", createProtocolTransactionsRouter(bellConfig, database, rpc, { ensureFreshMarket: async () => {} }));
+  const quoteServer = await listening(quoteApp);
+  try {
+    const response = await request(quoteServer).post("/v1/protocol/transactions/trade-quote").send({
+      market: "SPCX", trader: "0x1111111111111111111111111111111111111111", isLong: true, notionalUsdg: "250000"
+    });
+    expect(response.status).toBe(200);
+    // The -19 bps pool improvement plus the 15 bps bell spread nets to -4 bps.
+    expect(response.body.quote.executionPriceE18).toBe("99960000000000000000");
+    expect(response.body.opening_bell).toEqual({ ends_at: "2026-10-26T13:40:00.000Z", extra_spread_bps: 15 });
+    const oversized = await request(quoteServer).post("/v1/protocol/transactions/trade-quote").send({
+      market: "SPCX", trader: "0x1111111111111111111111111111111111111111", isLong: true, notionalUsdg: "25000000001"
+    });
+    expect(oversized.status).toBe(400);
+    expect(oversized.body.error).toBe("During the opening bell, new SPCX positions are limited to $25,000 per ticket. Full size returns at 9:40 AM ET; you can still close.");
+  } finally {
+    setSystemTime();
+    await new Promise<void>((resolve, reject) => quoteServer.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
 
 test("rejects an unfunded or vault-capacity-exceeding opening quote before wallet execution", async () => {
   const clearingAbi = parseAbi([

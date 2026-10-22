@@ -22,6 +22,7 @@ import { safeErrorMessage } from "../safe-error";
 import { haltMessage, readActiveHalt } from "../markets/halts";
 import { weekendBandOptions, weekendBandRefusal, WeekendBands } from "../markets/weekend-bands";
 import { weekendLimitOptions, WeekendWalletLimits } from "../markets/weekend-limits";
+import { openingBellOptions, openingBellTerms, openingBellTicket, openingBellTicketMessage } from "../markets/opening-bell";
 
 const address = z.string().regex(/^0x[0-9a-fA-F]{40}$/);
 const uint = z.string().regex(/^\d+$/).max(78);
@@ -401,10 +402,19 @@ function createProtocolTransactionsRouterForConfig(
       // executable buy price, not an invalid quote; its absolute magnitude is
       // still bounded by the market's configured execution band.
       if (!sample || !Number.isFinite(sample.execution_degradation_bps) || Math.abs(sample.execution_degradation_bps) > marketRow.max_half_spread_bps) throw new Error("market quote quality is outside its configured band");
-      const degradationBps = BigInt(sample.execution_degradation_bps);
+      // Opening bell: new or same-direction exposure pays a wider spread and a
+      // smaller ticket while the opening auction reprices the underlying.
+      const position = await readClearingPosition(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, input.trader as Address, id);
+      const addsExposure = position.sizeE18 === 0n || (position.sizeE18 > 0n) === input.isLong;
+      const bell = addsExposure ? openingBellTerms(openingBellOptions(config)) : null;
+      if (bell) {
+        const bellTicket = openingBellTicket(usdgUnits(marketRow.max_ticket_usdg), bell);
+        if (requestedNotional > bellTicket) throw new Error(openingBellTicketMessage(symbol, bellTicket, bell));
+      }
+      const spreadBps = BigInt(sample.execution_degradation_bps) + BigInt(bell?.extraSpreadBps ?? 0);
       const executionPriceE18 = input.isLong
-        ? oraclePrice.priceE18 * (BPS + degradationBps) / BPS
-        : oraclePrice.priceE18 * (BPS - degradationBps) / BPS;
+        ? oraclePrice.priceE18 * (BPS + spreadBps) / BPS
+        : oraclePrice.priceE18 * (BPS - spreadBps) / BPS;
       if (executionPriceE18 === 0n || exceedsOracleDeviation(executionPriceE18, oraclePrice.priceE18, onchainMarket.maxExecutionDeviationBps)) throw new Error("execution price exceeds oracle deviation limit");
 
       const value: TradeQuote = {
@@ -416,7 +426,6 @@ function createProtocolTransactionsRouterForConfig(
         expiry: boundedQuoteExpiry(now, oraclePrice.timestamp, config.ORACLE_PRICE_MAX_AGE_SECONDS, config.QUOTE_TTL_SECONDS)
       };
       if (value.expiry <= now) throw new Error("on-chain oracle price is too close to expiry");
-      const position = await readClearingPosition(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, input.trader as Address, id);
       const requiredMargin = ceilingDiv(notionalForSize(value.sizeDeltaE18, value.executionPriceE18) * E18, onchainMarket.maxLeverageE18) + value.feeUsdg;
       if (position.sizeE18 === 0n && position.marginUsdg < requiredMargin) {
         throw new Error(`add at least ${usdgDecimal(requiredMargin)} USDG margin before opening this position`);
@@ -450,6 +459,7 @@ function createProtocolTransactionsRouterForConfig(
       response.json({
         quote: Object.fromEntries(Object.entries(value).map(([key, item]) => [key, typeof item === "bigint" ? item.toString() : item])),
         sampled_notional_usdg: sample.notional_usdg,
+        opening_bell: bell ? { ends_at: bell.endsAt.toISOString(), extra_spread_bps: bell.extraSpreadBps } : null,
         signature,
         transaction: executeTrade(config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, value, signature)
       });
@@ -487,6 +497,11 @@ function createProtocolTransactionsRouterForConfig(
         readClearingPosition(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, input.trader as Address, id),
         readOraclePrice(rpc, config.FLOAT_ORACLE_ADDRESS as Address, id)
       ]);
+      const bell = position.sizeE18 === 0n || (position.sizeE18 > 0n) === input.isLong ? openingBellTerms(openingBellOptions(config)) : null;
+      if (bell) {
+        const bellTicket = openingBellTicket(usdgUnits(marketRow.max_ticket_usdg), bell);
+        if (requestedNotional > bellTicket) return reject(openingBellTicketMessage(symbol, bellTicket, bell));
+      }
       const fee = ceilingDiv(requestedNotional * TRADING_FEE_BPS, BPS);
       const requiredMargin = ceilingDiv(requestedNotional * E18, onchainMarket.maxLeverageE18) + fee;
       if (position.marginUsdg + requestedMargin < requiredMargin) return reject("Add more margin or choose lower leverage for this position.", "margin");
