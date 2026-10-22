@@ -154,6 +154,7 @@ app.listen(port, () => {
   console.log(`FloatSheets API listening on :${port}`);
   void refreshMarkets();
   void refreshHalts();
+  void refreshCorporateActions();
   void telegramBot.pollOnce();
 });
 
