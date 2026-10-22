@@ -257,7 +257,7 @@ export function RainbowWalletBridge() {
             const replayed = history.markets.get(id.toLowerCase()) ?? { size: 0n, entry: 0n, margin: 0n };
             if (replayed.size !== p[0] || replayed.entry !== p[1] || replayed.margin !== p[2]) throw new Error('Trading history is still syncing. Please try again.');
           }
-          let pnl = 0n, stale = false, liquidationPriceE18: string | null = null;
+          let pnl = 0n, stale = false, liquidationPriceE18: string | null = null, markPriceE18: string | null = null;
           if (p[0] !== 0n) {
             const [mark, risk] = await Promise.all([
               publicClient.readContract({ address: protocolAddresses.oracle, abi: oracleAbi, functionName: 'getPrice', args: [id], blockNumber: block.number }),
@@ -265,10 +265,11 @@ export function RainbowWalletBridge() {
             ]);
             liquidationPriceE18 = liquidationPrice(p[0], p[1], p[2], risk[2])?.toString() ?? null;
             if (mark[0] === 0n) throw new Error('A price is not available yet.');
+            markPriceE18 = mark[0].toString();
             pnl = unrealizedPnl(p[0], p[1], mark[0]);
             stale = block.timestamp > mark[4] + 120n || mark[6];
           }
-          return { symbol, sizeE18: p[0].toString(), entryPriceE18: p[1].toString(), marginUsdg: p[2].toString(), pnlUsdg: pnl.toString(), liquidationPriceE18, stale };
+          return { symbol, sizeE18: p[0].toString(), entryPriceE18: p[1].toString(), markPriceE18, marginUsdg: p[2].toString(), pnlUsdg: pnl.toString(), liquidationPriceE18, stale };
         }));
         return {
           positions, address, blockNumber: block.number.toString(),
