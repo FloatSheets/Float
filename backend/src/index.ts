@@ -19,6 +19,8 @@ import { createKeeperChain, PositionKeeper } from "./keeper/keeper";
 import { createKeeperRouter } from "./routes/keeper";
 import { createStatusRouter } from "./routes/status";
 import { createSolvencyRouter } from "./routes/solvency";
+import { createClaimsRouter } from "./routes/claims";
+import { ClaimCenter } from "./claims/claims";
 import { SolvencyReader } from "./solvency/solvency";
 import { StatusMonitor } from "./status/status";
 import { createEmailAlertsRouter } from "./routes/email-alerts";
@@ -68,6 +70,7 @@ const statusMonitor = new StatusMonitor(db, {
   keeperStatus: () => keeper.status()
 });
 app.use("/v1/status", createStatusRouter(statusMonitor, config, db));
+app.use("/v1/claims", createClaimsRouter(new ClaimCenter(db, rpc, config)));
 // Solvency reports the current default deployment's contracts.
 const solvencyConfig = goldlakeConfig ?? silverlakeConfig ?? amberConfig;
 app.use("/v1/solvency", createSolvencyRouter(new SolvencyReader(db, rpc, {

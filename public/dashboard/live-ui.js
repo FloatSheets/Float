@@ -422,6 +422,60 @@
     return '<section class="panel live-only-panel" id="live-vault-panel"><h2>'+(withdrawalsOnly?'Manage legacy liquidity':'Provide liquidity')+'</h2><p>'+(withdrawalsOnly?'View existing shares and queue withdrawals. New liquidity deposits are disabled for this version.':'Your USDG helps back all FloatSheets markets. Your vault share value changes as traders profit or lose.')+'</p><div id="live-vault-data"><p>Loading vault balances.</p></div></section>';
   }
 
+  function claimCenterPanel(){
+    if(!walletState()?.connected) return '';
+    return '<section class="panel live-only-panel claim-center" id="claim-center"><div class="panel-head"><h2>Claim center</h2><span class="pill" id="claim-center-total">CHECKING</span></div><div class="panel-body" id="claim-center-data"><p>Checking every FloatSheets deployment for USDG you can claim.</p></div></section>';
+  }
+
+  async function renderClaimCenter(fresh){
+    const target=root.querySelector('#claim-center-data'),badge=root.querySelector('#claim-center-total');
+    const wallet=walletApi(),api=window.__FLOATSHEETS_SERVER_API__;
+    if(!target||!wallet?.address||!api?.getClaims) return;
+    try{
+      const report=await api.getClaims(wallet.address,fresh===true);
+      if(!target.isConnected) return;
+      const usd=function(value){return '$'+Number(value).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});};
+      if(badge) badge.textContent=Number(report.claimable_now_usdg)>0?usd(report.claimable_now_usdg)+' CLAIMABLE':report.action_count?report.action_count+' TO REVIEW':'ALL CLEAR';
+      const sections=report.deployments.map(function(deployment){
+        const rows=deployment.items.map(function(item,index){
+          const label=item.kind==='close_position'?'Close position':item.kind==='settle_epoch'?'Settle':item.kind==='queue_lp_withdrawal'?'Queue withdrawal':'Claim';
+          return '<div class="list-row"><div><strong>'+escapeHtml(item.title)+(item.amount_usdg?' · '+usd(item.amount_usdg):'')+'</strong><p>'+escapeHtml(item.detail)+'</p></div><button class="small-btn primary" type="button" data-claim-version="'+escapeHtml(deployment.version)+'" data-claim-index="'+index+'">'+label+'</button></div>';
+        }).join('');
+        const pending=Number(deployment.pending_payout_usdg)>0?'<p class="info-note">'+usd(deployment.pending_payout_usdg)+' of profit is still owed by the vault and becomes claimable as you withdraw or close.</p>':'';
+        const empty=!deployment.items.length?'<p>Nothing to claim on '+escapeHtml(deployment.name)+'.</p>':'';
+        return '<div class="claim-deployment"><h3>'+escapeHtml(deployment.name)+(deployment.current?' <span class="pill">CURRENT</span>':' <span class="pill">RETIRED</span>')+'</h3>'+rows+pending+empty+'</div>';
+      }).join('');
+      target.innerHTML='<p class="info-note">One place for everything you can claim on every FloatSheets deployment, including retired ones: balances, deferred payouts, idle margin, open positions and LP shares.</p>'+sections+'<button class="secondary-btn" id="claim-center-refresh" type="button">Refresh</button>';
+      target.querySelector('#claim-center-refresh')?.addEventListener('click',function(){void renderClaimCenter(true);});
+      target.querySelectorAll('[data-claim-index]').forEach(function(button){
+        button.addEventListener('click',async function(){
+          const deployment=report.deployments.find(function(item){return item.version===button.getAttribute('data-claim-version');});
+          const item=deployment&&deployment.items[Number(button.getAttribute('data-claim-index'))];
+          if(!item) return;
+          const original=button.textContent;
+          try{
+            button.disabled=true;button.textContent='Confirm in wallet…';
+            let transaction=item.transaction;
+            if(!transaction){
+              const quote=await api.getCloseTransaction(item.market,wallet.address,deployment.version);
+              transaction={...quote.transaction,activity:'close',market:item.market};
+            }
+            const hash=await wallet.send(transaction);
+            showActionModal('Done',item.title+' confirmed on Robinhood Chain. Transaction: '+hash);
+            void renderClaimCenter(true);
+          }catch(reason){
+            button.disabled=false;button.textContent=original;
+            showActionModal('Could not complete',reason instanceof Error?reason.message:'The transaction did not complete.');
+          }
+        });
+      });
+    }catch(error){
+      if(badge) badge.textContent='UNAVAILABLE';
+      target.innerHTML='<p>The claim center is temporarily unavailable. Try again shortly.</p>';
+      console.warn('FloatSheets claim center failed',error);
+    }
+  }
+
   function keeperPanel(){
     return '<section class="panel live-only-panel keeper-panel" id="keeper-panel"><div class="panel-head"><h2>Protocol keeper</h2><span class="pill" id="keeper-state">CHECKING</span></div><div class="panel-body" id="keeper-data"><p>Loading keeper status.</p></div></section>';
   }
@@ -515,7 +569,7 @@
       root.querySelector('.markets-panel')?.remove();
       Array.from(root.querySelectorAll('.markets-panel')).find(function(panel){return panel.querySelector('h2')?.textContent?.trim().startsWith('Open positions');})?.setAttribute('id','wallet-trade-positions');
     }
-    if(view==='portfolio') root.innerHTML='<div class="page-heading"><div><h1>Portfolio.</h1><p>Your positions and available USDG.</p></div></div><section class="panel live-only-panel"><h2>'+ (walletState()?.connected?'Your portfolio':'Connect your wallet') +'</h2><div id="wallet-portfolio"><p>'+ (walletState()?.connected?'Loading your positions.':'Connect on Robinhood Chain to see your USDG and positions.') +'</p></div></section>';
+    if(view==='portfolio') root.innerHTML='<div class="page-heading"><div><h1>Portfolio.</h1><p>Your positions and available USDG.</p></div></div><section class="panel live-only-panel"><h2>'+ (walletState()?.connected?'Your portfolio':'Connect your wallet') +'</h2><div id="wallet-portfolio"><p>'+ (walletState()?.connected?'Loading your positions.':'Connect on Robinhood Chain to see your USDG and positions.') +'</p></div></section>'+claimCenterPanel();
     if(view==='oracle') root.innerHTML='<div class="page-heading"><div><h1>Prices &amp; risk.</h1><p>See current prices and whether each market is open for trading.</p></div></div><section class="panel markets-panel"><div class="panel-head"><h2>Market status</h2><span class="pill">LIVE DATA</span></div><div class="table-scroll"><table><thead><tr><th>Market</th><th>Price</th><th>Price range</th><th>Leverage</th><th>Status</th></tr></thead><tbody>'+markets.map(function(m){return '<tr><td>'+m.symbol+'</td><td>$'+money(m.price)+'</td><td>±'+money(m.band*100)+'%</td><td>'+m.max+'×</td><td>'+stateBadge(m.state)+'</td></tr>';}).join('')+'</tbody></table></div></section>';
     if(view==='vault') root.innerHTML='<div class="page-heading"><div><h1>Liquidity vault.</h1><p>Provide USDG liquidity for FloatSheets markets.</p></div></div>'+vaultPanel()+keeperPanel();
     if(view==='listings') root.innerHTML='<div class="page-heading"><div><h1>Market listings.</h1><p>Available markets on Robinhood Chain.</p></div></div><section class="panel markets-panel"><div class="table-scroll"><table><thead><tr><th>Market</th><th>Settlement</th><th>Price</th><th>Status</th></tr></thead><tbody>'+markets.map(function(m){return '<tr><td>'+m.symbol+'</td><td><span class="asset-ref"><img src="/usdg_logo.png" alt="USDG">USDG</span></td><td>$'+money(m.price)+'</td><td>'+stateBadge(m.state)+'</td></tr>';}).join('')+'</tbody></table></div></section>';
@@ -867,6 +921,7 @@
     if(!legacyTradingDisabled) bindTradeTicket();
     if(!legacyTradingDisabled) void renderWalletContext();
     if(location.hash.slice(1)==='vault') { void renderVaultContext(); void renderKeeperContext(); }
+    if(location.hash.slice(1)==='portfolio') void renderClaimCenter();
     if(!legacyTradingDisabled) { scheduleChartRefresh(); scheduleWalletRefresh(); }
     else { clearInterval(window.__FLOATSHEETS_CHART_REFRESH_TIMER__); clearInterval(window.__FLOATSHEETS_WALLET_REFRESH_TIMER__); }
   };

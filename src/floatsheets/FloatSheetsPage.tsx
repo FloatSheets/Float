@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { pages } from "./pages";
 import { installWalletButton } from "@/lib/walletconnect";
-import { getFloatNews, getKeeperStatus, getSolvency, getStatus, getLiveMarket, getMarketHistory, getMarkets, getWeekendAllowance } from "@/lib/server-api";
+import { getClaims, getCloseTransaction, getFloatNews, getKeeperStatus, getSolvency, getStatus, getLiveMarket, getMarketHistory, getMarkets, getWeekendAllowance } from "@/lib/server-api";
 
 type DashboardContractVersion = "goldlake" | "silverlake" | "amber" | "meadow" | "legacy-orion";
 type DashboardServerApi = {
@@ -12,6 +12,8 @@ type DashboardServerApi = {
   getKeeperStatus: () => Promise<any>;
   getStatus: () => Promise<any>;
   getSolvency: () => Promise<any>;
+  getClaims: (trader: string, fresh?: boolean) => Promise<any>;
+  getCloseTransaction: (symbol: string, trader: string, version: DashboardContractVersion | "jasper") => Promise<any>;
   getWeekendAllowance: (symbol: string, trader: string, version: DashboardContractVersion) => Promise<any>;
 };
 
@@ -96,6 +98,8 @@ export function FloatSheetsPage({ page }: { page: FloatPage }) {
       getKeeperStatus: () => getKeeperStatus(),
       getStatus: () => getStatus(),
       getSolvency: () => getSolvency(),
+      getClaims: (trader, fresh) => getClaims({ data: { trader, fresh: fresh === true } }),
+      getCloseTransaction: (symbol, trader, version) => getCloseTransaction({ data: { market: symbol, trader, contractVersion: version } }),
       getWeekendAllowance: (symbol, trader, version) => getWeekendAllowance({ data: { symbol, trader, version } }),
     };
     const dashboardWindow = window as Window & { __FLOATSHEETS_SERVER_API__?: DashboardServerApi };
