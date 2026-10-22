@@ -51,11 +51,12 @@ export const getStatus = createServerFn({ method: "GET" }).handler((): Promise<a
 export const getSolvency = createServerFn({ method: "GET" }).handler((): Promise<any> => getJson("/v1/solvency", "goldlake"));
 export const getClaims = createServerFn({ method: "GET" })
   .validator((input: unknown) => {
-    const trader = String((input as JsonRecord | undefined)?.["trader"] ?? "");
+    const value = input as JsonRecord | undefined;
+    const trader = String(value?.["trader"] ?? "");
     if (!/^0x[0-9a-fA-F]{40}$/.test(trader)) throw new Error("A valid wallet address is required.");
-    return { trader, fresh: (input as JsonRecord)["fresh"] === true };
+    return { trader, fresh: value?.["fresh"] === true, version: versionOf(value?.["version"]) };
   })
-  .handler(({ data }): Promise<any> => getJson(`/v1/claims/${data.trader}${data.fresh ? "?fresh=1" : ""}`, "goldlake"));
+  .handler(({ data }): Promise<any> => getJson(`/v1/claims/${data.trader}${data.fresh ? "?fresh=1" : ""}`, data.version));
 export const getWeekendAllowance = createServerFn({ method: "GET" })
   .validator((input: unknown) => {
     const data = input as JsonRecord;

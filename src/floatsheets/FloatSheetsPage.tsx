@@ -13,7 +13,7 @@ type DashboardServerApi = {
   getKeeperStatus: () => Promise<any>;
   getStatus: () => Promise<any>;
   getSolvency: () => Promise<any>;
-  getClaims: (trader: string, fresh?: boolean) => Promise<any>;
+  getClaims: (trader: string, fresh?: boolean, version?: string) => Promise<any>;
   getCloseTransaction: (symbol: string, trader: string, version: DashboardContractVersion | "jasper") => Promise<any>;
   getWeekendAllowance: (symbol: string, trader: string, version: DashboardContractVersion) => Promise<any>;
 };
@@ -100,7 +100,7 @@ export function FloatSheetsPage({ page }: { page: FloatPage }) {
       getKeeperStatus: () => getKeeperStatus(),
       getStatus: () => getStatus(),
       getSolvency: () => getSolvency(),
-      getClaims: (trader, fresh) => getClaims({ data: { trader, fresh: fresh === true } }),
+      getClaims: (trader, fresh, version) => getClaims({ data: { trader, fresh: fresh === true, version } }),
       getCloseTransaction: (symbol, trader, version) => getCloseTransaction({ data: { market: symbol, trader, contractVersion: version } }),
       getWeekendAllowance: (symbol, trader, version) => getWeekendAllowance({ data: { symbol, trader, version } }),
     };

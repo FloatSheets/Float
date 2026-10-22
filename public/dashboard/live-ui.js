@@ -435,13 +435,13 @@
     const wallet=walletApi(),api=window.__FLOATSHEETS_SERVER_API__;
     if(!target||!wallet?.address||!api?.getClaims) return;
     try{
-      const report=await api.getClaims(wallet.address,fresh===true);
+      const report=await api.getClaims(wallet.address,fresh===true,selectedContractVersion());
       if(!target.isConnected) return;
       const usd=function(value){return '$'+Number(value).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});};
       if(badge) badge.textContent=Number(report.claimable_now_usdg)>0?usd(report.claimable_now_usdg)+' CLAIMABLE':report.action_count?report.action_count+' TO REVIEW':'ALL CLEAR';
       const sections=report.deployments.map(function(deployment){
         const rows=deployment.items.map(function(item,index){
-          const label=item.kind==='close_position'?'Close position':item.kind==='settle_epoch'?'Settle':item.kind==='queue_lp_withdrawal'?'Queue withdrawal':'Claim';
+          const label=item.kind==='close_position'?'Close position':item.kind==='settle_epoch'?'Settle':item.kind==='queue_lp_withdrawal'?'Queue withdrawal':item.kind==='withdraw_lp_instant'?'Withdraw now':'Claim';
           return '<div class="list-row"><div><strong>'+escapeHtml(item.title)+(item.amount_usdg?' · '+usd(item.amount_usdg):'')+'</strong><p>'+escapeHtml(item.detail)+'</p></div><button class="small-btn primary" type="button" data-claim-version="'+escapeHtml(deployment.version)+'" data-claim-index="'+index+'">'+label+'</button></div>';
         }).join('');
         const pending=Number(deployment.pending_payout_usdg)>0?'<p class="info-note">'+usd(deployment.pending_payout_usdg)+' of profit is still owed by the vault and becomes claimable as you withdraw or close.</p>':'';
