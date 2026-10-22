@@ -5,6 +5,7 @@ import { createRpcTransport } from "./chain/rpc";
 import { contractConfigForVersion, isGoldlakeConfigured, isSilverlakeConfigured, loadConfig } from "./config";
 import { db } from "./db";
 import { migrate } from "./db/migrate";
+import { HaltMonitor } from "./markets/halts";
 import { MarketMonitor } from "./markets/monitor";
 import { createMarketsRouter } from "./routes/markets";
 import { createReadinessRouter } from "./routes/ready";
@@ -74,9 +75,27 @@ async function refreshMarkets(): Promise<void> {
   }
 }
 
+// Exchange halts are independent of the chain wallet, so they poll on their own
+// timer and keep updating even while a slow market refresh is in progress.
+const haltMonitor = new HaltMonitor(db, config.HALT_FEED_URL);
+let refreshingHalts = false;
+async function refreshHalts(): Promise<void> {
+  if (config.HALT_FEED_ENABLED !== "true" || refreshingHalts) return;
+  refreshingHalts = true;
+  try {
+    await haltMonitor.refresh();
+  } catch (error) {
+    console.error("FloatSheets halt refresh failed", error);
+  } finally {
+    refreshingHalts = false;
+  }
+}
+
 app.listen(port, () => {
   console.log(`FloatSheets API listening on :${port}`);
   void refreshMarkets();
+  void refreshHalts();
 });
 
 setInterval(() => void refreshMarkets(), config.MARKET_POLL_INTERVAL_MS).unref();
+setInterval(() => void refreshHalts(), config.HALT_POLL_INTERVAL_SECONDS * 1_000).unref();

@@ -80,6 +80,7 @@ The production backend is available at [`https://api.floatsheets.app`](https://a
 | `GET /v1/markets/:symbol/quotes` | Latest complete executable quote sample matrix. |
 | `GET /v1/markets/:symbol/history?range=1H` | Stored TWAP/spot history; supported ranges are `1H`, `4H`, `1D`, `1W`, and `1M`. Add `format=candles` for candles. |
 | `GET /v1/keeper` | Protocol keeper status: watched positions, liquidations, expiry closes, and recent keeper transactions. |
+| `GET /v1/markets/halts` | Listing-exchange trading halts mirrored from the Nasdaq Trader halt feed. A halted market is close-only until the exchange resumes trading. |
 | `GET /v1/markets/:symbol/risk` | Monitored risk state and latest snapshot age. |
 
 ### What the backend database stores

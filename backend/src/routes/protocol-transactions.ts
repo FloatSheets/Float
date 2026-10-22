@@ -19,6 +19,7 @@ import { readBadDebt, readClearingExposure, readClearingMarket, readClearingPosi
 import type { OraclePublisher } from "../oracle/publisher";
 import { snapshotTimeOnChain } from "../oracle/publisher";
 import { safeErrorMessage } from "../safe-error";
+import { haltMessage, readActiveHalt } from "../markets/halts";
 
 const address = z.string().regex(/^0x[0-9a-fA-F]{40}$/);
 const uint = z.string().regex(/^\d+$/).max(78);
@@ -324,6 +325,8 @@ function createProtocolTransactionsRouterForConfig(
       const nextSize = position.sizeE18 + value.sizeDeltaE18;
       const riskIncreasing = !(position.sizeE18 !== 0n && ((position.sizeE18 > 0n && nextSize >= 0n && nextSize < position.sizeE18) || (position.sizeE18 < 0n && nextSize <= 0n && nextSize > position.sizeE18)));
       if (riskIncreasing && await readBadDebt(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address) !== 0n) throw new Error("new positions are paused while vault bad debt is outstanding");
+      const adminHalt = riskIncreasing ? await readActiveHalt(database, symbol) : null;
+      if (adminHalt) throw new Error(haltMessage(adminHalt));
       const signature = await signTradeQuote(config.QUOTE_SIGNER_PRIVATE_KEY as Hex, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, value);
       response.json({ quote: input, signature, transaction: executeTrade(config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, value, signature) });
     } catch (error) { protocolError(response, error); }
@@ -404,6 +407,9 @@ function createProtocolTransactionsRouterForConfig(
       const nextSize = position.sizeE18 + value.sizeDeltaE18;
       const riskIncreasing = !(position.sizeE18 !== 0n && ((position.sizeE18 > 0n && value.sizeDeltaE18 < 0n) || (position.sizeE18 < 0n && value.sizeDeltaE18 > 0n)) && abs(value.sizeDeltaE18) <= abs(position.sizeE18));
       if (riskIncreasing) {
+        // The listing exchange has halted the underlying: no new exposure until it resumes.
+        const halt = await readActiveHalt(database, symbol);
+        if (halt) throw new Error(haltMessage(halt));
         if (await readBadDebt(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address) !== 0n) throw new Error("new positions are paused while vault bad debt is outstanding");
         const [exposure, vaultAssets] = await Promise.all([
           readClearingExposure(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, id),
@@ -466,6 +472,8 @@ function createProtocolTransactionsRouterForConfig(
       if (notionalForSize(nextSize, oraclePrice.priceE18) > onchainMarket.maxPositionNotionalUsdg) return reject("Lower your leverage or margin to stay within this market's position limit.");
       const riskIncreasing = !(position.sizeE18 !== 0n && ((position.sizeE18 > 0n && nextSize < position.sizeE18) || (position.sizeE18 < 0n && nextSize > position.sizeE18)));
       if (riskIncreasing) {
+        const halt = await readActiveHalt(database, symbol);
+        if (halt) return reject(haltMessage(halt));
         if (await readBadDebt(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address) !== 0n) return reject("New positions are paused while vault bad debt is outstanding.");
         const [exposure, vaultAssets] = await Promise.all([
           readClearingExposure(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, id),

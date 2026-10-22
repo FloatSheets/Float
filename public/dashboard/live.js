@@ -16,7 +16,7 @@
       const tradable = row.oracle_tradable === true && status === 'active' && onchainState === 1 && Number.isFinite(price) && price > 0;
       return {symbol:String(row.symbol),name:String(row.symbol)+' equity',price:Number.isFinite(price)?price:0,change:0,
         band:Number(row.max_half_spread_bps || 0)/10000,max:Number(row.max_leverage || 1),cap:Number(row.max_ticket_usdg || 0),oi:0,
-        state:status==='disabled'||onchainState===0?'HALTED':(tradable?'LIVE':'CLOSE_ONLY'),sector:'Equity',oracleTradable:tradable};
+        state:status==='disabled'||onchainState===0?'HALTED':row.exchange_halt?'EXCHANGE_HALT':(tradable?'LIVE':'CLOSE_ONLY'),sector:'Equity',oracleTradable:tradable&&!row.exchange_halt,exchangeHalt:row.exchange_halt||null};
     }).filter(function(row){return row.price>0;});
     if (!liveMarkets.length) return;
     markets=liveMarkets;
