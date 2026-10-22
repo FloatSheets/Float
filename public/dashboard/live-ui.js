@@ -525,6 +525,32 @@
   function installThemeToggle(){
     const settingsPanel=root.querySelector('#preferences-form .panel-body') || root.querySelector('#preferences-form')?.parentElement;
     if(!settingsPanel) return;
+    if(!document.getElementById('liquidation-email-alerts')){
+      const alertRow=document.createElement('section'); alertRow.id='liquidation-email-alerts'; alertRow.className='list-row liquidation-email-alerts';
+      alertRow.style.cssText='display:block;padding:18px 0;border-top:1px solid var(--line,#e5eaf1)';
+      alertRow.innerHTML='<div><strong>Liquidation email alerts</strong><p>Get an email after an on-chain liquidation is confirmed. You must verify the email address first. Uncheck to pause alerts; clear the address and save to remove it.</p></div><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px"><input id="liquidation-alert-email" type="email" autocomplete="email" maxlength="254" placeholder="you@example.com" aria-label="Alert email address" style="min-width:220px;flex:1;padding:10px 12px;border:1px solid var(--line,#d8deea);border-radius:8px"><label style="display:flex;gap:8px;align-items:center"><input id="liquidation-alert-enabled" type="checkbox"> Enable</label><button type="button" class="secondary-btn" id="liquidation-alert-save">Save</button></div><p id="liquidation-alert-status" role="status" aria-live="polite" style="margin:10px 0 0"></p>';
+      settingsPanel.append(alertRow);
+      const walletState=window.__FLOATSHEETS_WALLET_STATE__||{};
+      const saved=walletState.address&&localStorage.getItem('floatsheets-liquidation-email-'+walletState.address.toLowerCase());
+      if(saved){try{const pref=JSON.parse(saved);alertRow.querySelector('#liquidation-alert-email').value=pref.email||'';alertRow.querySelector('#liquidation-alert-enabled').checked=pref.enabled===true;}catch{alertRow.querySelector('#liquidation-alert-email').value=saved;}}
+      alertRow.querySelector('#liquidation-alert-save').addEventListener('click',async function(){
+        const status=alertRow.querySelector('#liquidation-alert-status');
+        const wallet=window.__FLOATSHEETS_WALLET__;
+        if(!wallet?.connected||typeof wallet.configureEmailAlerts!=='function'){status.textContent='Connect your wallet on Robinhood Chain first.';return;}
+        const emailInput=alertRow.querySelector('#liquidation-alert-email');
+        const enabled=alertRow.querySelector('#liquidation-alert-enabled').checked;
+        if(enabled&&!emailInput.value.trim()){status.textContent='Enter an email address to enable alerts.';emailInput.focus();return;}
+        const button=alertRow.querySelector('#liquidation-alert-save'); button.disabled=true; status.textContent='Waiting for wallet signature…';
+        try { const result=await wallet.configureEmailAlerts(emailInput.value.trim(),enabled); status.textContent=result.message||'Settings saved.'; }
+        catch(error){status.textContent=error instanceof Error?error.message:'Could not update email alerts.';}
+        finally {button.disabled=false;}
+      });
+    }
+    if(!window.__FLOATSHEETS_EMAIL_ALERTS_RESULT_LISTENER__){
+      window.__FLOATSHEETS_EMAIL_ALERTS_RESULT_LISTENER__=function(event){const status=document.getElementById('liquidation-alert-status');if(status)status.textContent=event.detail?.message||'Email alert settings updated.';const input=document.getElementById('liquidation-alert-email'),toggle=document.getElementById('liquidation-alert-enabled');if(event.detail?.verified&&toggle)toggle.checked=true;if(event.detail?.enabled===true&&toggle)toggle.checked=true;if(event.detail?.enabled===false&&toggle)toggle.checked=false;if(event.detail?.verified&&event.detail?.email&&input)input.value=event.detail.email;};
+      window.addEventListener('floatsheets-email-alerts-result',window.__FLOATSHEETS_EMAIL_ALERTS_RESULT_LISTENER__);
+      if(window.__FLOATSHEETS_EMAIL_ALERTS_RESULT__){window.__FLOATSHEETS_EMAIL_ALERTS_RESULT_LISTENER__({detail:window.__FLOATSHEETS_EMAIL_ALERTS_RESULT__});window.__FLOATSHEETS_EMAIL_ALERTS_RESULT__=null;}
+    }
     if(!document.getElementById('contract-version-select')){
       const versionRow=document.createElement('div'); versionRow.className='list-row contract-version-row';
       versionRow.innerHTML='<div><strong>Contract version</strong><p>Choose which FloatSheets contracts power your dashboard and wallet actions.</p></div><select id="contract-version-select" aria-label="Contract version"><option value="goldlake">FloatSheets Goldlake · latest</option><option value="silverlake">FloatSheets Silverlake · legacy access</option><option value="amber" disabled>FloatSheets Amber · retired</option><option value="jasper" disabled>FloatSheets Jasper · paused</option><option value="meadow" disabled>FloatSheets Meadow · paused</option><option value="legacy-orion">FloatSheets Legacy Orion · vault access</option></select>';

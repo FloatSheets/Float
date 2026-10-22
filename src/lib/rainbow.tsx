@@ -1,13 +1,13 @@
 import { ConnectButton, RainbowKitProvider, lightTheme } from "@rainbow-me/rainbowkit";
 import { getDefaultConfig } from "@rainbow-me/rainbowkit";
-import { http, useAccount, usePublicClient, useReadContract, useSendTransaction, WagmiProvider } from "wagmi";
+import { http, useAccount, usePublicClient, useReadContract, useSendTransaction, useSignMessage, WagmiProvider } from "wagmi";
 import { waitForTransactionReceipt } from "wagmi/actions";
 import { defineChain, formatUnits, keccak256, parseAbi, parseAbiItem, stringToHex, type Address, type Hex } from "viem";
 import { replayAccount, unrealizedPnl, liquidationPrice, type AccountEvent } from './pnl';
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { checkTrade, getCloseTransaction, getProtocol, getTradeTransaction, getTransactionCalldata } from "./server-api";
+import { checkTrade, getCloseTransaction, getEmailAlertChallenge, getProtocol, getTradeTransaction, getTransactionCalldata, saveEmailAlertSettings, verifyEmailAlert } from "./server-api";
 
 const DEFAULT_USDG_ADDRESS = "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168" as const;
 const erc20Abi = parseAbi(["function allowance(address owner,address spender) view returns (uint256)", "function balanceOf(address account) view returns (uint256)"]);
@@ -57,6 +57,26 @@ export function RainbowWalletBridge() {
   const { data: usdgBalance, refetch: refetchUsdG } = useReadContract({ address: usdgAddress, abi: erc20Abi, functionName: "balanceOf", args: [address ?? "0x0000000000000000000000000000000000000000"], query: { enabled: Boolean(address) && chainId === robinhoodChain.id } });
   const publicClient = usePublicClient({ chainId: robinhoodChain.id });
   const { sendTransactionAsync } = useSendTransaction();
+  const { signMessageAsync } = useSignMessage();
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const token = url.searchParams.get("liquidationEmailToken");
+    if (!token) return;
+    void verifyEmailAlert({ data: { token } }).then((result) => {
+      url.searchParams.delete("liquidationEmailToken");
+      window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+      if (typeof result.wallet === "string" && typeof result.email === "string") localStorage.setItem(`floatsheets-liquidation-email-${result.wallet.toLowerCase()}`, JSON.stringify({ email: result.email, enabled: true }));
+      (window as Window & { __FLOATSHEETS_EMAIL_ALERTS_RESULT__?: unknown }).__FLOATSHEETS_EMAIL_ALERTS_RESULT__ = result;
+      window.dispatchEvent(new CustomEvent("floatsheets-email-alerts-result", { detail: result }));
+    }).catch((error: unknown) => {
+      url.searchParams.delete("liquidationEmailToken");
+      window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+      const result = { message: error instanceof Error ? error.message : "Email verification failed", verified: false };
+      (window as Window & { __FLOATSHEETS_EMAIL_ALERTS_RESULT__?: unknown }).__FLOATSHEETS_EMAIL_ALERTS_RESULT__ = result;
+      window.dispatchEvent(new CustomEvent("floatsheets-email-alerts-result", { detail: result }));
+    });
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -114,6 +134,16 @@ export function RainbowWalletBridge() {
       async checkTrade(payload: Record<string, unknown>) {
         if (!connected || !address) throw new Error("Connect a wallet on Robinhood Chain first.");
         return checkTrade({ data: { ...payload, trader: address, contractVersion } });
+      },
+      async configureEmailAlerts(email: string, enabled: boolean) {
+        if (!connected || !address) throw new Error("Connect a wallet on Robinhood Chain first.");
+        const challenge = await getEmailAlertChallenge({ data: { wallet: address, email: email.trim(), enabled } });
+        const signature = await signMessageAsync({ message: challenge.message });
+        const result = await saveEmailAlertSettings({ data: { wallet: address, email, enabled, signature } });
+        if (email.trim()) localStorage.setItem(`floatsheets-liquidation-email-${address.toLowerCase()}`, JSON.stringify({ email: email.trim(), enabled: result.enabled === true }));
+        else localStorage.removeItem(`floatsheets-liquidation-email-${address.toLowerCase()}`);
+        window.dispatchEvent(new CustomEvent("floatsheets-email-alerts-result", { detail: result }));
+        return result;
       },
       async send(transaction: { to: string; data: string; value?: string; chainId: number; activity?: string; market?: string }) {
         if (!connected) throw new Error("Connect a wallet on Robinhood Chain first.");
@@ -229,7 +259,7 @@ export function RainbowWalletBridge() {
       }
     };
     window.dispatchEvent(new CustomEvent("floatsheets-wallet-state", { detail: state }));
-  }, [address, chainId, contractVersion, isConnected, protocolAddresses, publicClient, refetchUsdG, sendTransactionAsync, usdgBalance]);
+  }, [address, chainId, contractVersion, isConnected, protocolAddresses, publicClient, refetchUsdG, sendTransactionAsync, signMessageAsync, usdgBalance]);
 
   return <ConnectButton.Custom>{({ account, chain, openAccountModal, openChainModal, openConnectModal, authenticationStatus, mounted }) => {
     const ready = mounted && authenticationStatus !== "loading";

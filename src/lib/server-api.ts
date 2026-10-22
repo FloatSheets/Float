@@ -161,3 +161,39 @@ export const getTransactionCalldata = createServerFn({ method: "POST" })
     if (!response.ok) throw new Error(`Transaction request failed with ${response.status}.`);
     return (await response.json()) as JsonRecord;
   });
+
+function emailAlertInput(input: unknown) {
+  if (!input || typeof input !== "object") throw new Error("Email alert request is required.");
+  const value = input as JsonRecord;
+  if (typeof value["wallet"] !== "string" || !/^0x[0-9a-fA-F]{40}$/.test(value["wallet"])) throw new Error("A valid wallet is required.");
+  return value;
+}
+
+async function emailAlertPost(path: string, body: JsonRecord): Promise<any> {
+  const response = await fetch(`${apiOrigin()}/v1/email-alerts/${path}`, {
+    method: "POST", headers: apiHeaders("goldlake", true), body: JSON.stringify(body),
+  });
+  const result = await response.json().catch(() => ({})) as JsonRecord;
+  if (!response.ok) throw new Error(typeof result["error"] === "string" ? result["error"] : `Email alert request failed (${response.status}).`);
+  return result;
+}
+
+export const getEmailAlertChallenge = createServerFn({ method: "POST" })
+  .validator(emailAlertInput)
+  .handler(({ data }): Promise<any> => emailAlertPost("challenge", data));
+
+export const saveEmailAlertSettings = createServerFn({ method: "POST" })
+  .validator((input: unknown) => {
+    const value = emailAlertInput(input);
+    if (typeof value["signature"] !== "string" || typeof value["enabled"] !== "boolean"
+      || (value["enabled"] && (typeof value["email"] !== "string" || value["email"].length > 254))) throw new Error("Valid signed email settings are required.");
+    return value;
+  })
+  .handler(({ data }): Promise<any> => emailAlertPost("settings", data));
+
+export const verifyEmailAlert = createServerFn({ method: "POST" })
+  .validator((input: unknown) => {
+    if (!input || typeof input !== "object" || typeof (input as JsonRecord)["token"] !== "string") throw new Error("A verification token is required.");
+    return { token: (input as JsonRecord)["token"] as string };
+  })
+  .handler(({ data }): Promise<any> => emailAlertPost("verify", data));

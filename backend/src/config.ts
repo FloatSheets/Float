@@ -56,6 +56,8 @@ const schema = z.object({
   QUOTE_SIGNER_PRIVATE_KEY: z.string().regex(/^0x[a-fA-F0-9]{64}$/, "must be a 32-byte private key"),
   RHC_ID: z.coerce.number().int().refine((value) => value === 4663, "must be Robinhood Chain (4663)"),
   RHC_RPC_URL: z.url(),
+  RESEND_API_KEY: z.string().min(1).optional(),
+  RESEND_FROM_EMAIL: z.string().email().default("alerts@updates.floatsheets.app"),
   SERVER_API_SHARED_SECRET: z.string().min(32).optional(),
   UNISWAP_TWAP_WINDOW_SECONDS: z.coerce.number().int().min(60).max(86_400)
 });

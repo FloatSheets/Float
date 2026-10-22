@@ -14,6 +14,8 @@ import { createProtocolTransactionsRouter } from "./routes/protocol-transactions
 import { effectiveOraclePublishIntervalSeconds, OraclePublisher } from "./oracle/publisher";
 import { createKeeperChain, PositionKeeper } from "./keeper/keeper";
 import { createKeeperRouter } from "./routes/keeper";
+import { createEmailAlertsRouter } from "./routes/email-alerts";
+import { LiquidationAlertService } from "./alerts/liquidation-alerts";
 
 const config = loadConfig();
 const meadowConfig = contractConfigForVersion(config, "meadow");
@@ -30,6 +32,7 @@ setRateLimitDatabase(db);
 const monitor = new MarketMonitor(db, rpc, Math.min(config.UNISWAP_TWAP_WINDOW_SECONDS, 300));
 const oraclePublisher = new OraclePublisher(db, rpc, config);
 const keeper = new PositionKeeper(db, createKeeperChain(config, rpc), config);
+const liquidationAlerts = new LiquidationAlertService(db, config);
 app.use("/v1/markets", createMarketsRouter(db, config.ORACLE_PRICE_MAX_AGE_SECONDS, {
   ...(goldlakeConfig ? { goldlake: { rpc, clearingHouse: goldlakeConfig.FLOAT_CLEARING_HOUSE_ADDRESS as `0x${string}`, oracle: goldlakeConfig.FLOAT_ORACLE_ADDRESS as `0x${string}` } } : {}),
   ...(silverlakeConfig ? { silverlake: { rpc, clearingHouse: silverlakeConfig.FLOAT_CLEARING_HOUSE_ADDRESS as `0x${string}`, oracle: silverlakeConfig.FLOAT_ORACLE_ADDRESS as `0x${string}` } } : {}),
@@ -40,10 +43,12 @@ app.use("/v1/markets", createMarketsRouter(db, config.ORACLE_PRICE_MAX_AGE_SECON
 }));
 app.use("/ready", createReadinessRouter(db));
 app.use("/v1/keeper", createKeeperRouter(keeper));
+app.use("/v1/email-alerts", createEmailAlertsRouter(db, config));
 app.use("/v1/protocol", createProtocolRouter(config));
 app.use("/v1/protocol/transactions", createProtocolTransactionsRouter(config, db, rpc, oraclePublisher));
 let lastOraclePublishAt = 0;
 let lastKeeperRunAt = 0;
+let lastLiquidationAlertsRunAt = 0;
 
 let refreshing = false;
 
@@ -70,6 +75,14 @@ async function refreshMarkets(): Promise<void> {
     }
   } catch (error) {
     console.error("FloatSheets keeper run failed", error);
+  }
+  try {
+    if (config.RESEND_API_KEY && Date.now() - lastLiquidationAlertsRunAt >= 15_000) {
+      lastLiquidationAlertsRunAt = Date.now();
+      await liquidationAlerts.runOnce();
+    }
+  } catch (error) {
+    console.error("FloatSheets liquidation alert scan failed", error);
   } finally {
     refreshing = false;
   }

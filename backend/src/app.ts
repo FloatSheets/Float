@@ -43,11 +43,12 @@ app.use((request, response, next) => {
 
   const now = Date.now();
   const transactionRoute = request.path.startsWith("/v1/protocol/transactions");
+  const emailAlertRoute = request.path.startsWith("/v1/email-alerts");
   const suppliedSecret = request.header("x-floatsheets-server-secret");
   const trustedSecret = Boolean(serverApiSecret && suppliedSecret
     && Buffer.byteLength(serverApiSecret) === Buffer.byteLength(suppliedSecret)
     && timingSafeEqual(Buffer.from(serverApiSecret), Buffer.from(suppliedSecret)));
-  if (transactionRoute && process.env["NODE_ENV"] === "production" && !trustedSecret) {
+  if ((transactionRoute || emailAlertRoute) && process.env["NODE_ENV"] === "production" && !trustedSecret) {
     response.status(503).json({ error: "Trusted frontend server request required" });
     return;
   }
@@ -59,11 +60,11 @@ app.use((request, response, next) => {
   const trader = typeof request.body?.trader === "string" && /^0x[0-9a-fA-F]{40}$/.test(request.body.trader)
     ? request.body.trader.toLowerCase()
     : "anonymous";
-  const limit = transactionRoute
+  const limit = emailAlertRoute ? 12 : transactionRoute
     ? closeQuote ? CLOSE_QUOTE_RATE_LIMIT : openQuote ? OPEN_QUOTE_RATE_LIMIT : OTHER_TRANSACTION_RATE_LIMIT
     : GENERAL_RATE_LIMIT;
-  const bucket = transactionRoute ? closeQuote ? "close" : openQuote ? "open" : path : "api";
-  const key = transactionRoute ? `${clientIp}:${trader}:${bucket}` : `${clientIp}:api`;
+  const bucket = emailAlertRoute ? path : transactionRoute ? closeQuote ? "close" : openQuote ? "open" : path : "api";
+  const key = transactionRoute ? `${clientIp}:${trader}:${bucket}` : emailAlertRoute ? `${clientIp}:email-alerts:${bucket}` : `${clientIp}:api`;
   if (rateLimitDatabase && (request.path.startsWith("/v1/") || transactionRoute)) {
     const bucketKey = createHash("sha256").update(key).digest("hex");
     void (async () => {
