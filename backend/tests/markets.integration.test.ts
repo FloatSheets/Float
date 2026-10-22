@@ -38,13 +38,14 @@ test("returns the live five-notional, two-sided NVDA quote matrix", async () => 
   expect(response.status).toBe(200);
   expect(response.body.market).toBe("NVDA");
   expect(response.body.quotes).toHaveLength(10);
-  const notionals = [...new Set(response.body.quotes.map((quote: { notional_usdg: string }) => Number(quote.notional_usdg)))]
-    .sort((a: number, b: number) => a - b);
+  const notionals = Array.from(new Set<number>(
+    response.body.quotes.map((quote: { notional_usdg: string }) => Number(quote.notional_usdg))
+  )).sort((a, b) => a - b);
   expect(notionals).toHaveLength(5);
   expect(notionals[0]).toBe(5);
   expect(notionals[1]).toBe(10);
   expect(notionals[4]).toBe(Number(config.body.market.max_ticket_usdg));
-  expect(notionals.every((notional: number) => notional <= Number(config.body.market.max_ticket_usdg))).toBe(true);
+  expect(notionals.every((notional) => notional <= Number(config.body.market.max_ticket_usdg))).toBe(true);
 }, 60_000);
 
 test("reports a live risk state for NVDA", async () => {
