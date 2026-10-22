@@ -10,6 +10,7 @@ import type { RpcTransport } from "../chain/rpc";
 import { readClearingExposure, readClearingMarket, readOraclePrice } from "../chain/protocol-read";
 import { signPriceAttestation } from "../signing/signer";
 import { bandedOracleMarks, weekendBandOptions, WeekendBands } from "../markets/weekend-bands";
+import { splitNear } from "../markets/corporate-actions";
 import type { PriceAttestation } from "../signing/types";
 
 const oracleAbi = parseAbi([
@@ -35,6 +36,25 @@ export function oraclePublishRequired(input: {
   return input.sequence === 0n
     || input.chainNow >= input.currentTimestamp + ATTESTATION_TTL_SECONDS - PUBLISH_SAFETY_WINDOW_SECONDS
     || input.currentCircuitBroken !== input.nextCircuitBroken;
+}
+
+/** FloatOracle.MAX_PRICE_JUMP_BPS: a larger move is quarantined as circuit-broken. */
+export const ORACLE_JUMP_GUARD_BPS = 2_000n;
+
+/**
+ * Walks the mark toward a target the contract's jump guard would reject.
+ * Without this, a real move above 20% (a stock split, a gap on news) leaves
+ * the oracle holding the old price indefinitely. Each step stays inside the
+ * guard and publishes a clean mark (spot equal to the step), so liquidations
+ * keep working along the way. Opens are refused separately until caught up.
+ */
+export function oracleCatchUp(currentE18: bigint, targetTwapE18: bigint, targetSpotE18: bigint, stepBps: bigint):
+  { twapE18: bigint; spotE18: bigint; stepping: boolean } {
+  if (currentE18 === 0n) return { twapE18: targetTwapE18, spotE18: targetSpotE18, stepping: false };
+  const delta = targetTwapE18 > currentE18 ? targetTwapE18 - currentE18 : currentE18 - targetTwapE18;
+  if (delta * 10_000n <= ORACLE_JUMP_GUARD_BPS * currentE18) return { twapE18: targetTwapE18, spotE18: targetSpotE18, stepping: false };
+  const step = targetTwapE18 > currentE18 ? currentE18 * (10_000n + stepBps) / 10_000n : currentE18 * (10_000n - stepBps) / 10_000n;
+  return { twapE18: step, spotE18: step, stepping: true };
 }
 
 export function snapshotTimeOnChain(snapshotAt: Date, wallTimeSeconds: bigint, chainTimeSeconds: bigint): bigint {
@@ -73,6 +93,8 @@ export class OraclePublisher {
   private readonly publicClient;
   private readonly refreshing = new Map<string, Promise<void>>();
   private readonly weekendBands: WeekendBands;
+  /** When each market's pool first diverged beyond the oracle jump guard. */
+  private readonly divergenceSince = new Map<string, Date>();
 
   constructor(private readonly database: Pool, private readonly rpc: RpcTransport, private readonly config: AppConfig) {
     const account = privateKeyToAccount(config.ORACLE_PUBLISHER_PRIVATE_KEY as Hex);
@@ -159,9 +181,27 @@ export class OraclePublisher {
     // While the underlying is closed, hold the mark inside the weekend band so
     // a thin-liquidity wick cannot move PnL or trigger liquidations.
     const marks = await bandedOracleMarks(this.weekendBands, row.symbol, poolTwapE18, poolSpotE18);
-    const twapPriceE18 = marks.twapE18;
-    const spotPriceE18 = marks.spotE18;
     if (marks.clamped) console.log(JSON.stringify({ event: "oracle_mark_clamped_to_weekend_band", version, market: row.symbol }));
+    // A move beyond the contract's jump guard is only walked once it is
+    // expected (a split near its ex-date) or has persisted; a brief spike is
+    // still quarantined by the guard.
+    const catchUpKey = `${version}:${row.symbol}`;
+    let twapPriceE18 = marks.twapE18;
+    let spotPriceE18 = marks.spotE18;
+    let stepping = false;
+    const catchUp = oracleCatchUp(current.priceE18, marks.twapE18, marks.spotE18, BigInt(this.config.ORACLE_STEP_BPS));
+    if (catchUp.stepping) {
+      const firstSeen = this.divergenceSince.get(catchUpKey) ?? new Date();
+      this.divergenceSince.set(catchUpKey, firstSeen);
+      const persisted = (Date.now() - firstSeen.getTime()) / 1_000 >= this.config.ORACLE_STEP_AFTER_SECONDS;
+      if (persisted || await splitNear(this.database, row.symbol, new Date())) {
+        ({ twapE18: twapPriceE18, spotE18: spotPriceE18 } = catchUp);
+        stepping = true;
+        console.log(JSON.stringify({ event: "oracle_catch_up_step", version, market: row.symbol }));
+      }
+    } else {
+      this.divergenceSince.delete(catchUpKey);
+    }
     const nextCircuitBroken = circuitBroken(twapPriceE18, spotPriceE18);
     // On-demand calls are still rate-limited by oracle freshness. A newer pool
     // sample alone does not justify a gas transaction; publish on first use,
@@ -172,7 +212,7 @@ export class OraclePublisher {
       chainNow,
       currentCircuitBroken: current.circuitBroken,
       nextCircuitBroken
-    })) return;
+    }) && !stepping) return;
     const attestation: PriceAttestation = {
       marketId: id,
       priceE18: twapPriceE18,

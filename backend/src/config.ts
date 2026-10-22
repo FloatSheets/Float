@@ -48,6 +48,15 @@ const schema = z.object({
   OPENING_BELL_EXTRA_SPREAD_BPS: z.coerce.number().int().min(0).max(200).default(15),
   // Bell-time max ticket as a share of the market's normal max ticket.
   OPENING_BELL_TICKET_BPS: z.coerce.number().int().min(100).max(10_000).default(5_000),
+  CORPORATE_ACTIONS_ENABLED: z.enum(["true", "false"]).default("true"),
+  CORPORATE_ACTIONS_POLL_SECONDS: z.coerce.number().int().min(300).max(86_400).default(3_600),
+  // Matches the clearing house's 7-day maximum position duration.
+  SPLIT_CLOSE_ONLY_DAYS: z.coerce.number().int().min(1).max(30).default(7),
+  LARGE_DIVIDEND_BPS: z.coerce.number().int().min(10).max(5_000).default(200),
+  // Oracle catch-up: a move that persists beyond the contract's 20% jump guard
+  // is published in steps of this size instead of tripping the breaker.
+  ORACLE_STEP_BPS: z.coerce.number().int().min(100).max(1_950).default(1_900),
+  ORACLE_STEP_AFTER_SECONDS: z.coerce.number().int().min(60).max(86_400).default(900),
   KEEPER_ENABLED: z.enum(["true", "false"]).default("true"),
   KEEPER_INTERVAL_SECONDS: z.coerce.number().int().min(10).max(3_600).default(30),
   // Optional dedicated keeper wallet. Defaults to the oracle publisher wallet;

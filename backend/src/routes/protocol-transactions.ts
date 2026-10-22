@@ -20,8 +20,9 @@ import type { OraclePublisher } from "../oracle/publisher";
 import { snapshotTimeOnChain } from "../oracle/publisher";
 import { safeErrorMessage } from "../safe-error";
 import { haltMessage, readActiveHalt } from "../markets/halts";
-import { weekendBandOptions, weekendBandRefusal, WeekendBands } from "../markets/weekend-bands";
+import { readPoolPriceE18, weekendBandOptions, weekendBandRefusal, WeekendBands } from "../markets/weekend-bands";
 import { weekendLimitOptions, WeekendWalletLimits } from "../markets/weekend-limits";
+import { corporateActionOptions, corporateActionRefusal, parseSplitRatio, readCorporateAction } from "../markets/corporate-actions";
 import { openingBellOptions, openingBellTerms, openingBellTicket, openingBellTicketMessage } from "../markets/opening-bell";
 
 const address = z.string().regex(/^0x[0-9a-fA-F]{40}$/);
@@ -343,6 +344,8 @@ function createProtocolTransactionsRouterForConfig(
       if (riskIncreasing && await readBadDebt(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address) !== 0n) throw new Error("new positions are paused while vault bad debt is outstanding");
       const adminHalt = riskIncreasing ? await readActiveHalt(database, symbol) : null;
       if (adminHalt) throw new Error(haltMessage(adminHalt));
+      const adminAction = riskIncreasing ? await readCorporateAction(database, corporateActionOptions(config), symbol) : null;
+      if (adminAction?.close_only) throw new Error(corporateActionRefusal(adminAction));
       const adminBand = riskIncreasing && weekendBands ? await weekendBandRefusal(database, weekendBands, symbol) : null;
       if (adminBand) throw new Error(adminBand);
       const signature = await signTradeQuote(config.QUOTE_SIGNER_PRIVATE_KEY as Hex, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, value);
@@ -436,11 +439,21 @@ function createProtocolTransactionsRouterForConfig(
         // The listing exchange has halted the underlying: no new exposure until it resumes.
         const halt = await readActiveHalt(database, symbol);
         if (halt) throw new Error(haltMessage(halt));
+        // A split or large dividend is close to its ex-date: perps cannot follow it.
+        const action = await readCorporateAction(database, corporateActionOptions(config), symbol);
+        if (action?.close_only) throw new Error(corporateActionRefusal(action));
         // Underlying closed and the pool has left the weekend band: no new exposure.
         const band = weekendBands ? await weekendBandRefusal(database, weekendBands, symbol) : null;
         if (band) throw new Error(band);
         const walletLimit = weekendLimits ? await weekendLimits.refusal(symbol, value.trader, requestedNotional) : null;
         if (walletLimit) throw new Error(walletLimit);
+        // The oracle is still walking toward a move beyond its 20% jump guard
+        // (for example after a split): wait until the mark has caught up.
+        const poolPrice = await readPoolPriceE18(database, symbol);
+        if (poolPrice !== null && oraclePrice.priceE18 > 0n
+          && (poolPrice > oraclePrice.priceE18 ? poolPrice - oraclePrice.priceE18 : oraclePrice.priceE18 - poolPrice) * BPS > 2_000n * oraclePrice.priceE18) {
+          throw new Error(`${symbol}'s on-chain price is catching up to a large move in steps. New positions reopen once it has caught up; you can still close.`);
+        }
         if (await readBadDebt(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address) !== 0n) throw new Error("new positions are paused while vault bad debt is outstanding");
         const [exposure, vaultAssets] = await Promise.all([
           readClearingExposure(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, id),
@@ -513,6 +526,8 @@ function createProtocolTransactionsRouterForConfig(
       if (riskIncreasing) {
         const halt = await readActiveHalt(database, symbol);
         if (halt) return reject(haltMessage(halt));
+        const action = await readCorporateAction(database, corporateActionOptions(config), symbol);
+        if (action?.close_only) return reject(corporateActionRefusal(action));
         const band = weekendBands ? await weekendBandRefusal(database, weekendBands, symbol) : null;
         if (band) return reject(band);
         const walletLimit = weekendLimits ? await weekendLimits.refusal(symbol, input.trader as Address, requestedNotional) : null;
@@ -683,6 +698,31 @@ function createProtocolTransactionsRouterForConfig(
     try {
       const body = z.object({ receiver: address }).parse(request.body);
       response.json({ transaction: claimDeferredPayout(config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, body.receiver as Address) });
+    } catch (error) { protocolError(response, error); }
+  });
+
+  /** Records a split or cash dividend the Nasdaq calendars missed. Admin entries are never overwritten by the feed. */
+  router.post("/admin/corporate-action", adminRateLimit, masterAdmin, async (request, response) => {
+    try {
+      if (!database) throw new Error("corporate action storage is unavailable");
+      const body = z.object({
+        market: z.string().regex(/^[A-Za-z0-9.-]{1,16}$/),
+        kind: z.enum(["split", "cash_dividend"]),
+        exDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        ratio: z.string().max(32).optional(),
+        amountUsd: z.number().positive().max(1_000_000).optional()
+      }).parse(request.body);
+      const ratio = body.kind === "split" ? parseSplitRatio(body.ratio ?? "") : null;
+      if (body.kind === "split" && !ratio) throw new Error("split ratio must look like \"10:1\" or \"1:10\"");
+      if (body.kind === "cash_dividend" && !body.amountUsd) throw new Error("cash dividends need amountUsd");
+      await database.query(
+        `INSERT INTO public.corporate_actions (symbol, kind, ex_date, split_new, split_old, amount_usd, source)
+         VALUES ($1,$2,$3,$4,$5,$6,'admin')
+         ON CONFLICT (symbol, kind, ex_date) DO UPDATE SET split_new=EXCLUDED.split_new, split_old=EXCLUDED.split_old,
+           amount_usd=EXCLUDED.amount_usd, source='admin', last_seen_at=now()`,
+        [body.market.toUpperCase(), body.kind, body.exDate, ratio?.splitNew ?? null, ratio?.splitOld ?? null, body.kind === "cash_dividend" ? body.amountUsd : null]
+      );
+      response.json({ recorded: true });
     } catch (error) { protocolError(response, error); }
   });
 

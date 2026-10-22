@@ -10,6 +10,7 @@ import type { Address } from 'viem';
 import { contractVersionFromRequest } from '../contract-version';
 import { HALT_FEED_STALE_SECONDS, readActiveHalts } from '../markets/halts';
 import { closedWindow } from '../markets/sessions';
+import { readCorporateActions, type CorporateActionOptions } from '../markets/corporate-actions';
 import { openingBellTerms, openingBellTicket, type OpeningBellOptions } from '../markets/opening-bell';
 import { decimalToE18, readPoolPriceE18, weekendBandView, WeekendBands, type WeekendBandOptions, type WeekendBandView } from '../markets/weekend-bands';
 
@@ -34,7 +35,8 @@ export function createMarketsRouter(
   maxPriceAgeSeconds = 120,
   live?: LiveMarketDependencies | VersionedLiveMarketDependencies,
   bandOptions: WeekendBandOptions = { enabled: false, maxBandBps: 500, shiftAfterSeconds: 3_600, maxShifts: 2 },
-  bellOptions: OpeningBellOptions = { enabled: false, minutes: 10, extraSpreadBps: 15, ticketBps: 5_000 }
+  bellOptions: OpeningBellOptions = { enabled: false, minutes: 10, extraSpreadBps: 15, ticketBps: 5_000 },
+  actionOptions: CorporateActionOptions = { enabled: false, splitCloseOnlyDays: 7, largeDividendBps: 200 }
 ): Router {
   const router = Router();
   const bands = new WeekendBands(database, bandOptions);
@@ -60,10 +62,11 @@ export function createMarketsRouter(
          ) s ON true
          WHERE m.listed = TRUE ORDER BY m.symbol`
       );
-      const halts = await readActiveHalts(database);
+      const [halts, actions] = await Promise.all([readActiveHalts(database), readCorporateActions(database, actionOptions)]);
       const rows = await Promise.all(result.rows.map(async (row) => ({
         ...row,
         exchange_halt: halts.get(String(row.symbol).toUpperCase()) ?? null,
+        corporate_action: actions.get(String(row.symbol).toUpperCase()) ?? null,
         weekend_band: await bandView(String(row.symbol), row.twap_price_usdg)
       })));
       if (!live) return response.json({ markets: rows });
@@ -86,6 +89,20 @@ export function createMarketsRouter(
   });
 
   // Registered before /:symbol so these paths are never read as market symbols.
+  router.get('/corporate-actions', async (_request, response, next) => {
+    try {
+      const [actions, feed] = await Promise.all([
+        readCorporateActions(database, actionOptions),
+        database.query<{ last_success_at: Date | null; last_error: string | null }>('SELECT last_success_at,last_error FROM public.corporate_action_feed WHERE id')
+      ]);
+      response.json({
+        enabled: actionOptions.enabled,
+        feed: { source: 'Nasdaq split and dividend calendars', last_success_at: feed.rows[0]?.last_success_at?.toISOString() ?? null, last_error: feed.rows[0]?.last_error ?? null },
+        actions: [...actions.values()]
+      });
+    } catch (error) { next(error); }
+  });
+
   router.get('/weekend-bands', async (_request, response, next) => {
     try {
       const window = bandOptions.enabled ? closedWindow(new Date()) : null;
@@ -173,13 +190,14 @@ export function createMarketsRouter(
       const oracleAgeSeconds=Number(BigInt(Math.floor(Date.now()/1_000))-oracle.timestamp);
       const oracleFresh=oracle.sequence!==0n&&oracleAgeSeconds<=maxPriceAgeSeconds&&!oracle.circuitBroken;
       const exchangeHalt=(await readActiveHalts(database)).get(symbol)??null;
+      const corporateAction=(await readCorporateActions(database,actionOptions)).get(symbol)??null;
       const weekendBand=await bandView(symbol);
-      const state=onchainMarket.state===0?'HALTED':onchainMarket.state===2?'CLOSE_ONLY':exchangeHalt?'EXCHANGE_HALT':weekendBand?.pool_outside?'WEEKEND_BAND':(monitoredState!=='active'?'CLOSE_ONLY':(oracleFresh?'LIVE':'READY'));
+      const state=onchainMarket.state===0?'HALTED':onchainMarket.state===2?'CLOSE_ONLY':exchangeHalt?'EXCHANGE_HALT':corporateAction?.close_only?'CORPORATE_ACTION':weekendBand?.pool_outside?'WEEKEND_BAND':(monitoredState!=='active'?'CLOSE_ONLY':(oracleFresh?'LIVE':'READY'));
       const bell=openingBellTerms(bellOptions);
       const ticket=await database.query<{max_ticket_usdg:string}>('SELECT max_ticket_usdg::text FROM public.markets WHERE symbol=$1',[symbol]);
       const openingBell=bell?{ends_at:bell.endsAt.toISOString(),extra_spread_bps:bell.extraSpreadBps,
         max_ticket_usdg:ticket.rows[0]?usdgDecimal(openingBellTicket(usdgUnits(ticket.rows[0].max_ticket_usdg),bell)):null}:null;
-      response.json({market:symbol,state,exchange_halt:exchangeHalt,weekend_band:weekendBand,opening_bell:openingBell,monitored_state:monitoredState,onchain_market_state:onchainMarket.state,
+      response.json({market:symbol,state,exchange_halt:exchangeHalt,corporate_action:corporateAction,weekend_band:weekendBand,opening_bell:openingBell,monitored_state:monitoredState,onchain_market_state:onchainMarket.state,
         oracle_confidence_bps:oracle.confidenceBps.toString(),oracle_confidence_limit_bps:onchainMarket.maxOracleConfidenceBps.toString(),
         oracle_age_seconds:oracleAgeSeconds,oracle_circuit_broken:oracle.circuitBroken,oracle_fresh:oracleFresh});
     } catch (error) { next(error); }

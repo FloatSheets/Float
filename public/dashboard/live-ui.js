@@ -678,6 +678,18 @@
     value.className=change>=0?'positive':'negative';
     value.textContent=(change>=0?'+':'')+change.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4})+'%';
   }
+  function paintCorporateAction(action){
+    const stats=root.querySelector('.chart-stats');
+    if(!stats)return;
+    let notice=root.querySelector('#corporate-action-notice');
+    if(!action){notice?.remove();return;}
+    if(!notice){notice=document.createElement('div');notice.id='corporate-action-notice';notice.className='info-note action-note';notice.setAttribute('role','status');stats.parentElement.insertBefore(notice,stats);}
+    const title=action.kind==='split'?(action.ratio?escapeHtml(action.ratio)+' split':'Stock split'):'Ex-dividend $'+escapeHtml(Number(action.amount_usd).toFixed(2));
+    const when=new Date(action.ex_date+'T12:00:00').toLocaleDateString([], {weekday:'short',month:'short',day:'numeric'});
+    const change=action.expected_price_change_pct===null?'':' · expected price change '+(action.expected_price_change_pct>0?'+':'')+escapeHtml(action.expected_price_change_pct)+'%';
+    const status=action.close_only?' <strong class="action-close-only">Close-only now.</strong>':action.close_only_from?' Close-only from '+new Date(action.close_only_from).toLocaleString([], {weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})+'.':'';
+    notice.innerHTML='<strong>📅 '+title+' · '+when+change+'</strong> '+escapeHtml(action.summary)+status;
+  }
   function paintOpeningBell(bell,symbol){
     const stats=root.querySelector('.chart-stats');
     if(!stats)return;
@@ -749,10 +761,11 @@
     }
     if(stateValue){
       stateValue.className='state '+data.state;
-      stateValue.textContent=data.state==='LIVE'?'LIVE':data.state==='READY'?'READY':data.state==='HALTED'?'HALTED':data.state==='EXCHANGE_HALT'?'EXCHANGE HALT':data.state==='WEEKEND_BAND'?'WEEKEND BAND':data.state==='CLOSE_ONLY'?'CLOSE ONLY':'UNAVAILABLE';
+      stateValue.textContent=data.state==='LIVE'?'LIVE':data.state==='READY'?'READY':data.state==='HALTED'?'HALTED':data.state==='EXCHANGE_HALT'?'EXCHANGE HALT':data.state==='CORPORATE_ACTION'?'CORPORATE ACTION':data.state==='WEEKEND_BAND'?'WEEKEND BAND':data.state==='CLOSE_ONLY'?'CLOSE ONLY':'UNAVAILABLE';
       stateValue.title=data.state==='READY'?'A current oracle price is published when you request a quote.':data.exchange_halt?'Halted on '+data.exchange_halt.listing_market+': '+data.exchange_halt.reason:'Current on-chain market and oracle check';
     }
     paintExchangeHalt(data.exchange_halt);
+    paintCorporateAction(data.corporate_action);
     paintWeekendBand(data.exchange_halt?null:data.weekend_band);
     paintOpeningBell(data.exchange_halt?null:data.opening_bell,data.market);
   }

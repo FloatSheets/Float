@@ -55,7 +55,8 @@ const config = loadConfig({
   // Weekend bands depend on the wall clock; their behavior is covered in weekend-bands tests.
   WEEKEND_BANDS_ENABLED: "false",
   WEEKEND_WALLET_LIMITS_ENABLED: "false",
-  OPENING_BELL_ENABLED: "false"
+  OPENING_BELL_ENABLED: "false",
+  CORPORATE_ACTIONS_ENABLED: "false"
 });
 
 const app = express();

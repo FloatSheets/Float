@@ -8,6 +8,7 @@ import { migrate } from "./db/migrate";
 import { HaltMonitor } from "./markets/halts";
 import { weekendBandOptions } from "./markets/weekend-bands";
 import { openingBellOptions } from "./markets/opening-bell";
+import { CorporateActionMonitor, corporateActionOptions } from "./markets/corporate-actions";
 import { MarketMonitor } from "./markets/monitor";
 import { createMarketsRouter } from "./routes/markets";
 import { createReadinessRouter } from "./routes/ready";
@@ -46,7 +47,7 @@ app.use("/v1/markets", createMarketsRouter(db, config.ORACLE_PRICE_MAX_AGE_SECON
   jasper: { rpc, clearingHouse: jasperConfig.FLOAT_CLEARING_HOUSE_ADDRESS as `0x${string}`, oracle: jasperConfig.FLOAT_ORACLE_ADDRESS as `0x${string}` },
   meadow: { rpc, clearingHouse: meadowConfig.FLOAT_CLEARING_HOUSE_ADDRESS as `0x${string}`, oracle: meadowConfig.FLOAT_ORACLE_ADDRESS as `0x${string}` },
   "legacy-orion": { rpc, clearingHouse: legacyConfig.FLOAT_CLEARING_HOUSE_ADDRESS as `0x${string}`, oracle: legacyConfig.FLOAT_ORACLE_ADDRESS as `0x${string}` }
-}, weekendBandOptions(config), openingBellOptions(config)));
+}, weekendBandOptions(config), openingBellOptions(config), corporateActionOptions(config)));
 app.use("/ready", createReadinessRouter(db));
 app.use("/v1/keeper", createKeeperRouter(keeper));
 app.use("/v1/email-alerts", createEmailAlertsRouter(db, config));
@@ -112,6 +113,17 @@ async function refreshHalts(): Promise<void> {
   }
 }
 
+// Split and dividend calendars change daily at most; poll hourly.
+const corporateActionMonitor = new CorporateActionMonitor(db);
+async function refreshCorporateActions(): Promise<void> {
+  if (config.CORPORATE_ACTIONS_ENABLED !== "true") return;
+  try {
+    await corporateActionMonitor.refresh();
+  } catch (error) {
+    console.error("FloatSheets corporate action refresh failed", error);
+  }
+}
+
 app.listen(port, () => {
   console.log(`FloatSheets API listening on :${port}`);
   void refreshMarkets();
@@ -122,3 +134,4 @@ app.listen(port, () => {
 setInterval(() => void refreshMarkets(), config.MARKET_POLL_INTERVAL_MS).unref();
 setInterval(() => void refreshHalts(), config.HALT_POLL_INTERVAL_SECONDS * 1_000).unref();
 if (config.TELEGRAM_BOT_TOKEN) setInterval(() => void telegramBot.pollOnce(), 5_000).unref();
+setInterval(() => void refreshCorporateActions(), config.CORPORATE_ACTIONS_POLL_SECONDS * 1_000).unref();

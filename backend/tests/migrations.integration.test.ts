@@ -59,6 +59,6 @@ test("is idempotent within its isolated schema", async () => {
        'liquidation_telegram_links','telegram_bot_state','liquidation_alert_deliveries'
      )`, [schema]
   );
-  expect(migrations.rows[0]?.count).toBe("13");
+  expect(migrations.rows[0]?.count).toBe("14");
   expect(alertTables.rows[0]?.count).toBe("9");
 }, 60_000);

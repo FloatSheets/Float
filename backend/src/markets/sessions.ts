@@ -42,7 +42,7 @@ export function easternToUtc(date: string, time: string): Date | null {
 }
 
 /** Eastern calendar date as YYYY-MM-DD and wall-clock HH:MM:SS. */
-function easternParts(instant: Date): { date: string; time: string } {
+export function easternParts(instant: Date): { date: string; time: string } {
   const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
     hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23"
@@ -50,7 +50,7 @@ function easternParts(instant: Date): { date: string; time: string } {
   return { date: `${parts.year}-${parts.month}-${parts.day}`, time: `${parts.hour}:${parts.minute}:${parts.second}` };
 }
 
-function addDays(date: string, days: number): string {
+export function addDays(date: string, days: number): string {
   const [year, month, day] = date.split("-").map(Number) as [number, number, number];
   return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
 }
@@ -61,7 +61,7 @@ export function isTradingDay(date: string): boolean {
   return weekday !== 0 && weekday !== 6 && !NYSE_HOLIDAYS.has(date);
 }
 
-function at(date: string, time: string): Date {
+export function easternAt(date: string, time: string): Date {
   const [year, month, day] = date.split("-");
   return easternToUtc(`${month}/${day}/${year}`, time)!;
 }
@@ -96,7 +96,7 @@ export function closedWindow(now: Date): ClosedWindow | null {
   }
   let nextSession = addDays(lastSession, 1);
   while (!isTradingDay(nextSession)) nextSession = addDays(nextSession, 1);
-  return { anchorAt: at(lastSession, REGULAR_CLOSE), closedAt: at(lastSession, EXTENDED_CLOSE), reopensAt: at(nextSession, EXTENDED_OPEN) };
+  return { anchorAt: easternAt(lastSession, REGULAR_CLOSE), closedAt: easternAt(lastSession, EXTENDED_CLOSE), reopensAt: easternAt(nextSession, EXTENDED_OPEN) };
 }
 
 /** Regular-session open on trading days. */
@@ -112,7 +112,7 @@ export function openingBell(now: Date, minutes: number): OpeningBell | null {
   if (minutes <= 0) return null;
   const { date } = easternParts(now);
   if (!isTradingDay(date)) return null;
-  const startsAt = at(date, REGULAR_OPEN);
+  const startsAt = easternAt(date, REGULAR_OPEN);
   const endsAt = new Date(startsAt.getTime() + minutes * 60_000);
   return now >= startsAt && now < endsAt ? { startsAt, endsAt } : null;
 }
