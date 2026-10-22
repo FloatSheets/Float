@@ -2,7 +2,7 @@ import { z } from "zod";
 import { privateKeyToAccount } from "viem/accounts";
 
 const address = z.string().regex(/^0x[a-fA-F0-9]{40}$/, "must be an EVM address");
-export const contractVersionSchema = z.enum(["goldlake", "silverlake", "amber", "jasper", "meadow", "legacy-orion"]);
+export const contractVersionSchema = z.enum(["jaguar", "goldlake", "silverlake", "amber", "jasper", "meadow", "legacy-orion"]);
 export type ContractVersion = z.infer<typeof contractVersionSchema>;
 
 const schema = z.object({
@@ -25,6 +25,10 @@ const schema = z.object({
   JASPER_FLOAT_CLEARING_HOUSE_ADDRESS: address.optional(),
   JASPER_FLOAT_ORACLE_ADDRESS: address.optional(),
   JASPER_FLOAT_VAULT_ADDRESS: address.optional(),
+  JAGUAR_FLOAT_CLEARING_HOUSE_ADDRESS: address.optional(),
+  JAGUAR_FLOAT_ORACLE_ADDRESS: address.optional(),
+  JAGUAR_FLOAT_VAULT_ADDRESS: address.optional(),
+  JAGUAR_DEPLOYMENT_BLOCK: z.coerce.number().int().nonnegative().optional(),
   LEGACY_ORION_FLOAT_CLEARING_HOUSE_ADDRESS: address.optional(),
   LEGACY_ORION_FLOAT_ORACLE_ADDRESS: address.optional(),
   LEGACY_ORION_FLOAT_VAULT_ADDRESS: address.optional(),
@@ -106,7 +110,20 @@ export function isGoldlakeConfigured(config: AppConfig): boolean {
   );
 }
 
+export function isJaguarConfigured(config: AppConfig): boolean {
+  return Boolean(config.JAGUAR_FLOAT_CLEARING_HOUSE_ADDRESS
+    && config.JAGUAR_FLOAT_ORACLE_ADDRESS
+    && config.JAGUAR_FLOAT_VAULT_ADDRESS);
+}
+
 export function contractConfigForVersion(config: AppConfig, version: ContractVersion): AppConfig {
+  if (version === "jaguar") {
+    const clearingHouse = config.JAGUAR_FLOAT_CLEARING_HOUSE_ADDRESS;
+    const oracle = config.JAGUAR_FLOAT_ORACLE_ADDRESS;
+    const vault = config.JAGUAR_FLOAT_VAULT_ADDRESS;
+    if (!clearingHouse || !oracle || !vault) throw new Error("Jaguar contracts are not configured");
+    return { ...config, FLOAT_CLEARING_HOUSE_ADDRESS: clearingHouse, FLOAT_ORACLE_ADDRESS: oracle, FLOAT_VAULT_ADDRESS: vault };
+  }
   if (version === "goldlake") {
     if (!isGoldlakeConfigured(config)) throw new Error("Goldlake contract addresses are not configured");
     const clearingHouse = config.GOLDLAKE_FLOAT_CLEARING_HOUSE_ADDRESS ?? (config.NODE_ENV === "test" ? config.FLOAT_CLEARING_HOUSE_ADDRESS : undefined);
@@ -161,6 +178,17 @@ export function contractConfigForVersion(config: AppConfig, version: ContractVer
 
 export function loadConfig(environment: Record<string, string | undefined> = process.env): AppConfig {
   const config = schema.parse(environment);
+  const jaguarAddressKeys = ["JAGUAR_FLOAT_CLEARING_HOUSE_ADDRESS", "JAGUAR_FLOAT_ORACLE_ADDRESS", "JAGUAR_FLOAT_VAULT_ADDRESS"] as const;
+  const jaguarAddressCount = jaguarAddressKeys.filter((key) => environment[key]?.trim()).length;
+  if (jaguarAddressCount !== 0 && jaguarAddressCount !== 3) throw new Error("All three Jaguar contract addresses must be configured together");
+  if (jaguarAddressCount === 0) {
+    config.JAGUAR_FLOAT_CLEARING_HOUSE_ADDRESS = "0x50672E55C5824ee757b929224d0341ADbFFac361";
+    config.JAGUAR_FLOAT_ORACLE_ADDRESS = "0x3b626C2Cdb2682852d5410971c35c25979A3C2Df";
+    config.JAGUAR_FLOAT_VAULT_ADDRESS = "0x1ED22D8f5a0762754178aDE4a71Ca731EF480dc3";
+    config.JAGUAR_DEPLOYMENT_BLOCK = 95315783;
+  } else if (config.JAGUAR_DEPLOYMENT_BLOCK === undefined) {
+    throw new Error("JAGUAR_DEPLOYMENT_BLOCK is required when Jaguar contracts are configured");
+  }
   if (Boolean(config.TELEGRAM_BOT_TOKEN) !== Boolean(config.TELEGRAM_BOT_USERNAME)) {
     throw new Error("TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_USERNAME must be configured together");
   }

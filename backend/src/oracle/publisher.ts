@@ -3,7 +3,7 @@ import { createPublicClient, createWalletClient, http, parseAbi, type Address, t
 import { privateKeyToAccount } from "viem/accounts";
 import { defineChain } from "viem";
 
-import { contractConfigForVersion, isGoldlakeConfigured, isSilverlakeConfigured, type AppConfig, type ContractVersion } from "../config";
+import { contractConfigForVersion, isGoldlakeConfigured, isSilverlakeConfigured, isJaguarConfigured, type AppConfig, type ContractVersion } from "../config";
 import { safeErrorMessage } from "../safe-error";
 import { marketId } from "../chain/protocol";
 import type { RpcTransport } from "../chain/rpc";
@@ -111,10 +111,11 @@ export class OraclePublisher {
        ) s ON true WHERE m.status != 'disabled' ORDER BY m.symbol`
     );
     // Send in sequence so concurrent writes cannot race for the publisher nonce.
-    for (const row of rows) for (const version of ["goldlake", "silverlake", "amber", "jasper", "meadow", "legacy-orion"] as const) {
+    for (const row of rows) for (const version of ["jaguar", "goldlake", "silverlake", "amber", "jasper", "meadow", "legacy-orion"] as const) {
       try {
         if (version === "goldlake" && !isGoldlakeConfigured(this.config)) continue;
         if (version === "silverlake" && !isSilverlakeConfigured(this.config)) continue;
+        if (version === "jaguar" && !isJaguarConfigured(this.config)) continue;
         const versionConfig = contractConfigForVersion(this.config, version);
         const id = marketId(row.symbol);
         if (version === "goldlake") {

@@ -5,7 +5,7 @@ import type { Address } from "viem";
 import type { Hex } from "viem";
 import type { Pool } from "pg";
 
-import { contractConfigForVersion, isGoldlakeConfigured, isSilverlakeConfigured, type AppConfig, type ContractVersion } from "../config";
+import { contractConfigForVersion, isGoldlakeConfigured, isSilverlakeConfigured, isJaguarConfigured, type AppConfig, type ContractVersion } from "../config";
 import { contractVersionFromRequest } from "../contract-version";
 import {
   approveUsdG, cancelVaultWithdrawal, claimDeferredPayout, claimProtocolBalance, claimVaultDeposit, claimVaultWithdrawal, configureMarket, depositMargin, depositVault, enableMarket, liquidate, marketId, settleVaultQueue, startVaultQueueEpoch, withdrawMargin, withdrawVault
@@ -167,6 +167,9 @@ export function createProtocolTransactionsRouter(
 ): Router {
   const router = Router();
   const versions = {
+    ...(isJaguarConfigured(config) ? {
+      jaguar: createProtocolTransactionsRouterForConfig(contractConfigForVersion(config, "jaguar"), database, rpc, oraclePublisher, "jaguar")
+    } : {}),
     ...(isGoldlakeConfigured(config) ? {
       goldlake: createProtocolTransactionsRouterForConfig(contractConfigForVersion(config, "goldlake"), database, rpc, oraclePublisher, "goldlake")
     } : {}),
@@ -180,7 +183,7 @@ export function createProtocolTransactionsRouter(
   };
   router.use((request, response, next) => {
     const version = contractVersionFromRequest(request);
-    if (version !== "goldlake") {
+    if (version !== "goldlake" && version !== "jaguar") {
       if (["/trade-quote", "/trade-check", "/quote"].includes(request.path)) {
         response.status(409).json({ error: `New position opens are disabled on ${version}; select FloatSheets Goldlake.` });
         return;

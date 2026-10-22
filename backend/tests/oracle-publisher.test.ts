@@ -53,8 +53,8 @@ test("does not spend publisher gas on inactive markets", async () => {
 
   await new OraclePublisher(database, rpc, config).publishFreshMarkets();
 
-  // Every deployment checks exposure so close-only positions keep getting marks.
-  expect(exposureCalls).toBe(6);
+  // Every configured deployment, including Jaguar, checks exposure so close-only positions keep getting marks.
+  expect(exposureCalls).toBe(7);
   expect(unexpectedCalls).toBe(0);
 });
 

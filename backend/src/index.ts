@@ -2,7 +2,7 @@ import "dotenv/config";
 
 import { app, setRateLimitDatabase } from "./app";
 import { createRpcTransport } from "./chain/rpc";
-import { contractConfigForVersion, isGoldlakeConfigured, isSilverlakeConfigured, loadConfig } from "./config";
+import { contractConfigForVersion, isGoldlakeConfigured, isSilverlakeConfigured, isJaguarConfigured, loadConfig } from "./config";
 import { db } from "./db";
 import { migrate } from "./db/migrate";
 import { HaltMonitor } from "./markets/halts";
@@ -34,6 +34,7 @@ const meadowConfig = contractConfigForVersion(config, "meadow");
 const jasperConfig = contractConfigForVersion(config, "jasper");
 const goldlakeConfig = isGoldlakeConfigured(config) ? contractConfigForVersion(config, "goldlake") : null;
 const silverlakeConfig = isSilverlakeConfigured(config) ? contractConfigForVersion(config, "silverlake") : null;
+const jaguarConfig = isJaguarConfigured(config) ? contractConfigForVersion(config, "jaguar") : null;
 const amberConfig = contractConfigForVersion(config, "amber");
 const legacyConfig = contractConfigForVersion(config, "legacy-orion");
 const port = Number(process.env.PORT ?? 3001);
@@ -47,6 +48,7 @@ const keeper = new PositionKeeper(db, createKeeperChain(config, rpc), config);
 const liquidationAlerts = new LiquidationAlertService(db, config);
 const telegramBot = new TelegramBotService(db, config);
 app.use("/v1/markets", createMarketsRouter(db, config.ORACLE_PRICE_MAX_AGE_SECONDS, {
+  ...(jaguarConfig ? { jaguar: { rpc, clearingHouse: jaguarConfig.FLOAT_CLEARING_HOUSE_ADDRESS as `0x${string}`, oracle: jaguarConfig.FLOAT_ORACLE_ADDRESS as `0x${string}` } } : {}),
   ...(goldlakeConfig ? { goldlake: { rpc, clearingHouse: goldlakeConfig.FLOAT_CLEARING_HOUSE_ADDRESS as `0x${string}`, oracle: goldlakeConfig.FLOAT_ORACLE_ADDRESS as `0x${string}` } } : {}),
   ...(silverlakeConfig ? { silverlake: { rpc, clearingHouse: silverlakeConfig.FLOAT_CLEARING_HOUSE_ADDRESS as `0x${string}`, oracle: silverlakeConfig.FLOAT_ORACLE_ADDRESS as `0x${string}` } } : {}),
   amber: { rpc, clearingHouse: amberConfig.FLOAT_CLEARING_HOUSE_ADDRESS as `0x${string}`, oracle: amberConfig.FLOAT_ORACLE_ADDRESS as `0x${string}` },

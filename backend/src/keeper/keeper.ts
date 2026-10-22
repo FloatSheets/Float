@@ -23,6 +23,7 @@ const RECENT_ACTION_LIMIT = 10;
  * come from contracts/deployments; Meadow and Legacy Orion are their earliest logs.
  */
 export const KEEPER_START_BLOCKS: Record<ContractVersion, bigint> = {
+  jaguar: 0n,
   goldlake: 94_807_521n,
   silverlake: 94_764_216n,
   amber: 94_624_581n,
@@ -50,7 +51,12 @@ export interface KeeperChain {
   /** Sends the liquidation and waits for it. Throws if the transaction reverts. */
   liquidate(clearingHouse: Address, trader: Address, marketId: Hex): Promise<Hex>;
   claimableRewards(clearingHouse: Address): Promise<bigint>;
+  vaultQueueState?(vault: Address, clearingHouse: Address): Promise<VaultQueueState>;
+  settleVaultQueue?(vault: Address): Promise<Hex>;
+  startNextVaultEpoch?(vault: Address): Promise<Hex>;
 }
+
+export type VaultQueueState = { epoch: bigint; startedAt: bigint; settled: boolean; duration: bigint; navFresh: boolean };
 
 export type KeeperStatus = {
   enabled: boolean;
@@ -66,6 +72,7 @@ export type KeeperStatus = {
     contract_version: string; trader: string; market_id: string; market: string | null; reason: string;
     status: string; transaction_hash: string | null; created_at: string;
   }[];
+  lp_queue_runs: { contract_version: ContractVersion; epoch: string; status: string; settle_transaction_hash: string | null; next_epoch_transaction_hash: string | null; last_error: string | null; updated_at: string }[];
 };
 
 function revertName(error: unknown): string {
@@ -86,6 +93,15 @@ const robinhoodChain = defineChain({
 const clearingErrors = parseAbi([
   "error PositionNotLiquidatable()", "error StaleOraclePrice()", "error OracleConfidenceTooLow()", "error Reentrant()"
 ]);
+const queueVaultAbi = parseAbi([
+  "function queueEpoch() view returns (uint64)",
+  "function queueEpochStartedAt() view returns (uint64)",
+  "function queueEpochSettled() view returns (bool)",
+  "function QUEUE_EPOCH_DURATION() view returns (uint256)",
+  "function settleQueue()",
+  "function startNextQueueEpoch()"
+]);
+const navFreshAbi = parseAbi(["function navPricesFresh() view returns (bool)"]);
 
 export function createKeeperChain(config: AppConfig, rpc: RpcTransport): KeeperChain {
   const account = privateKeyToAccount((config.KEEPER_PRIVATE_KEY ?? config.ORACLE_PUBLISHER_PRIVATE_KEY) as Hex);
@@ -129,6 +145,28 @@ export function createKeeperChain(config: AppConfig, rpc: RpcTransport): KeeperC
     },
     async claimableRewards(clearingHouse) {
       return (await readPayoutBalances(rpc, clearingHouse, account.address)).claimableBalance;
+    },
+    async vaultQueueState(vault, clearingHouse): Promise<VaultQueueState> {
+      const [epoch, startedAt, settled, duration, navFresh] = await Promise.all([
+        publicClient.readContract({ address: vault, abi: queueVaultAbi, functionName: "queueEpoch" }),
+        publicClient.readContract({ address: vault, abi: queueVaultAbi, functionName: "queueEpochStartedAt" }),
+        publicClient.readContract({ address: vault, abi: queueVaultAbi, functionName: "queueEpochSettled" }),
+        publicClient.readContract({ address: vault, abi: queueVaultAbi, functionName: "QUEUE_EPOCH_DURATION" }),
+        publicClient.readContract({ address: clearingHouse, abi: navFreshAbi, functionName: "navPricesFresh" })
+      ]);
+      return { epoch, startedAt, settled, duration, navFresh };
+    },
+    async settleVaultQueue(vault) {
+      const hash = await wallet.writeContract({ address: vault, abi: queueVaultAbi, functionName: "settleQueue" });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      if (receipt.status !== "success") throw new Error(`queue settlement ${hash} reverted`);
+      return hash;
+    },
+    async startNextVaultEpoch(vault) {
+      const hash = await wallet.writeContract({ address: vault, abi: queueVaultAbi, functionName: "startNextQueueEpoch" });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      if (receipt.status !== "success") throw new Error(`next queue epoch ${hash} reverted`);
+      return hash;
     }
   };
 }
@@ -143,6 +181,7 @@ export class PositionKeeper {
   private lastRunStartedAt: Date | null = null;
   private lastRunFinishedAt: Date | null = null;
   private lastError: string | null = null;
+  private readonly activeQueueRuns = new Set<string>();
 
   constructor(
     private readonly database: Pool,
@@ -151,7 +190,7 @@ export class PositionKeeper {
   ) {}
 
   private versions(): ContractVersion[] {
-    const all: ContractVersion[] = ["goldlake", "silverlake", "amber", "jasper", "meadow", "legacy-orion"];
+    const all: ContractVersion[] = ["jaguar", "goldlake", "silverlake", "amber", "jasper", "meadow", "legacy-orion"];
     return all.filter((version) => {
       if (version === "goldlake" && !isGoldlakeConfigured(this.config)) return false;
       if (version === "silverlake" && !isSilverlakeConfigured(this.config)) return false;
@@ -176,6 +215,7 @@ export class PositionKeeper {
       try {
         await this.discoverPositions(version, latest.number);
         await this.closeEligiblePositions(version, latest.timestamp);
+        await this.advanceLpQueue(version, latest.timestamp);
       } catch (error) {
         const message = safeErrorMessage(error);
         errors.push(`${version}: ${message}`);
@@ -186,11 +226,70 @@ export class PositionKeeper {
     this.lastRunFinishedAt = new Date();
   }
 
+  /** Settles a mature LP epoch, then starts the next one. The chain state is
+   * authoritative; a database lease prevents two service instances from
+   * submitting the same epoch transactions at once. */
+  private async advanceLpQueue(version: ContractVersion, chainNow: bigint): Promise<void> {
+    if (version === "jaguar" || version === "legacy-orion") return;
+    if (!this.chain.vaultQueueState || !this.chain.settleVaultQueue || !this.chain.startNextVaultEpoch) return;
+    const versionConfig = contractConfigForVersion(this.config, version);
+    const vault = versionConfig.FLOAT_VAULT_ADDRESS as Address;
+    const clearingHouse = versionConfig.FLOAT_CLEARING_HOUSE_ADDRESS as Address;
+    const state = await this.chain.vaultQueueState(vault, clearingHouse);
+    if (!state.settled && (!state.navFresh || chainNow < state.startedAt + state.duration)) return;
+    const key = `${version}:${state.epoch}`;
+    if (this.activeQueueRuns.has(key)) return;
+    this.activeQueueRuns.add(key);
+    try {
+      const lease = await this.database.query<{ epoch: string }>(
+        `INSERT INTO public.keeper_vault_queue_runs(contract_version,epoch,status,lease_until)
+         VALUES($1,$2,'running',now()+interval '5 minutes')
+         ON CONFLICT(contract_version,epoch) DO UPDATE SET status='running',lease_until=now()+interval '5 minutes',last_error=NULL,updated_at=now()
+         WHERE keeper_vault_queue_runs.status!='completed' AND keeper_vault_queue_runs.lease_until < now()
+         RETURNING epoch`, [version, state.epoch.toString()]
+      );
+      if (!lease.rowCount) return;
+
+      let current = state;
+      let settleTransactionHash: Hex | null = null;
+      if (!current.settled) {
+        const settleHash = await this.chain.settleVaultQueue(vault);
+        settleTransactionHash = settleHash;
+        await this.database.query(
+          `UPDATE public.keeper_vault_queue_runs SET settle_transaction_hash=$3,updated_at=now()
+           WHERE contract_version=$1 AND epoch=$2`, [version, state.epoch.toString(), settleHash]
+        );
+        current = await this.chain.vaultQueueState(vault, clearingHouse);
+        if (!current.settled) throw new Error("settleQueue confirmed but the epoch is not marked settled on chain");
+      }
+
+      const nextEpochHash = await this.chain.startNextVaultEpoch(vault);
+      await this.database.query(
+        `UPDATE public.keeper_vault_queue_runs SET status='completed',next_epoch_transaction_hash=$3,
+         completed_at=now(),updated_at=now(),lease_until=now()
+         WHERE contract_version=$1 AND epoch=$2`, [version, state.epoch.toString(), nextEpochHash]
+      );
+      console.log(JSON.stringify({ event: "keeper_lp_epoch_advanced", version, epoch: state.epoch.toString(), settle_transaction_hash: settleTransactionHash, next_epoch_transaction_hash: nextEpochHash }));
+    } catch (error) {
+      const message = safeErrorMessage(error);
+      await this.database.query(
+        `UPDATE public.keeper_vault_queue_runs SET status='retry',last_error=$3,
+         lease_until=now()+interval '1 minute',updated_at=now()
+         WHERE contract_version=$1 AND epoch=$2`, [version, state.epoch.toString(), message]
+      );
+      throw error;
+    } finally {
+      this.activeQueueRuns.delete(key);
+    }
+  }
+
   private async discoverPositions(version: ContractVersion, latestBlock: bigint): Promise<void> {
     const cursor = await this.database.query<{ next_block: string }>(
       "SELECT next_block FROM public.keeper_cursors WHERE contract_version=$1", [version]
     );
-    let from = cursor.rows[0] ? BigInt(cursor.rows[0].next_block) : KEEPER_START_BLOCKS[version];
+    let from = cursor.rows[0] ? BigInt(cursor.rows[0].next_block)
+      : version === "jaguar" ? BigInt(this.config.JAGUAR_DEPLOYMENT_BLOCK ?? 0)
+      : KEEPER_START_BLOCKS[version];
     if (from > latestBlock + 1n) {
       // A cursor past the chain head cannot be real (for example, written by a
       // test against the wrong database) and would hide every new position.
@@ -291,7 +390,7 @@ export class PositionKeeper {
   }
 
   async status(): Promise<KeeperStatus> {
-    const [cursors, tracked, totals, recent, markets] = await Promise.all([
+    const [cursors, tracked, totals, recent, markets, lpQueues] = await Promise.all([
       this.database.query<{ contract_version: ContractVersion; next_block: string }>("SELECT contract_version, next_block FROM public.keeper_cursors"),
       this.database.query<{ contract_version: ContractVersion; count: string }>("SELECT contract_version, count(*)::text FROM public.keeper_positions GROUP BY contract_version"),
       this.database.query<{ reason: string; status: string; count: string }>("SELECT reason, status, count(*)::text FROM public.keeper_actions GROUP BY reason, status"),
@@ -299,7 +398,11 @@ export class PositionKeeper {
         `SELECT contract_version, trader, market_id, reason, status, transaction_hash, created_at
          FROM public.keeper_actions ORDER BY created_at DESC LIMIT ${RECENT_ACTION_LIMIT}`
       ),
-      this.database.query<{ symbol: string }>("SELECT symbol FROM public.markets")
+      this.database.query<{ symbol: string }>("SELECT symbol FROM public.markets"),
+      this.database.query<KeeperStatus["lp_queue_runs"][number] & { updated_at: Date }>(
+        `SELECT contract_version,epoch::text,status,settle_transaction_hash,next_epoch_transaction_hash,last_error,updated_at
+         FROM public.keeper_vault_queue_runs ORDER BY updated_at DESC LIMIT 20`
+      )
     ]);
     const symbols = new Map(markets.rows.map((row) => [marketId(row.symbol).toLowerCase(), row.symbol]));
     const confirmed = (reason: string) => Number(totals.rows.find((row) => row.reason === reason && row.status === "confirmed")?.count ?? 0);
@@ -332,7 +435,8 @@ export class PositionKeeper {
       }),
       recent_actions: recent.rows.map((row) => ({
         ...row, market: symbols.get(row.market_id.toLowerCase()) ?? null, created_at: row.created_at.toISOString()
-      }))
+      })),
+      lp_queue_runs: lpQueues.rows.map((row) => ({ ...row, updated_at: row.updated_at.toISOString() }))
     };
   }
 }

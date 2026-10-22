@@ -51,7 +51,7 @@ export function RainbowProviders({ children, queryClient }: { children: ReactNod
 
 export function RainbowWalletBridge() {
   const { address, chainId, isConnected } = useAccount();
-  const [contractVersion, setContractVersion] = useState<"goldlake" | "silverlake" | "amber" | "jasper" | "meadow" | "legacy-orion">("goldlake");
+  const [contractVersion, setContractVersion] = useState<"jaguar" | "goldlake" | "silverlake" | "amber" | "jasper" | "meadow" | "legacy-orion">("goldlake");
   const [protocolAddresses, setProtocolAddresses] = useState<{ usdg: Address; vault: Address; clearingHouse: Address; oracle: Address } | null>(null);
   const usdgAddress = protocolAddresses?.usdg ?? DEFAULT_USDG_ADDRESS;
   const { data: usdgBalance, refetch: refetchUsdG } = useReadContract({ address: usdgAddress, abi: erc20Abi, functionName: "balanceOf", args: [address ?? "0x0000000000000000000000000000000000000000"], query: { enabled: Boolean(address) && chainId === robinhoodChain.id } });
@@ -81,7 +81,7 @@ export function RainbowWalletBridge() {
   useEffect(() => {
     let active = true;
     let requestId = 0;
-    const loadProtocol = (version: "goldlake" | "silverlake" | "amber" | "jasper" | "meadow" | "legacy-orion") => {
+    const loadProtocol = (version: "jaguar" | "goldlake" | "silverlake" | "amber" | "jasper" | "meadow" | "legacy-orion") => {
       const currentRequest = ++requestId;
       void getProtocol({ data: { version } }).then((protocol) => {
       if (!active || currentRequest !== requestId) return;
@@ -95,12 +95,12 @@ export function RainbowWalletBridge() {
       }).catch((error) => console.warn("FloatSheets protocol address lookup failed", error));
     };
     const saved = window.localStorage.getItem("floatsheets-contract-version-v1");
-    const initialVersion = saved === "legacy-orion" ? "legacy-orion" : saved === "silverlake" ? "silverlake" : "goldlake";
+    const initialVersion = saved === "jaguar" ? "jaguar" : saved === "legacy-orion" ? "legacy-orion" : saved === "silverlake" ? "silverlake" : "goldlake";
     setContractVersion(initialVersion);
     loadProtocol(initialVersion);
     const onVersionChange = (event: Event) => {
       const selected = (event as CustomEvent<{ version?: string }>).detail?.version;
-      const version = selected === "legacy-orion" ? "legacy-orion" : selected === "silverlake" ? "silverlake" : "goldlake";
+      const version = selected === "jaguar" ? "jaguar" : selected === "legacy-orion" ? "legacy-orion" : selected === "silverlake" ? "silverlake" : "goldlake";
       setContractVersion(version);
       setProtocolAddresses(null);
       loadProtocol(version);
@@ -184,20 +184,25 @@ export function RainbowWalletBridge() {
       async vault() {
         if (!connected || !address || !publicClient) return null;
         if (!protocolAddresses) throw new Error("Trading configuration is still loading. Please try again.");
-        const [assets, shares, totalShares, lockedShares, availableLiquidity, navFresh, epoch, epochStartedAt, epochSettled, epochDuration, insuranceAssets] = await Promise.all([
+        const [assets, shares, totalShares, availableLiquidity, navFresh, insuranceAssets] = await Promise.all([
           publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "totalAssets" }),
           publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "balanceOf", args: [address] }),
           publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "totalShares" }),
-          publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "lockedWithdrawalShares", args: [address] }),
           publicClient.readContract({ address: protocolAddresses.clearingHouse, abi: clearingLiquidityAbi, functionName: "availableLiquidity" }),
-          contractVersion === "goldlake"
+          contractVersion === "goldlake" || contractVersion === "jaguar"
             ? publicClient.readContract({ address: protocolAddresses.clearingHouse, abi: clearingNavAbi, functionName: "navPricesFresh" })
             : Promise.resolve(true),
+          publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "insuranceAssets" })
+        ]);
+        if (contractVersion === "jaguar") {
+          return { assets: assets.toString(), shares: shares.toString(), lockedShares: "0", totalShares: totalShares.toString(), availableLiquidity: availableLiquidity.toString(), navFresh, epoch: "0", epochStartedAt: "0", epochSettled: true, epochDuration: "0", insuranceAssets: insuranceAssets.toString(), requests: [], instant: true };
+        }
+        const [lockedShares, epoch, epochStartedAt, epochSettled, epochDuration] = await Promise.all([
+          publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "lockedWithdrawalShares", args: [address] }),
           publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "queueEpoch" }),
           publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "queueEpochStartedAt" }),
           publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "queueEpochSettled" }),
-          publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "QUEUE_EPOCH_DURATION" }),
-          publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "insuranceAssets" })
+          publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "QUEUE_EPOCH_DURATION" })
         ]);
         const epochs = Array.from({length: Number(epoch) > 9 ? 10 : Number(epoch) + 1}, (_, i) => BigInt(epoch) - BigInt(i));
         const requests = await Promise.all(epochs.map(async (requestEpoch) => {

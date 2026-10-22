@@ -97,6 +97,13 @@ test("publishes Goldlake addresses by default and supports retired and legacy se
     lp_actions_locked_while_positions_open: false,
     lp_actions_queued_by_epoch: true
   });
+  const jaguar = await request(server).get("/v1/protocol").set("x-floatsheets-contract-version", "jaguar");
+  expect(jaguar.status).toBe(200);
+  expect(jaguar.body.contract_name).toBe("FloatSheets Jaguar");
+  expect(jaguar.body.oracle).toBe("0x3b626C2Cdb2682852d5410971c35c25979A3C2Df");
+  expect(jaguar.body.vault).toBe("0x1ED22D8f5a0762754178aDE4a71Ca731EF480dc3");
+  expect(jaguar.body.clearing_house).toBe("0x50672E55C5824ee757b929224d0341ADbFFac361");
+  expect(jaguar.body.lp_actions_queued_by_epoch).toBe(false);
   const meadow = await request(server).get("/v1/protocol").set("x-floatsheets-contract-version", "meadow");
   expect(meadow.body.contract_name).toBe("FloatSheets Meadow");
   expect(meadow.body.vault).toBe(config.MEADOW_FLOAT_VAULT_ADDRESS);
@@ -127,6 +134,13 @@ test("builds a real USDG approval transaction", async () => {
   expect(vaultDeposit.status).toBe(200);
   expect(vaultDeposit.body.transaction.to).toBe(config.GOLDLAKE_FLOAT_VAULT_ADDRESS);
   expect(vaultDeposit.body.transaction.data).toMatch(/^0x6e553f65/);
+
+  const jaguarDeposit = await request(server).post("/v1/protocol/transactions/vault-deposit")
+    .set("x-floatsheets-contract-version", "jaguar")
+    .send({ amountUsdg: "1000000", receiver: "0x1111111111111111111111111111111111111111" });
+  expect(jaguarDeposit.status).toBe(200);
+  expect(jaguarDeposit.body.transaction.to).toBe("0x1ED22D8f5a0762754178aDE4a71Ca731EF480dc3");
+  expect(jaguarDeposit.body.transaction.data).toMatch(/^0x6e553f65/);
 
   const vaultWithdraw = await request(server).post("/v1/protocol/transactions/vault-withdraw").send({
     shares: "1000000000000", receiver: "0x1111111111111111111111111111111111111111"

@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { pages } from "./pages";
 import { installWalletButton } from "@/lib/walletconnect";
-import { getClaims, getCloseTransaction, getFloatNews, getKeeperStatus, getSolvency, getStatus, getLiveMarket, getMarketHistory, getMarkets, getWeekendAllowance } from "@/lib/server-api";
+import { getClaims, getCloseTransaction, getFloatNews, getKeeperStatus, getProtocol, getSolvency, getStatus, getLiveMarket, getMarketHistory, getMarkets, getWeekendAllowance } from "@/lib/server-api";
 
-type DashboardContractVersion = "goldlake" | "silverlake" | "amber" | "meadow" | "legacy-orion";
+type DashboardContractVersion = "jaguar" | "goldlake" | "silverlake" | "amber" | "meadow" | "legacy-orion";
 type DashboardServerApi = {
+  getProtocol: (version: DashboardContractVersion) => Promise<any>;
   getMarkets: (version: DashboardContractVersion) => Promise<any>;
   getFloatNews: () => Promise<any>;
   getLiveMarket: (symbol: string, version: DashboardContractVersion) => Promise<any>;
@@ -91,6 +92,7 @@ export function FloatSheetsPage({ page }: { page: FloatPage }) {
     let fadeTimer: ReturnType<typeof setTimeout>;
     let removeWalletButton: (() => void) | undefined;
     const serverApi: DashboardServerApi = {
+      getProtocol: (version) => getProtocol({ data: { version } }),
       getMarkets: (version) => getMarkets({ data: { version } }),
       getFloatNews: () => getFloatNews(),
       getLiveMarket: (symbol, version) => getLiveMarket({ data: { symbol, version } }),

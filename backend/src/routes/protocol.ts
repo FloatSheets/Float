@@ -1,7 +1,7 @@
 import { Router } from "express";
 
 import type { AppConfig } from "../config";
-import { contractConfigForVersion, isGoldlakeConfigured, isSilverlakeConfigured } from "../config";
+import { contractConfigForVersion, isGoldlakeConfigured, isSilverlakeConfigured, isJaguarConfigured } from "../config";
 import { contractVersionFromRequest } from "../contract-version";
 
 export function createProtocolRouter(config: AppConfig): Router {
@@ -13,10 +13,14 @@ export function createProtocolRouter(config: AppConfig): Router {
       response.status(503).json({ error: "Goldlake contracts are not deployed or configured" });
       return;
     }
+    if (version === "jaguar" && !isJaguarConfigured(config)) {
+      response.status(503).json({ error: "Jaguar contracts are not deployed or configured" });
+      return;
+    }
     const versionConfig = contractConfigForVersion(config, version);
     response.json({
       contract_version: version,
-      contract_name: version === "goldlake" ? "FloatSheets Goldlake" : version === "silverlake" ? "FloatSheets Silverlake" : version === "amber" ? "FloatSheets Amber" : version === "jasper" ? "FloatSheets Jasper" : version === "meadow" ? "FloatSheets Meadow" : "FloatSheets Legacy Orion",
+      contract_name: version === "jaguar" ? "FloatSheets Jaguar" : version === "goldlake" ? "FloatSheets Goldlake" : version === "silverlake" ? "FloatSheets Silverlake" : version === "amber" ? "FloatSheets Amber" : version === "jasper" ? "FloatSheets Jasper" : version === "meadow" ? "FloatSheets Meadow" : "FloatSheets Legacy Orion",
       chain_id: config.RHC_ID,
       settlement_asset: "USDG",
       settlement_asset_address: config.USDG_ADDRESS,
@@ -27,7 +31,7 @@ export function createProtocolRouter(config: AppConfig): Router {
       quote_signer: config.QUOTE_SIGNER_ADDRESS,
       max_position_duration_seconds: version === "legacy-orion" ? null : 604800,
       lp_actions_locked_while_positions_open: version === "meadow",
-      lp_actions_queued_by_epoch: version !== "legacy-orion"
+      lp_actions_queued_by_epoch: version !== "legacy-orion" && version !== "jaguar"
     });
   });
 

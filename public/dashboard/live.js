@@ -5,7 +5,7 @@
   async function refreshMarkets(){
    try {
     const storedVersion=localStorage.getItem('floatsheets-contract-version-v1');
-    const version=storedVersion==='legacy-orion'?'legacy-orion':storedVersion==='silverlake'?'silverlake':'goldlake';
+    const version=storedVersion==='jaguar'?'jaguar':storedVersion==='legacy-orion'?'legacy-orion':storedVersion==='silverlake'?'silverlake':'goldlake';
     if(version==='goldlake'&&storedVersion!=='goldlake')localStorage.setItem('floatsheets-contract-version-v1','goldlake');
     const payload = await api.getMarkets(version);
     if (!Array.isArray(payload.markets) || !payload.markets.length) return;

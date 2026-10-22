@@ -24,7 +24,7 @@ function usdgDecimal(units: bigint): string {
 }
 
 type LiveMarketDependencies = { rpc: RpcTransport; clearingHouse: Address; oracle: Address };
-type VersionedLiveMarketDependencies = Partial<Record<'goldlake' | 'silverlake' | 'amber' | 'jasper' | 'meadow' | 'legacy-orion', LiveMarketDependencies>>;
+type VersionedLiveMarketDependencies = Partial<Record<'jaguar' | 'goldlake' | 'silverlake' | 'amber' | 'jasper' | 'meadow' | 'legacy-orion', LiveMarketDependencies>>;
 
 export function effectiveMaxTicketUsdg(backendCap: number | string, onchainCapE6: bigint): number {
   return Math.min(Number(backendCap), Number(onchainCapE6) / 1_000_000);
