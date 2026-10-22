@@ -9,6 +9,8 @@
 
 **USDG-settled synthetic equity perps on Robinhood Chain.** FloatSheets uses direct Uniswap V3 stock/USDG pools as live liquidity references for quote quality and risk limits, while USDG remains the sole collateral, PnL, fee, liquidation, and settlement asset.
 
+**TOKEN CA:** `0x4a67ea0d194058558f4926b6bf6b758ef8976675` ([View on Dexscreener](https://dexscreener.com/robinhood/0x4a67ea0d194058558f4926b6bf6b758ef8976675))
+
 ## Initial market configuration
 
 | Group | Markets | Leverage | Max ticket | Half-spread band |
