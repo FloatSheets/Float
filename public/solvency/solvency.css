@@ -1,0 +1,22 @@
+.solvency-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+.solvency-metric{border:1px solid #dce2ed;padding:22px;background:#fff;min-height:132px;display:flex;flex-direction:column;gap:10px}
+.solvency-metric small{font-size:13px;color:#6677a2}
+.solvency-metric strong{font-size:30px;font-weight:500;letter-spacing:-.04em;overflow-wrap:anywhere}
+.solvency-metric span{font-size:13px;line-height:1.5;color:#7a88a3}
+.solvency-metric.featured{background:var(--blue);border-color:var(--blue);color:#fff}
+.solvency-metric.featured small,.solvency-metric.featured span{color:#bac8e8}
+.solvency-links{display:flex;flex-wrap:wrap;gap:12px 24px;margin-top:20px}
+.solvency-link{font-size:14px;border-bottom:1px solid #c9d2e5;padding-bottom:3px}
+.solvency-table{margin-top:28px;border:1px solid #dce2ed}
+.solvency-table table{border-collapse:collapse;width:100%;white-space:nowrap}
+.solvency-table th{text-align:left;font-size:11px;font-weight:500;color:#6677a2;background:#f5f7fc;padding:12px 16px;border-bottom:1px solid #dce2ed}
+.solvency-table td{padding:14px 16px;font-size:14px;border-bottom:1px solid #edf0f6;vertical-align:middle}
+.solvency-table tbody tr:last-child td{border-bottom:0}
+.solvency-muted{font-size:12px;color:#8191af;margin-left:6px}
+.solvency-meter{display:inline-block;width:72px;height:6px;background:#e7ebf3;vertical-align:middle}
+.solvency-meter i{display:block;height:100%;background:#3fb68b}
+.solvency-meter.high i{background:#e6a93a}
+.solvency-meter.full i{background:#d1496b}
+.table-scroll{overflow-x:auto}
+@media(max-width:1000px){.solvency-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:520px){.solvency-grid{grid-template-columns:minmax(0,1fr)}.solvency-metric{min-height:0}.solvency-metric strong{font-size:26px}}

@@ -18,6 +18,8 @@ import { effectiveOraclePublishIntervalSeconds, OraclePublisher } from "./oracle
 import { createKeeperChain, PositionKeeper } from "./keeper/keeper";
 import { createKeeperRouter } from "./routes/keeper";
 import { createStatusRouter } from "./routes/status";
+import { createSolvencyRouter } from "./routes/solvency";
+import { SolvencyReader } from "./solvency/solvency";
 import { StatusMonitor } from "./status/status";
 import { createEmailAlertsRouter } from "./routes/email-alerts";
 import { LiquidationAlertService } from "./alerts/liquidation-alerts";
@@ -66,6 +68,14 @@ const statusMonitor = new StatusMonitor(db, {
   keeperStatus: () => keeper.status()
 });
 app.use("/v1/status", createStatusRouter(statusMonitor, config, db));
+// Solvency reports the current default deployment's contracts.
+const solvencyConfig = goldlakeConfig ?? silverlakeConfig ?? amberConfig;
+app.use("/v1/solvency", createSolvencyRouter(new SolvencyReader(db, rpc, {
+  usdg: config.USDG_ADDRESS as `0x${string}`,
+  vault: solvencyConfig.FLOAT_VAULT_ADDRESS as `0x${string}`,
+  clearingHouse: solvencyConfig.FLOAT_CLEARING_HOUSE_ADDRESS as `0x${string}`,
+  oracle: solvencyConfig.FLOAT_ORACLE_ADDRESS as `0x${string}`
+})));
 app.use("/v1/email-alerts", createEmailAlertsRouter(db, config));
 app.use("/v1/telegram-alerts", createTelegramAlertsRouter(db, config));
 app.use("/v1/news", createNewsRouter(db));
