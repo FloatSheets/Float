@@ -5,7 +5,7 @@ import type { Address } from "viem";
 import type { Hex } from "viem";
 import type { Pool } from "pg";
 
-import { contractConfigForVersion, isGoldlakeConfigured, isSilverlakeConfigured, type AppConfig } from "../config";
+import { contractConfigForVersion, isGoldlakeConfigured, isSilverlakeConfigured, type AppConfig, type ContractVersion } from "../config";
 import { contractVersionFromRequest } from "../contract-version";
 import {
   approveUsdG, cancelVaultWithdrawal, claimDeferredPayout, claimProtocolBalance, claimVaultDeposit, claimVaultWithdrawal, configureMarket, depositMargin, depositVault, enableMarket, liquidate, marketId, settleVaultQueue, startVaultQueueEpoch, withdrawMargin, withdrawVault
@@ -163,15 +163,15 @@ export function createProtocolTransactionsRouter(
   const router = Router();
   const versions = {
     ...(isGoldlakeConfigured(config) ? {
-      goldlake: createProtocolTransactionsRouterForConfig(contractConfigForVersion(config, "goldlake"), database, rpc, oraclePublisher)
+      goldlake: createProtocolTransactionsRouterForConfig(contractConfigForVersion(config, "goldlake"), database, rpc, oraclePublisher, "goldlake")
     } : {}),
     ...(isSilverlakeConfigured(config) ? {
-      silverlake: createProtocolTransactionsRouterForConfig(contractConfigForVersion(config, "silverlake"), database, rpc, oraclePublisher)
+      silverlake: createProtocolTransactionsRouterForConfig(contractConfigForVersion(config, "silverlake"), database, rpc, oraclePublisher, "silverlake")
     } : {}),
-    amber: createProtocolTransactionsRouterForConfig(contractConfigForVersion(config, "amber"), database, rpc, oraclePublisher),
-    jasper: createProtocolTransactionsRouterForConfig(contractConfigForVersion(config, "jasper"), database, rpc, oraclePublisher),
-    meadow: createProtocolTransactionsRouterForConfig(contractConfigForVersion(config, "meadow"), database, rpc, oraclePublisher),
-    "legacy-orion": createProtocolTransactionsRouterForConfig(contractConfigForVersion(config, "legacy-orion"), database, rpc, oraclePublisher)
+    amber: createProtocolTransactionsRouterForConfig(contractConfigForVersion(config, "amber"), database, rpc, oraclePublisher, "amber"),
+    jasper: createProtocolTransactionsRouterForConfig(contractConfigForVersion(config, "jasper"), database, rpc, oraclePublisher, "jasper"),
+    meadow: createProtocolTransactionsRouterForConfig(contractConfigForVersion(config, "meadow"), database, rpc, oraclePublisher, "meadow"),
+    "legacy-orion": createProtocolTransactionsRouterForConfig(contractConfigForVersion(config, "legacy-orion"), database, rpc, oraclePublisher, "legacy-orion")
   };
   router.use((request, response, next) => {
     const version = contractVersionFromRequest(request);
@@ -199,7 +199,8 @@ function createProtocolTransactionsRouterForConfig(
   config: AppConfig,
   database?: Pool,
   rpc?: RpcTransport,
-  oraclePublisher?: Pick<OraclePublisher, "ensureFreshMarket">
+  oraclePublisher?: Pick<OraclePublisher, "ensureFreshMarket">,
+  version: ContractVersion = "silverlake"
 ): Router {
   const router = Router();
   const masterAdmin = requireMasterAdmin(config);
@@ -359,6 +360,7 @@ function createProtocolTransactionsRouterForConfig(
       const onchainMarket = await readClearingMarket(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, id);
       if (onchainMarket.state !== 1) throw new Error("on-chain market is not active");
       if (requestedNotional > onchainMarket.maxPositionNotionalUsdg) throw new Error("quote notional exceeds on-chain market limit");
+      await oraclePublisher?.ensureFreshMarket(symbol, version);
       const oraclePrice = await readOraclePrice(rpc, config.FLOAT_ORACLE_ADDRESS as Address, id);
       const now = BigInt(Math.floor(Date.now() / 1_000));
       if (oraclePrice.sequence === 0n || now > oraclePrice.timestamp + BigInt(config.ORACLE_PRICE_MAX_AGE_SECONDS)) throw new Error("on-chain oracle price is stale");
@@ -500,6 +502,7 @@ function createProtocolTransactionsRouterForConfig(
       if (!marketRow.observed_at || (Date.now() - marketRow.observed_at.getTime()) / 1_000 > config.ORACLE_PRICE_MAX_AGE_SECONDS) throw new Error("market snapshot is stale");
       const onchainMarket = await readClearingMarket(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, id);
       if (onchainMarket.state === 0) throw new Error("on-chain market is unavailable");
+      await oraclePublisher?.ensureFreshMarket(symbol, version);
       const oraclePrice = await readOraclePrice(rpc, config.FLOAT_ORACLE_ADDRESS as Address, id);
       const now = BigInt(Math.floor(Date.now() / 1_000));
       if (oraclePrice.sequence === 0n || now > oraclePrice.timestamp + BigInt(config.ORACLE_PRICE_MAX_AGE_SECONDS)) throw new Error("on-chain oracle price is stale");

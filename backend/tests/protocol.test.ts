@@ -281,7 +281,7 @@ test("builds a trader quote and execution transaction without exposing the quote
     }
   };
   const refreshedMarkets: string[] = [];
-  const oraclePublisher = { ensureFreshMarket: async (symbol: string) => { refreshedMarkets.push(symbol); } };
+  const oraclePublisher = { ensureFreshMarket: async (symbol: string, version?: string) => { refreshedMarkets.push(`${version}:${symbol}`); } };
   const quoteApp = express();
   quoteApp.use(express.json());
   quoteApp.use("/v1/protocol/transactions", createProtocolTransactionsRouter(config, database, rpc, oraclePublisher));
@@ -299,7 +299,7 @@ test("builds a trader quote and execution transaction without exposing the quote
     expect(BigInt(response.body.quote.expiry) - BigInt(Math.floor(Date.now() / 1_000))).toBeLessThanOrEqual(15n);
     expect(response.body.signature).toMatch(/^0x[0-9a-f]{130}$/);
     expect(response.body.transaction.to).toBe(config.GOLDLAKE_FLOAT_CLEARING_HOUSE_ADDRESS);
-    expect(refreshedMarkets).toEqual([]);
+    expect(refreshedMarkets).toEqual(["goldlake:HIMS"]);
 
     const closeResponse = await request(quoteServer).post("/v1/protocol/transactions/close-quote").send({
       market: "HIMS", trader: "0x1111111111111111111111111111111111111111"
@@ -307,13 +307,14 @@ test("builds a trader quote and execution transaction without exposing the quote
     expect(closeResponse.status).toBe(200);
     expect(closeResponse.body.quote.sizeDeltaE18).toBe("-10000000000000000000");
     expect(closeResponse.body.transaction.to).toBe(config.GOLDLAKE_FLOAT_CLEARING_HOUSE_ADDRESS);
-    expect(refreshedMarkets).toEqual([]);
+    expect(refreshedMarkets).toEqual(["goldlake:HIMS", "goldlake:HIMS"]);
     circuitBroken = true;
     const breakerClose = await request(quoteServer).post("/v1/protocol/transactions/close-quote").send({
       market: "HIMS", trader: "0x1111111111111111111111111111111111111111"
     });
     expect(breakerClose.status).toBe(200);
     expect(breakerClose.body.quote.executionPriceE18).toBe("100000000000000000000");
+    expect(refreshedMarkets).toEqual(["goldlake:HIMS", "goldlake:HIMS", "goldlake:HIMS"]);
   } finally {
     await new Promise<void>((resolve, reject) => quoteServer.close((error) => error ? reject(error) : resolve()));
   }

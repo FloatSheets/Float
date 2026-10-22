@@ -4,7 +4,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import type { Pool } from "pg";
 
 import { loadConfig } from "../src/config";
-import { effectiveOraclePublishIntervalSeconds, OraclePublisher, shouldPublishGoldlakeMarket, snapshotTimeOnChain } from "../src/oracle/publisher";
+import { effectiveOraclePublishIntervalSeconds, oraclePublishRequired, OraclePublisher, shouldPublishGoldlakeMarket, snapshotTimeOnChain } from "../src/oracle/publisher";
 import type { RpcTransport } from "../src/chain/rpc";
 
 const key = "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
@@ -65,17 +65,28 @@ test("converts backend snapshot time into chain time when the server clock leads
 
 test("keeps oracle marks running for Goldlake close-only markets with open positions", () => {
   expect(shouldPublishGoldlakeMarket({
-    state: 2, status: "restricted", oracleTradable: false, longBaseE18: 1n, shortBaseE18: 0n
+    longBaseE18: 1n, shortBaseE18: 0n
   })).toBe(true);
   expect(shouldPublishGoldlakeMarket({
-    state: 2, status: "restricted", oracleTradable: false, longBaseE18: 0n, shortBaseE18: 0n
+    longBaseE18: 0n, shortBaseE18: 0n
   })).toBe(false);
   expect(shouldPublishGoldlakeMarket({
-    state: 1, status: "active", oracleTradable: true, longBaseE18: 0n, shortBaseE18: 0n
-  })).toBe(true);
+    longBaseE18: 0n, shortBaseE18: 0n
+  })).toBe(false);
 });
 
 test("caps scheduled attestations at sixty seconds", () => {
   expect(effectiveOraclePublishIntervalSeconds(110)).toBe(60);
   expect(effectiveOraclePublishIntervalSeconds(45)).toBe(45);
+});
+
+test("publishes on demand only for first mark, near expiry, or breaker changes", () => {
+  const currentMark = {
+    sequence: 5n, currentTimestamp: 1_000n, chainNow: 1_050n,
+    currentCircuitBroken: false, nextCircuitBroken: false
+  };
+  expect(oraclePublishRequired(currentMark)).toBe(false);
+  expect(oraclePublishRequired({ ...currentMark, sequence: 0n })).toBe(true);
+  expect(oraclePublishRequired({ ...currentMark, chainNow: 1_090n })).toBe(true);
+  expect(oraclePublishRequired({ ...currentMark, nextCircuitBroken: true })).toBe(true);
 });
