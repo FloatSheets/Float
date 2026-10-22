@@ -345,6 +345,13 @@
 
   function paintPnl(snapshot, portfolio){
     const realized = portfolio && portfolioPnlMode === 'realized';
+    if(realized&&snapshot.realizedUsdg==null){
+      const value=root.querySelector('#wallet-market-pnl');if(!value)return;
+      root.querySelector('#pnl-label').textContent='Realized PnL';value.replaceChildren(document.createTextNode('—'));value.removeAttribute('data-value');
+      value.classList.remove('positive','negative');root.querySelector('#pnl-percent').textContent='—';
+      root.querySelector('#pnl-caption').textContent=snapshot.historyError||'Trading history is unavailable right now. Your open positions are still shown below.';
+      root.querySelectorAll('[data-pnl-mode]').forEach(function(button){button.setAttribute('aria-pressed',String(button.dataset.pnlMode==='realized'));});return;
+    }
     const raw = BigInt(realized ? snapshot.realizedUsdg : snapshot.unrealizedUsdg);
     const denominator = realized ? snapshot.depositedUsdg : snapshot.activeMarginUsdg;
     const value = root.querySelector('#wallet-market-pnl');
