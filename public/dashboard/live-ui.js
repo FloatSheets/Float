@@ -422,6 +422,39 @@
     return '<section class="panel live-only-panel" id="live-vault-panel"><h2>'+(withdrawalsOnly?'Manage legacy liquidity':'Provide liquidity')+'</h2><p>'+(withdrawalsOnly?'View existing shares and queue withdrawals. New liquidity deposits are disabled for this version.':'Your USDG helps back all FloatSheets markets. Your vault share value changes as traders profit or lose.')+'</p><div id="live-vault-data"><p>Loading vault balances.</p></div></section>';
   }
 
+  function keeperPanel(){
+    return '<section class="panel live-only-panel keeper-panel" id="keeper-panel"><div class="panel-head"><h2>Protocol keeper</h2><span class="pill" id="keeper-state">CHECKING</span></div><div class="panel-body" id="keeper-data"><p>Loading keeper status.</p></div></section>';
+  }
+
+  function keeperEscape(value){ return String(value??'').replace(/[&<>"']/g,function(character){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character];}); }
+
+  function keeperAge(iso){
+    if(!iso) return 'not yet';
+    const seconds=Math.max(0,Math.round((Date.now()-new Date(iso).getTime())/1000));
+    return seconds<60?seconds+'s ago':Math.round(seconds/60)+'m ago';
+  }
+
+  async function renderKeeperContext(){
+    const target=root.querySelector('#keeper-data'),badge=root.querySelector('#keeper-state'),api=window.__FLOATSHEETS_SERVER_API__;
+    if(!target||!api?.getKeeperStatus) return;
+    try {
+      const status=await api.getKeeperStatus();
+      const tracked=status.deployments.reduce(function(sum,row){return sum+row.tracked_positions;},0);
+      const healthy=status.enabled&&!status.last_error&&status.last_run_finished_at&&(Date.now()-new Date(status.last_run_finished_at).getTime())<status.interval_seconds*4000;
+      if(badge){badge.textContent=!status.enabled?'PAUSED':healthy?'WATCHING':'DEGRADED';}
+      const actions=status.recent_actions.map(function(row){
+        const label=(row.reason==='expiry'?'Closed at 7-day expiry':'Liquidated below maintenance')+(row.market?' · '+keeperEscape(row.market):'');
+        const link=row.transaction_hash?'<a href="https://robinhoodchain.blockscout.com/tx/'+keeperEscape(row.transaction_hash)+'" target="_blank" rel="noreferrer">View transaction ↗</a>':'';
+        return '<div class="list-row"><div><strong>'+label+'</strong><p>'+keeperEscape(row.trader.slice(0,6)+'…'+row.trader.slice(-4))+' · '+new Date(row.created_at).toLocaleString()+' · '+keeperEscape(row.contract_version)+'</p></div><div>'+(row.status==='confirmed'?link:'<span class="pill">RETRYING</span>')+'</div></div>';
+      }).join('');
+      target.innerHTML='<div class="metric-grid"><div class="metric featured"><small>Positions watched</small><strong>'+tracked+'</strong><div class="metric-note">Across '+status.deployments.length+' deployments</div></div><div class="metric"><small>Liquidations</small><strong>'+status.totals.liquidations+'</strong><div class="metric-note">Below maintenance margin</div></div><div class="metric"><small>Expiry closes</small><strong>'+status.totals.expiries+'</strong><div class="metric-note">Positions past 7 days</div></div><div class="metric"><small>Keeper rewards</small><strong>'+(status.claimable_rewards_usdg===null?'—':displayUsdG(BigInt(status.claimable_rewards_usdg)))+'</strong><div class="metric-note"><span class="asset-ref"><img src="/usdg_logo.png" alt="USDG">USDG</span> · kept by the protocol</div></div></div><p class="info-note">FloatSheets runs its own keeper. Every '+status.interval_seconds+' seconds it checks each open position on Robinhood Chain and closes those that fall below maintenance margin or pass the 7-day limit, so losses never wait on third-party bots. Last check: '+keeperAge(status.last_run_finished_at)+'.</p>'+(actions?'<section class="queue-requests">'+actions+'</section>':'<div class="list-row"><div><strong>No closes needed</strong><p>Every watched position is above maintenance margin and inside its 7-day window.</p></div><span class="pill">ALL CLEAR</span></div>');
+    } catch(error) {
+      if(badge) badge.textContent='UNAVAILABLE';
+      target.innerHTML='<p>Keeper status is temporarily unavailable.</p>';
+      console.warn('FloatSheets keeper status failed',error);
+    }
+  }
+
   async function renderVaultContext(){
     const target=root.querySelector('#live-vault-data');
     root.querySelector('#connect-to-vault')?.addEventListener('click',function(){document.getElementById('account-button')?.click();});
@@ -484,7 +517,7 @@
     }
     if(view==='portfolio') root.innerHTML='<div class="page-heading"><div><h1>Portfolio.</h1><p>Your positions and available USDG.</p></div></div><section class="panel live-only-panel"><h2>'+ (walletState()?.connected?'Your portfolio':'Connect your wallet') +'</h2><div id="wallet-portfolio"><p>'+ (walletState()?.connected?'Loading your positions.':'Connect on Robinhood Chain to see your USDG and positions.') +'</p></div></section>';
     if(view==='oracle') root.innerHTML='<div class="page-heading"><div><h1>Prices &amp; risk.</h1><p>See current prices and whether each market is open for trading.</p></div></div><section class="panel markets-panel"><div class="panel-head"><h2>Market status</h2><span class="pill">LIVE DATA</span></div><div class="table-scroll"><table><thead><tr><th>Market</th><th>Price</th><th>Price range</th><th>Leverage</th><th>Status</th></tr></thead><tbody>'+markets.map(function(m){return '<tr><td>'+m.symbol+'</td><td>$'+money(m.price)+'</td><td>±'+money(m.band*100)+'%</td><td>'+m.max+'×</td><td>'+stateBadge(m.state)+'</td></tr>';}).join('')+'</tbody></table></div></section>';
-    if(view==='vault') root.innerHTML='<div class="page-heading"><div><h1>Liquidity vault.</h1><p>Provide USDG liquidity for FloatSheets markets.</p></div></div>'+vaultPanel();
+    if(view==='vault') root.innerHTML='<div class="page-heading"><div><h1>Liquidity vault.</h1><p>Provide USDG liquidity for FloatSheets markets.</p></div></div>'+vaultPanel()+keeperPanel();
     if(view==='listings') root.innerHTML='<div class="page-heading"><div><h1>Market listings.</h1><p>Available markets on Robinhood Chain.</p></div></div><section class="panel markets-panel"><div class="table-scroll"><table><thead><tr><th>Market</th><th>Settlement</th><th>Price</th><th>Status</th></tr></thead><tbody>'+markets.map(function(m){return '<tr><td>'+m.symbol+'</td><td><span class="asset-ref"><img src="/usdg_logo.png" alt="USDG">USDG</span></td><td>$'+money(m.price)+'</td><td>'+stateBadge(m.state)+'</td></tr>';}).join('')+'</tbody></table></div></section>';
     if(view==='settings') root.querySelectorAll('.panel').forEach(function(panel){if(!panel.querySelector('#preferences-form')) panel.remove();});
   }
@@ -693,7 +726,7 @@
     window.__FLOATSHEETS_INSTALL_WALLET__?.();
     if(!legacyTradingDisabled) bindTradeTicket();
     if(!legacyTradingDisabled) void renderWalletContext();
-    if(location.hash.slice(1)==='vault') void renderVaultContext();
+    if(location.hash.slice(1)==='vault') { void renderVaultContext(); void renderKeeperContext(); }
     if(!legacyTradingDisabled) { scheduleChartRefresh(); scheduleWalletRefresh(); }
     else { clearInterval(window.__FLOATSHEETS_CHART_REFRESH_TIMER__); clearInterval(window.__FLOATSHEETS_WALLET_REFRESH_TIMER__); }
   };

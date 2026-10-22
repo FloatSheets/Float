@@ -45,6 +45,7 @@ export const getMarkets = createServerFn({ method: "GET" }).validator((input: un
 export const getMarket = createServerFn({ method: "GET" }).validator(symbolInput).handler(({ data }): Promise<any> => getJson(`/v1/markets/${data}`));
 export const getMarketQuotes = createServerFn({ method: "GET" }).validator(symbolInput).handler(({ data }): Promise<any> => getJson(`/v1/markets/${data}/quotes`));
 export const getMarketRisk = createServerFn({ method: "GET" }).validator(symbolInput).handler(({ data }): Promise<any> => getJson(`/v1/markets/${data}/risk`));
+export const getKeeperStatus = createServerFn({ method: "GET" }).handler((): Promise<any> => getJson("/v1/keeper", "goldlake"));
 
 type VersionedMarketInput = { symbol: string; version: ContractVersion };
 function versionedMarketInput(input: unknown): VersionedMarketInput {

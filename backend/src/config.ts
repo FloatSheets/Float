@@ -31,6 +31,11 @@ const schema = z.object({
   MASTER_ADMIN_KEY: z.string().min(32),
   USDG_ADDRESS: address,
   FRONTEND_URL: z.url(),
+  KEEPER_ENABLED: z.enum(["true", "false"]).default("true"),
+  KEEPER_INTERVAL_SECONDS: z.coerce.number().int().min(10).max(3_600).default(30),
+  // Optional dedicated keeper wallet. Defaults to the oracle publisher wallet;
+  // both run sequentially in one loop so they never race for a nonce.
+  KEEPER_PRIVATE_KEY: z.string().regex(/^0x[a-fA-F0-9]{64}$/, "must be a 32-byte private key").optional(),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]),
   MARKET_POLL_INTERVAL_MS: z.coerce.number().int().min(1_000),
   NODE_ENV: z.enum(["development", "test", "production"]),
