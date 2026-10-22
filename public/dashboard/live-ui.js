@@ -367,92 +367,94 @@
   }
 
   const tradeCardThemes={
-    current:{label:'Ocean',brand:'#4de0b1',start:'#07111e',middle:'#102c39',end:'#061018',shape:'waves'},
-    aurora:{label:'Aurora',brand:'#b4a0ff',start:'#100d27',middle:'#183646',end:'#07121d',shape:'rings'},
-    ember:{label:'Ember',brand:'#ffb66e',start:'#271018',middle:'#432523',end:'#10111c',shape:'diagonal'},
-    mono:{label:'Mono',brand:'#d8e2ed',start:'#151a20',middle:'#30343a',end:'#0c1015',shape:'grid'}
+    current:{label:'Black',background:'#101113',foreground:'#f6f6f4',muted:'#97999d',line:'#ffffff1c'},
+    navy:{label:'Navy',background:'#14254a',foreground:'#f5f6fb',muted:'#a9b7d1',line:'#ffffff26'},
+    plum:{label:'Plum',background:'#322335',foreground:'#fcf5fa',muted:'#c0a9bd',line:'#ffffff26'},
+    paper:{label:'Ivory',background:'#f2efe7',foreground:'#171a20',muted:'#64656a',line:'#171a2026'}
   };
+  let tradeCardLogoPromise;
+  function loadTradeCardLogo(){
+    if(!tradeCardLogoPromise)tradeCardLogoPromise=new Promise(function(resolve,reject){
+      const logo=new Image();logo.onload=function(){resolve(logo);};logo.onerror=function(){tradeCardLogoPromise=null;reject(new Error('Could not load the FloatSheets logo. Please try again.'));};logo.src='/assets/floatsheets-mark.png';
+    });
+    return tradeCardLogoPromise;
+  }
 
-  function createTradeShareCard(position,themeName,backgroundImage){
-    const width=1600,height=900,canvas=document.createElement('canvas');
-    canvas.width=width;canvas.height=height;
-    const context=canvas.getContext('2d');
-    if(!context) throw new Error('This browser cannot create the trade image.');
+  function createTradeShareCard(position,themeName,backgroundImage,logo){
+    const width=720,height=420,canvas=document.createElement('canvas');
+    canvas.width=width*2;canvas.height=height*2;
+    const ctx=canvas.getContext('2d');
+    if(!ctx)throw new Error('This browser cannot create the trade image.');
+    ctx.scale(2,2);
+    const theme=tradeCardThemes[themeName]||tradeCardThemes.current;
+    const light=!backgroundImage&&themeName==='paper';
+    const foreground=backgroundImage?'#ffffff':theme.foreground,muted=backgroundImage?'#d1d2d5':theme.muted;
     const pnl=BigInt(position.pnlUsdg),margin=BigInt(position.marginUsdg),size=BigInt(position.sizeE18);
     const entry=BigInt(position.entryPriceE18),mark=position.markPriceE18?BigInt(position.markPriceE18):entry;
-    const isLong=size>0n,positive=pnl>=0n,accent=positive?'#54e0ad':'#ff7387',theme=tradeCardThemes[themeName]||tradeCardThemes.current;
-    const price=function(raw){return '$'+(Number(raw)/1e18).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4});};
-    const amount=function(raw){return (Number(raw)/1e6).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});};
-    const pnlText=(pnl>0n?'+':pnl<0n?'−':'')+'$'+amount(pnl<0n?-pnl:pnl);
-    const notional=mark* (size<0n?-size:size) / 10n**30n;
-    const leverage=margin>0n?Number(notional)/Number(margin):0;
-    const contractNames={jaguar:'JAGUAR',goldlake:'GOLDLAKE',silverlake:'SILVERLAKE',amber:'AMBER',jasper:'JASPER',meadow:'MEADOW','legacy-orion':'LEGACY ORION'};
-    const version=contractNames[selectedContractVersion()]||'FLOATSHEETS';
+    const notional=mark*(size<0n?-size:size)/10n**30n;
+    const accent=pnl<0n?(light?'#c83251':'#ff7f98'):(light?'#087b54':'#54e4ad');
+    const amount=function(raw){const value=Number(raw)/1e6;return value.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:Math.abs(value)<1?6:2});};
+    const price=function(raw){return '$'+(Number(raw)/1e18).toLocaleString('en-US',{maximumFractionDigits:4,minimumFractionDigits:2});};
+    const text=function(value,x,y,font,color,maxWidth){
+      ctx.fillStyle=color;let pixels=font;ctx.font='500 '+pixels+'px Arial';
+      while(maxWidth&&ctx.measureText(value).width>maxWidth&&pixels>12){pixels--;ctx.font='500 '+pixels+'px Arial';}
+      ctx.fillText(value,x,y);
+    };
+    ctx.fillStyle=theme.background;ctx.fillRect(0,0,width,height);
     if(backgroundImage){
-      const scale=Math.max(width/backgroundImage.width,height/backgroundImage.height),cropWidth=width/scale,cropHeight=height/scale;
-      context.drawImage(backgroundImage,(backgroundImage.width-cropWidth)/2,(backgroundImage.height-cropHeight)/2,cropWidth,cropHeight,0,0,width,height);
-      context.fillStyle='#061018b8';context.fillRect(0,0,width,height);
-      const photoShade=context.createLinearGradient(0,0,width,height);photoShade.addColorStop(0,'#07111e99');photoShade.addColorStop(1,'#061018cc');context.fillStyle=photoShade;context.fillRect(0,0,width,height);
-    }else{
-      const gradient=context.createLinearGradient(0,0,width,height);gradient.addColorStop(0,theme.start);gradient.addColorStop(.58,theme.middle);gradient.addColorStop(1,theme.end);
-      context.fillStyle=gradient;context.fillRect(0,0,width,height);
+      const scale=Math.max(width/backgroundImage.width,height/backgroundImage.height),cw=width/scale,ch=height/scale;
+      ctx.drawImage(backgroundImage,(backgroundImage.width-cw)/2,(backgroundImage.height-ch)/2,cw,ch,0,0,width,height);
+      const shade=ctx.createLinearGradient(0,0,width,height);shade.addColorStop(0,'#08090ce8');shade.addColorStop(.6,'#08090c88');shade.addColorStop(1,'#08090cb8');ctx.fillStyle=shade;ctx.fillRect(0,0,width,height);
     }
-    const glow=context.createRadialGradient(1260,180,10,1260,180,600);glow.addColorStop(0,positive?'#1d796055':'#932e4650');glow.addColorStop(1,'#06101800');context.fillStyle=glow;context.fillRect(700,0,900,640);
-    context.strokeStyle='#ffffff12';context.lineWidth=1;
-    if(theme.shape==='rings'){
-      context.strokeStyle=theme.brand+'24';context.lineWidth=2;for(let radius=150;radius<800;radius+=90){context.beginPath();context.arc(1300,420,radius,0,Math.PI*2);context.stroke();}
-    }else if(theme.shape==='diagonal'){
-      context.strokeStyle=theme.brand+'1c';context.lineWidth=3;for(let offset=-900;offset<1900;offset+=95){context.beginPath();context.moveTo(offset,900);context.lineTo(offset+650,0);context.stroke();}
-    }else if(theme.shape==='waves'){
-      context.strokeStyle=theme.brand+'24';context.lineWidth=3;for(let line=0;line<8;line++){context.beginPath();for(let x=650;x<=1600;x+=20){const y=370+line*46+Math.sin(x/130+line*.7)*34;if(x===650)context.moveTo(x,y);else context.lineTo(x,y);}context.stroke();}
-    }else{
-      context.strokeStyle='#ffffff16';context.lineWidth=1;for(let x=80;x<width;x+=80){context.beginPath();context.moveTo(x,360);context.lineTo(x,790);context.stroke();}for(let y=360;y<800;y+=72){context.beginPath();context.moveTo(80,y);context.lineTo(1520,y);context.stroke();}
-    }
-    context.fillStyle=theme.brand;context.beginPath();context.arc(95,105,10,0,Math.PI*2);context.arc(122,86,7,0,Math.PI*2);context.arc(125,123,7,0,Math.PI*2);context.fill();
-    context.fillStyle='#f4f8ff';context.font='700 34px Arial';context.fillText('FLOATSHEETS',155,116);
-    context.fillStyle='#8ea5b6';context.font='600 20px Arial';context.textAlign='right';context.fillText(version+' · POSITION SNAPSHOT',1515,108);context.textAlign='left';
-    context.fillStyle='#9db3c3';context.font='600 22px Arial';context.fillText('OPEN POSITION',90,210);
-    context.fillStyle='#f4f8ff';context.font='700 92px Arial';context.fillText(position.symbol,85,310);
-    context.fillStyle=isLong?'#68dfb6':'#ff9ba7';context.font='700 24px Arial';context.fillText((isLong?'LONG':'SHORT')+'  ·  '+leverage.toFixed(1)+'× LEVERAGE',90,350);
-    context.fillStyle=accent;context.font='700 92px Arial';context.fillText(pnlText,90,510);
-    context.fillStyle='#9db3c3';context.font='500 22px Arial';context.fillText('UNREALIZED PNL · USDG',95,555);
-    context.fillStyle=accent;context.font='600 24px Arial';context.fillText((margin>0n?(Number(pnl)*100/Number(margin)).toFixed(2):'0.00')+'% ON MARGIN',95,600);
-    const x0=175,y0=718,x1=1425,y1=690+(mark>=entry?-115:115);
-    context.strokeStyle=accent;context.lineWidth=8;context.lineCap='round';context.beginPath();context.moveTo(x0,y0);context.lineTo(x1,y1);context.stroke();
-    context.fillStyle=accent;context.beginPath();context.arc(x0,y0,11,0,Math.PI*2);context.arc(x1,y1,15,0,Math.PI*2);context.fill();
-    context.fillStyle='#a9bdca';context.font='600 19px Arial';context.fillText('ENTRY',x0-28,y0+46);context.textAlign='right';context.fillText(position.stale?'LAST MARK · DELAYED':'MARK',x1+30,y1+46);context.textAlign='left';
-    context.fillStyle='#f3f7fb';context.font='600 25px Arial';context.fillText(price(entry),x0-28,y0+83);context.textAlign='right';context.fillText(price(mark),x1+30,y1+83);context.textAlign='left';
-    context.fillStyle='#a9bdca';context.font='500 20px Arial';context.fillText('MARGIN  '+amount(margin)+' USDG',90,840);
-    context.textAlign='right';context.fillText(new Intl.DateTimeFormat(undefined,{dateStyle:'medium',timeStyle:'short'}).format(new Date()),1510,840);context.textAlign='left';
-    context.fillStyle='#728998';context.font='500 17px Arial';context.fillText('Synthetic exposure. USDG settled. Position risk remains with the trader.',90,875);
+    text(position.symbol,32,61,30,foreground,340);
+    const side=size>0n?'Long':'Short';
+    text(side+' / '+(margin>0n?Number(notional)/Number(margin):0).toFixed(1)+'×',33,88,14,muted);
+    ctx.save();ctx.filter=light?'none':'brightness(0) invert(1)';ctx.drawImage(logo,526,29,32,32);ctx.restore();
+    text('FloatSheets',564,52,20,foreground);
+    ctx.fillStyle=backgroundImage?'#ffffff33':theme.line;ctx.fillRect(32,111,656,1);
+    text('Margin',33,149,13,muted);text(amount(margin)+' USDG',33,175,18,foreground,230);
+    text('Position size',33,216,13,muted);text(amount(notional)+' USDG',33,242,18,foreground,230);
+    ctx.textAlign='right';
+    text('Unrealized PnL · USDG',687,150,13,muted);
+    const pnlText=(pnl>0n?'+':pnl<0n?'−':'')+amount(pnl<0n?-pnl:pnl);
+    text(pnlText,690,232,64,accent,430);
+    const pct=margin>0n?Number(pnl)*100/Number(margin):null;
+    text(pct===null?'—':(pct>0?'+':'')+pct.toLocaleString('en-US',{maximumFractionDigits:3})+'%',687,265,23,accent);
+    ctx.textAlign='left';
+    ctx.fillStyle=backgroundImage?'#ffffff33':theme.line;ctx.fillRect(32,307,656,1);
+    text('Entry price',33,338,12,muted);text(price(entry),33,365,19,foreground,250);
+    ctx.textAlign='right';text(position.stale?'Last mark · delayed':'Mark price',687,338,12,muted);text(price(mark),687,365,19,foreground,250);
+    text('floatsheets.app',687,399,11,muted);ctx.textAlign='left';
     return canvas;
   }
 
-  function openTradeShare(position){
+  async function openTradeShare(position){
+    let logo;
+    try{logo=await loadTradeCardLogo();}catch(error){showActionModal('Could not create trade image',error.message);return;}
     let canvas,themeName='current',backgroundImage=null;
-    try{canvas=createTradeShareCard(position,themeName,backgroundImage);}catch(error){showActionModal('Could not create trade image',error instanceof Error?error.message:'Please try again.');return;}
+    try{canvas=createTradeShareCard(position,themeName,backgroundImage,logo);}catch(error){showActionModal('Could not create trade image',error instanceof Error?error.message:'Please try again.');return;}
     const overlay=document.createElement('div');overlay.className='trade-share-overlay';overlay.setAttribute('role','dialog');overlay.setAttribute('aria-modal','true');overlay.setAttribute('aria-label','Share trade snapshot');
     const image=document.createElement('img');image.className='trade-share-preview';image.alt='FloatSheets '+position.symbol+' position snapshot';image.src=canvas.toDataURL('image/png');
     const editor=document.createElement('div');editor.className='trade-share-editor';
     const themeLabel=document.createElement('strong');themeLabel.textContent='Choose a style';editor.append(themeLabel);
     const themes=document.createElement('div');themes.className='trade-share-themes';
-    function redraw(){canvas=createTradeShareCard(position,themeName,backgroundImage);image.src=canvas.toDataURL('image/png');}
+    function redraw(){canvas=createTradeShareCard(position,themeName,backgroundImage,logo);image.src=canvas.toDataURL('image/png');}
     Object.keys(tradeCardThemes).forEach(function(name){
       const option=document.createElement('button');option.type='button';option.className='trade-share-theme';option.dataset.theme=name;option.textContent=tradeCardThemes[name].label;option.setAttribute('aria-pressed',String(name===themeName));
-      option.style.setProperty('--theme-start',tradeCardThemes[name].start);option.style.setProperty('--theme-middle',tradeCardThemes[name].middle);option.style.setProperty('--theme-brand',tradeCardThemes[name].brand);
+      option.style.setProperty('--theme-background',tradeCardThemes[name].background);option.style.setProperty('--theme-foreground',tradeCardThemes[name].foreground);
       option.addEventListener('click',function(){themeName=name;themes.querySelectorAll('[data-theme]').forEach(function(item){item.setAttribute('aria-pressed',String(item.dataset.theme===name));});redraw();});themes.append(option);
     });
     editor.append(themes);
     const uploadRow=document.createElement('div');uploadRow.className='trade-share-photo-row';
     const uploadLabel=document.createElement('label');uploadLabel.className='secondary-btn';uploadLabel.textContent='Add your photo';
     const upload=document.createElement('input');upload.type='file';upload.accept='image/png,image/jpeg,image/webp';upload.setAttribute('aria-label','Choose a background photo');uploadLabel.append(upload);
-    const photoNote=document.createElement('span');photoNote.textContent='Optional. Your photo stays in this browser and is only included in the exported image.';uploadRow.append(uploadLabel,photoNote);
+    const photoNote=document.createElement('span');photoNote.textContent='JPG, PNG or WebP · up to 8 MB';uploadRow.append(uploadLabel,photoNote);
     upload.addEventListener('change',function(){
       const file=upload.files?.[0];if(!file)return;
       if(!['image/png','image/jpeg','image/webp'].includes(file.type)||file.size>8*1024*1024){photoNote.textContent='Choose a PNG, JPG, or WebP image under 8 MB.';upload.value='';return;}
-      const reader=new FileReader();reader.onerror=function(){photoNote.textContent='Could not read that photo. Try another image.';};reader.onload=function(){const photo=new Image();photo.onload=function(){backgroundImage=photo;photoNote.textContent='Custom photo added. It has not been uploaded.';redraw();};photo.onerror=function(){photoNote.textContent='Could not open that photo. Try another image.';};photo.src=String(reader.result);};reader.readAsDataURL(file);
+      const reader=new FileReader();reader.onerror=function(){photoNote.textContent='Could not read that photo. Try another image.';};reader.onload=function(){const photo=new Image();photo.onload=function(){backgroundImage=photo;photoNote.textContent='Photo added';redraw();};photo.onerror=function(){photoNote.textContent='Could not open that photo. Try another image.';};photo.src=String(reader.result);};reader.readAsDataURL(file);
     });
-    const removePhoto=document.createElement('button');removePhoto.type='button';removePhoto.className='trade-share-reset';removePhoto.textContent='Remove photo';removePhoto.addEventListener('click',function(){backgroundImage=null;upload.value='';photoNote.textContent='Optional. Your photo stays in this browser and is only included in the exported image.';redraw();});uploadRow.append(removePhoto);editor.append(uploadRow);
+    const removePhoto=document.createElement('button');removePhoto.type='button';removePhoto.className='trade-share-reset';removePhoto.textContent='Remove photo';removePhoto.addEventListener('click',function(){backgroundImage=null;upload.value='';photoNote.textContent='JPG, PNG or WebP · up to 8 MB';redraw();});uploadRow.append(removePhoto);editor.append(uploadRow);
     const actions=document.createElement('div');actions.className='trade-share-actions';
     const download=document.createElement('button');download.type='button';download.className='secondary-btn';download.textContent='Download PNG';
     download.addEventListener('click',function(){const link=document.createElement('a');link.download='floatsheets-'+position.symbol.toLowerCase()+'-trade.png';link.href=image.src;link.click();});
@@ -465,10 +467,11 @@
         else {const link=document.createElement('a');link.download=file.name;link.href=URL.createObjectURL(blob);link.click();setTimeout(function(){URL.revokeObjectURL(link.href);},1000);share.textContent='Image downloaded';}
       }catch(error){if(error?.name!=='AbortError')showActionModal('Could not share image',error instanceof Error?error.message:'Please download the image instead.');}
     });
+    const heading=document.createElement('div');heading.className='trade-share-heading';const title=document.createElement('strong');title.textContent='Share position';heading.append(title);
     const close=document.createElement('button');close.type='button';close.className='trade-share-close';close.setAttribute('aria-label','Close share preview');close.textContent='×';
     close.addEventListener('click',function(){overlay.remove();});overlay.addEventListener('click',function(event){if(event.target===overlay)overlay.remove();});
     overlay.addEventListener('keydown',function(event){if(event.key==='Escape')overlay.remove();});
-    actions.append(download,share);const panel=document.createElement('section');panel.className='trade-share-panel';panel.append(close,image,editor,actions);overlay.append(panel);document.body.append(overlay);close.focus();
+    actions.append(download,share);const panel=document.createElement('section');panel.className='trade-share-panel';heading.append(close);panel.append(heading,image,editor,actions);overlay.append(panel);document.body.append(overlay);close.focus();
   }
 
   async function renderWalletContext(){
