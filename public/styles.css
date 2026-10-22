@@ -154,3 +154,4 @@ section#faq .fs-faq-item{padding-left:28px;padding-right:28px}
 section#faq .fs-faq-item summary{font-size:18px;gap:16px}
 section#faq .fs-faq-item p{max-width:100%;font-size:15px;padding-top:16px}
 }
+.hero-token-ca{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;margin-top:24px;color:#fff;font:500 13px/1.4 'Inter Display',Arial,sans-serif;letter-spacing:.04em;text-transform:uppercase}.hero-token-ca code{font:500 12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:0;text-transform:none;color:#fff;background:#153c92b8;padding:8px 10px;border:1px solid #ffffff50;border-radius:3px}
