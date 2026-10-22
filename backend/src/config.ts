@@ -31,6 +31,9 @@ const schema = z.object({
   MASTER_ADMIN_KEY: z.string().min(32),
   USDG_ADDRESS: address,
   FRONTEND_URL: z.url(),
+  HALT_FEED_ENABLED: z.enum(["true", "false"]).default("true"),
+  HALT_FEED_URL: z.url().default("https://www.nasdaqtrader.com/rss.aspx?feed=tradehalts"),
+  HALT_POLL_INTERVAL_SECONDS: z.coerce.number().int().min(15).max(3_600).default(60),
   KEEPER_ENABLED: z.enum(["true", "false"]).default("true"),
   KEEPER_INTERVAL_SECONDS: z.coerce.number().int().min(10).max(3_600).default(30),
   // Optional dedicated keeper wallet. Defaults to the oracle publisher wallet;

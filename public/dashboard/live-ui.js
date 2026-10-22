@@ -426,7 +426,7 @@
     return '<section class="panel live-only-panel keeper-panel" id="keeper-panel"><div class="panel-head"><h2>Protocol keeper</h2><span class="pill" id="keeper-state">CHECKING</span></div><div class="panel-body" id="keeper-data"><p>Loading keeper status.</p></div></section>';
   }
 
-  function keeperEscape(value){ return String(value??'').replace(/[&<>"']/g,function(character){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character];}); }
+  function escapeHtml(value){ return String(value??'').replace(/[&<>"']/g,function(character){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character];}); }
 
   function keeperAge(iso){
     if(!iso) return 'not yet';
@@ -443,9 +443,9 @@
       const healthy=status.enabled&&!status.last_error&&status.last_run_finished_at&&(Date.now()-new Date(status.last_run_finished_at).getTime())<status.interval_seconds*4000;
       if(badge){badge.textContent=!status.enabled?'PAUSED':healthy?'WATCHING':'DEGRADED';}
       const actions=status.recent_actions.map(function(row){
-        const label=(row.reason==='expiry'?'Closed at 7-day expiry':'Liquidated below maintenance')+(row.market?' · '+keeperEscape(row.market):'');
-        const link=row.transaction_hash?'<a href="https://robinhoodchain.blockscout.com/tx/'+keeperEscape(row.transaction_hash)+'" target="_blank" rel="noreferrer">View transaction ↗</a>':'';
-        return '<div class="list-row"><div><strong>'+label+'</strong><p>'+keeperEscape(row.trader.slice(0,6)+'…'+row.trader.slice(-4))+' · '+new Date(row.created_at).toLocaleString()+' · '+keeperEscape(row.contract_version)+'</p></div><div>'+(row.status==='confirmed'?link:'<span class="pill">RETRYING</span>')+'</div></div>';
+        const label=(row.reason==='expiry'?'Closed at 7-day expiry':'Liquidated below maintenance')+(row.market?' · '+escapeHtml(row.market):'');
+        const link=row.transaction_hash?'<a href="https://robinhoodchain.blockscout.com/tx/'+escapeHtml(row.transaction_hash)+'" target="_blank" rel="noreferrer">View transaction ↗</a>':'';
+        return '<div class="list-row"><div><strong>'+label+'</strong><p>'+escapeHtml(row.trader.slice(0,6)+'…'+row.trader.slice(-4))+' · '+new Date(row.created_at).toLocaleString()+' · '+escapeHtml(row.contract_version)+'</p></div><div>'+(row.status==='confirmed'?link:'<span class="pill">RETRYING</span>')+'</div></div>';
       }).join('');
       target.innerHTML='<div class="metric-grid"><div class="metric featured"><small>Positions watched</small><strong>'+tracked+'</strong><div class="metric-note">Across '+status.deployments.length+' deployments</div></div><div class="metric"><small>Liquidations</small><strong>'+status.totals.liquidations+'</strong><div class="metric-note">Below maintenance margin</div></div><div class="metric"><small>Expiry closes</small><strong>'+status.totals.expiries+'</strong><div class="metric-note">Positions past 7 days</div></div><div class="metric"><small>Keeper rewards</small><strong>'+(status.claimable_rewards_usdg===null?'—':displayUsdG(BigInt(status.claimable_rewards_usdg)))+'</strong><div class="metric-note"><span class="asset-ref"><img src="/usdg_logo.png" alt="USDG">USDG</span> · kept by the protocol</div></div></div><p class="info-note">FloatSheets runs its own keeper. Every '+status.interval_seconds+' seconds it checks each open position on Robinhood Chain and closes those that fall below maintenance margin or pass the 7-day limit, so losses never wait on third-party bots. Last check: '+keeperAge(status.last_run_finished_at)+'.</p>'+(actions?'<section class="queue-requests">'+actions+'</section>':'<div class="list-row"><div><strong>No closes needed</strong><p>Every watched position is above maintenance margin and inside its 7-day window.</p></div><span class="pill">ALL CLEAR</span></div>');
     } catch(error) {
@@ -609,6 +609,16 @@
     value.className=change>=0?'positive':'negative';
     value.textContent=(change>=0?'+':'')+change.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4})+'%';
   }
+  function paintExchangeHalt(halt){
+    const stats=root.querySelector('.chart-stats');
+    if(!stats)return;
+    let notice=root.querySelector('#exchange-halt-notice');
+    if(!halt){notice?.remove();return;}
+    if(!notice){notice=document.createElement('div');notice.id='exchange-halt-notice';notice.className='info-note halt-note';notice.setAttribute('role','status');stats.parentElement.insertBefore(notice,stats);}
+    const since=new Date(halt.halted_at).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'});
+    const resumes=halt.resumption_trade_at?'Trading resumes at '+new Date(halt.resumption_trade_at).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})+'.':'No resumption time announced yet.';
+    notice.innerHTML='<strong>'+escapeHtml(halt.symbol)+' is halted on '+escapeHtml(halt.listing_market)+'</strong> since '+since+' · '+escapeHtml(halt.reason)+' ('+escapeHtml(halt.reason_code)+'). While the real stock cannot trade, FloatSheets pauses new positions on this market. You can still close. '+resumes;
+  }
   function paintLiveMarketTruth(data){
     const confidence=root.querySelector('.chart-stats > div:nth-child(3)');
     const status=root.querySelector('.chart-stats > div:nth-child(4)');
@@ -625,9 +635,10 @@
     }
     if(stateValue){
       stateValue.className='state '+data.state;
-      stateValue.textContent=data.state==='LIVE'?'LIVE':data.state==='READY'?'READY':data.state==='HALTED'?'HALTED':data.state==='CLOSE_ONLY'?'CLOSE ONLY':'UNAVAILABLE';
-      stateValue.title=data.state==='READY'?'A current oracle price is published when you request a quote.':'Current on-chain market and oracle check';
+      stateValue.textContent=data.state==='LIVE'?'LIVE':data.state==='READY'?'READY':data.state==='HALTED'?'HALTED':data.state==='EXCHANGE_HALT'?'EXCHANGE HALT':data.state==='CLOSE_ONLY'?'CLOSE ONLY':'UNAVAILABLE';
+      stateValue.title=data.state==='READY'?'A current oracle price is published when you request a quote.':data.exchange_halt?'Halted on '+data.exchange_halt.listing_market+': '+data.exchange_halt.reason:'Current on-chain market and oracle check';
     }
+    paintExchangeHalt(data.exchange_halt);
   }
   function abortable(promise,signal){
     return new Promise(function(resolve,reject){

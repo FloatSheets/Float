@@ -8,6 +8,7 @@ import { readClearingMarket, readOraclePrice } from '../chain/protocol-read';
 import type { RpcTransport } from '../chain/rpc';
 import type { Address } from 'viem';
 import { contractVersionFromRequest } from '../contract-version';
+import { HALT_FEED_STALE_SECONDS, readActiveHalts } from '../markets/halts';
 
 type LiveMarketDependencies = { rpc: RpcTransport; clearingHouse: Address; oracle: Address };
 type VersionedLiveMarketDependencies = Partial<Record<'goldlake' | 'silverlake' | 'amber' | 'jasper' | 'meadow' | 'legacy-orion', LiveMarketDependencies>>;
@@ -30,10 +31,12 @@ export function createMarketsRouter(database: Pool, maxPriceAgeSeconds = 120, li
          ) s ON true
          ORDER BY m.symbol`
       );
-      if (!live) return response.json({ markets: result.rows });
+      const halts = await readActiveHalts(database);
+      const rows = result.rows.map((row) => ({ ...row, exchange_halt: halts.get(String(row.symbol).toUpperCase()) ?? null }));
+      if (!live) return response.json({ markets: rows });
       const selectedLive = 'rpc' in live ? live : live[contractVersionFromRequest(request)];
       if (!selectedLive) return response.status(503).json({ error: 'live market reads are unavailable for this contract version' });
-      const markets = await Promise.all(result.rows.map(async (row) => {
+      const markets = await Promise.all(rows.map(async (row) => {
         const id = marketId(row.symbol);
         const market = await readClearingMarket(selectedLive.rpc, selectedLive.clearingHouse, id);
         return {
@@ -47,6 +50,26 @@ export function createMarketsRouter(database: Pool, maxPriceAgeSeconds = 120, li
     } catch (error) {
       next(error);
     }
+  });
+
+  // Registered before /:symbol so "halts" is never read as a market symbol.
+  router.get('/halts', async (_request, response, next) => {
+    try {
+      const [halts, feed] = await Promise.all([
+        readActiveHalts(database),
+        database.query<{ last_success_at: Date | null; last_error: string | null }>('SELECT last_success_at,last_error FROM public.exchange_halt_feed WHERE id')
+      ]);
+      const lastSuccess = feed.rows[0]?.last_success_at ?? null;
+      response.json({
+        feed: {
+          source: 'Nasdaq Trader trade halts',
+          last_success_at: lastSuccess?.toISOString() ?? null,
+          stale: !lastSuccess || (Date.now() - lastSuccess.getTime()) / 1_000 > HALT_FEED_STALE_SECONDS,
+          last_error: feed.rows[0]?.last_error ?? null
+        },
+        active: [...halts.values()]
+      });
+    } catch (error) { next(error); }
   });
 
   router.get("/:symbol/history", async (request, response, next) => {
@@ -98,8 +121,9 @@ export function createMarketsRouter(database: Pool, maxPriceAgeSeconds = 120, li
       const [oracle,onchainMarket]=await Promise.all([readOraclePrice(selectedLive.rpc,selectedLive.oracle,id),readClearingMarket(selectedLive.rpc,selectedLive.clearingHouse,id)]);
       const oracleAgeSeconds=Number(BigInt(Math.floor(Date.now()/1_000))-oracle.timestamp);
       const oracleFresh=oracle.sequence!==0n&&oracleAgeSeconds<=maxPriceAgeSeconds&&!oracle.circuitBroken;
-      const state=onchainMarket.state===0?'HALTED':onchainMarket.state===2?'CLOSE_ONLY':(monitoredState!=='active'?'CLOSE_ONLY':(oracleFresh?'LIVE':'READY'));
-      response.json({market:symbol,state,monitored_state:monitoredState,onchain_market_state:onchainMarket.state,
+      const exchangeHalt=(await readActiveHalts(database)).get(symbol)??null;
+      const state=onchainMarket.state===0?'HALTED':onchainMarket.state===2?'CLOSE_ONLY':exchangeHalt?'EXCHANGE_HALT':(monitoredState!=='active'?'CLOSE_ONLY':(oracleFresh?'LIVE':'READY'));
+      response.json({market:symbol,state,exchange_halt:exchangeHalt,monitored_state:monitoredState,onchain_market_state:onchainMarket.state,
         oracle_confidence_bps:oracle.confidenceBps.toString(),oracle_confidence_limit_bps:onchainMarket.maxOracleConfidenceBps.toString(),
         oracle_age_seconds:oracleAgeSeconds,oracle_circuit_broken:oracle.circuitBroken,oracle_fresh:oracleFresh});
     } catch (error) { next(error); }

@@ -260,6 +260,7 @@ test("builds a trader quote and execution transaction without exposing the quote
         expect(args?.[2]).toBe("1000.000000");
         return { rows: [{ notional_usdg: "1000", execution_degradation_bps: 25 }] };
       }
+      if (sql.includes("FROM public.exchange_halts")) return { rows: [] };
       throw new Error(`unexpected query: ${sql}`);
     }
   } as unknown as Pool;
@@ -330,6 +331,7 @@ test("accepts a signed, in-band improvement from the live buy matrix", async () 
     query: async (sql: string) => {
       if (sql.includes("FROM public.markets")) return { rows: [{ id: "market-1", status: "active", max_ticket_usdg: "50000", max_half_spread_bps: 30, observed_at: new Date(), oracle_tradable: true }] };
       if (sql.includes("SELECT notional_usdg")) return { rows: [{ notional_usdg: "5", execution_degradation_bps: -19 }] };
+      if (sql.includes("FROM public.exchange_halts")) return { rows: [] };
       throw new Error(`unexpected query: ${sql}`);
     }
   } as unknown as Pool;
@@ -370,10 +372,12 @@ test("rejects an unfunded or vault-capacity-exceeding opening quote before walle
   const exposureSelector = encodeFunctionData({ abi: clearingAbi, functionName: "marketExposure", args: [(`0x${"00".repeat(32)}`) as `0x${string}`] }).slice(0, 10);
   const badDebtSelector = encodeFunctionData({ abi: clearingAbi, functionName: "badDebtUsdg" }).slice(0, 10);
   let margin = 0n;
+  let halted = false;
   const database = {
     query: async (sql: string) => {
       if (sql.includes("FROM public.markets")) return { rows: [{ id: "market-1", status: "active", max_ticket_usdg: "50000", max_half_spread_bps: 30, observed_at: new Date(), oracle_tradable: true }] };
       if (sql.includes("SELECT notional_usdg")) return { rows: [{ notional_usdg: "5", execution_degradation_bps: -19 }] };
+      if (sql.includes("FROM public.exchange_halts")) return { rows: halted ? [{ symbol: "SPCX", listing_market: "NASDAQ", reason_code: "LUDP", halted_at: new Date(), resumption_trade_at: null }] : [] };
       throw new Error(`unexpected query: ${sql}`);
     }
   } as unknown as Pool;
@@ -402,6 +406,11 @@ test("rejects an unfunded or vault-capacity-exceeding opening quote before walle
     const overCapacity = await requestQuote();
     expect(overCapacity.status).toBe(400);
     expect(overCapacity.body.error).toContain("one-sided market capacity");
+    // A listing-exchange halt refuses new exposure before any capacity check.
+    halted = true;
+    const duringHalt = await requestQuote();
+    expect(duringHalt.status).toBe(400);
+    expect(duringHalt.body.error).toBe("SPCX is halted on NASDAQ (volatility trading pause). New positions are paused until the exchange resumes trading; you can still close.");
   } finally {
     await new Promise<void>((resolve, reject) => quoteServer.close((error) => error ? reject(error) : resolve()));
   }
