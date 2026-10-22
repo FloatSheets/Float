@@ -3,7 +3,7 @@ import request from "supertest";
 
 import { app, resetRateLimitsForTest, setRateLimitDatabase } from "../src/app";
 
-test("sets API security headers and rate limits burst traffic", async () => {
+test("sets API security headers and enforces local and shared database rate limits", async () => {
   // Keep this burst isolated from requests made by other tests in this process.
   resetRateLimitsForTest();
   const client = () => request(app).get("/health").set("X-Forwarded-For", "198.51.100.42");
@@ -21,9 +21,7 @@ test("sets API security headers and rate limits burst traffic", async () => {
   const limited = await client();
   expect(limited.status).toBe(429);
   expect(limited.headers["retry-after"]).toBeDefined();
-});
 
-test("uses the shared database counter for API rate limits", async () => {
   resetRateLimitsForTest();
   let hits = 0;
   setRateLimitDatabase({ query: async () => ({ rows: [{ hits: ++hits }], rowCount: 1 }) } as never);

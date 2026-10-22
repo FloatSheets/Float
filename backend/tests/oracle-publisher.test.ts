@@ -4,7 +4,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import type { Pool } from "pg";
 
 import { loadConfig } from "../src/config";
-import { OraclePublisher, shouldPublishGoldlakeMarket, snapshotTimeOnChain } from "../src/oracle/publisher";
+import { effectiveOraclePublishIntervalSeconds, OraclePublisher, shouldPublishGoldlakeMarket, snapshotTimeOnChain } from "../src/oracle/publisher";
 import type { RpcTransport } from "../src/chain/rpc";
 
 const key = "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
@@ -73,4 +73,9 @@ test("keeps oracle marks running for Goldlake close-only markets with open posit
   expect(shouldPublishGoldlakeMarket({
     state: 1, status: "active", oracleTradable: true, longBaseE18: 0n, shortBaseE18: 0n
   })).toBe(true);
+});
+
+test("caps scheduled attestations at sixty seconds", () => {
+  expect(effectiveOraclePublishIntervalSeconds(110)).toBe(60);
+  expect(effectiveOraclePublishIntervalSeconds(45)).toBe(45);
 });

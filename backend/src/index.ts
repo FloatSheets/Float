@@ -10,7 +10,7 @@ import { createMarketsRouter } from "./routes/markets";
 import { createReadinessRouter } from "./routes/ready";
 import { createProtocolRouter } from "./routes/protocol";
 import { createProtocolTransactionsRouter } from "./routes/protocol-transactions";
-import { OraclePublisher } from "./oracle/publisher";
+import { effectiveOraclePublishIntervalSeconds, OraclePublisher } from "./oracle/publisher";
 
 const config = loadConfig();
 const meadowConfig = contractConfigForVersion(config, "meadow");
@@ -42,7 +42,7 @@ let lastOraclePublishAt = 0;
 async function refreshMarkets(): Promise<void> {
   try {
     await monitor.refreshAll();
-    if (Date.now() - lastOraclePublishAt >= config.ORACLE_PUBLISH_INTERVAL_SECONDS * 1_000) {
+    if (Date.now() - lastOraclePublishAt >= effectiveOraclePublishIntervalSeconds(config.ORACLE_PUBLISH_INTERVAL_SECONDS) * 1_000) {
       lastOraclePublishAt = Date.now();
       await oraclePublisher.publishFreshMarkets();
     }

@@ -18,6 +18,12 @@ const MAX_CONFIDENCE_BPS = 50n;
 const ATTESTATION_TTL_SECONDS = 120n;
 const PUBLISH_SAFETY_WINDOW_SECONDS = 30n;
 
+export function effectiveOraclePublishIntervalSeconds(configuredSeconds: number): number {
+  // Refresh comfortably inside the contracts' 120-second attestation lifetime,
+  // even when production configuration asks for a slower cadence.
+  return Math.min(configuredSeconds, 60);
+}
+
 export function snapshotTimeOnChain(snapshotAt: Date, wallTimeSeconds: bigint, chainTimeSeconds: bigint): bigint {
   const snapshotWallTime = BigInt(Math.floor(snapshotAt.getTime() / 1_000));
   return snapshotWallTime - (wallTimeSeconds - chainTimeSeconds);
