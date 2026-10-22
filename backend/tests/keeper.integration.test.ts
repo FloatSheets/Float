@@ -75,7 +75,7 @@ beforeEach(async () => {
   await db.query("TRUNCATE public.keeper_cursors, public.keeper_positions, public.keeper_actions");
 });
 
-test("discovers positions from trade logs and closes only eligible ones", async () => {
+test.serial("discovers positions from trade logs and closes only eligible ones", async () => {
   const start = KEEPER_START_BLOCKS.silverlake;
   const logs: TradeLog[] = [
     { trader: trader(1), marketId: market(1), blockNumber: start + 10n },
@@ -121,7 +121,7 @@ test("discovers positions from trade logs and closes only eligible ones", async 
   expect(failures.rowCount).toBe(1);
 }, 60_000);
 
-test("halves the log range when the provider rejects a dense span", async () => {
+test.serial("halves the log range when the provider rejects a dense span", async () => {
   const start = KEEPER_START_BLOCKS.silverlake;
   const logs: TradeLog[] = [{ trader: trader(9), marketId: market(9), blockNumber: start + 4_000_000n }];
   const positions = new Map<string, FakePosition>([[`${trader(9)}:${market(9)}`, { sizeE18: 1n, openedAt: NOW, liquidatable: false }]]);
@@ -136,7 +136,7 @@ test("halves the log range when the provider rejects a dense span", async () => 
   expect(BigInt(cursor.rows[0]!.next_block)).toBe(LATEST + 1n);
 }, 60_000);
 
-test("serves keeper status for the dashboard", async () => {
+test.serial("serves keeper status for the dashboard", async () => {
   const start = KEEPER_START_BLOCKS.silverlake;
   const logs: TradeLog[] = [{ trader: trader(1), marketId: market(1), blockNumber: start + 1n }];
   const positions = new Map<string, FakePosition>([[`${trader(1)}:${market(1)}`, { sizeE18: 1n, openedAt: NOW, liquidatable: true }]]);

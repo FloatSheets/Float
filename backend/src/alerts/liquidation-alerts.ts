@@ -16,7 +16,7 @@ export class LiquidationAlertService {
   }
 
   async runOnce(): Promise<void> {
-    if (!this.config.RESEND_API_KEY) return;
+    if (!this.config.RESEND_API_KEY && !this.config.TELEGRAM_BOT_TOKEN) return;
     const latest = await this.client.getBlockNumber();
     const through = latest > 0n ? latest - 1n : 0n; // wait one block before notifying
     for (const version of versions) {
@@ -74,7 +74,7 @@ export class LiquidationAlertService {
         });
         await this.database.query("UPDATE public.liquidation_alert_events SET sent_at=now() WHERE event_key=$1", [event.event_key]);
       } catch (error) {
-        console.error(JSON.stringify({ event: "liquidation_email_delivery_failed", event_key: event.event_key, error: error instanceof Error ? error.message : "unknown" }));
+        console.error(JSON.stringify({ event: "liquidation_notification_delivery_failed", event_key: event.event_key, error: error instanceof Error ? error.message : "unknown" }));
       }
     }
   }

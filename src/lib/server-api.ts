@@ -205,3 +205,54 @@ export const verifyEmailAlert = createServerFn({ method: "POST" })
     return { token: (input as JsonRecord)["token"] as string };
   })
   .handler(({ data }): Promise<any> => emailAlertPost("verify", data));
+
+function telegramAlertInput(input: unknown) {
+  if (!input || typeof input !== "object") throw new Error("Telegram alert request is required.");
+  const value = input as JsonRecord;
+  if (typeof value["wallet"] !== "string" || !/^0x[0-9a-fA-F]{40}$/.test(value["wallet"])) throw new Error("A valid wallet is required.");
+  return value;
+}
+
+async function telegramAlertPost(path: string, body: JsonRecord): Promise<any> {
+  const response = await fetch(`${apiOrigin()}/v1/telegram-alerts/${path}`, {
+    method: "POST", headers: apiHeaders("goldlake", true), body: JSON.stringify(body),
+  });
+  const result = await response.json().catch(() => ({})) as JsonRecord;
+  if (!response.ok) throw new Error(typeof result["error"] === "string" ? result["error"] : `Telegram alert request failed (${response.status}).`);
+  return result;
+}
+
+export const getTelegramAlertLinkChallenge = createServerFn({ method: "POST" })
+  .validator(telegramAlertInput)
+  .handler(({ data }): Promise<any> => telegramAlertPost("link-challenge", data));
+
+export const createTelegramAlertLink = createServerFn({ method: "POST" })
+  .validator((input: unknown) => {
+    const value = telegramAlertInput(input);
+    if (typeof value["signature"] !== "string") throw new Error("A wallet signature is required.");
+    return value;
+  })
+  .handler(({ data }): Promise<any> => telegramAlertPost("link", data));
+
+export const getTelegramAlertLinkStatus = createServerFn({ method: "POST" })
+  .validator((input: unknown) => {
+    if (!input || typeof input !== "object" || typeof (input as JsonRecord)["token"] !== "string") throw new Error("A Telegram link token is required.");
+    return { token: (input as JsonRecord)["token"] as string };
+  })
+  .handler(({ data }): Promise<any> => telegramAlertPost("link-status", data));
+
+export const getTelegramAlertSettingsChallenge = createServerFn({ method: "POST" })
+  .validator((input: unknown) => {
+    const value = telegramAlertInput(input);
+    if (typeof value["enabled"] !== "boolean") throw new Error("Telegram alert state is required.");
+    return value;
+  })
+  .handler(({ data }): Promise<any> => telegramAlertPost("settings-challenge", data));
+
+export const saveTelegramAlertSettings = createServerFn({ method: "POST" })
+  .validator((input: unknown) => {
+    const value = telegramAlertInput(input);
+    if (typeof value["signature"] !== "string" || typeof value["enabled"] !== "boolean") throw new Error("Valid signed Telegram alert settings are required.");
+    return value;
+  })
+  .handler(({ data }): Promise<any> => telegramAlertPost("settings", data));

@@ -67,6 +67,8 @@ const schema = z.object({
   RHC_RPC_URL: z.url(),
   RESEND_API_KEY: z.string().min(1).optional(),
   RESEND_FROM_EMAIL: z.string().email().default("alerts@updates.floatsheets.app"),
+  TELEGRAM_BOT_TOKEN: z.string().min(1).optional(),
+  TELEGRAM_BOT_USERNAME: z.string().transform((value) => value.replace(/^@/, "")).pipe(z.string().regex(/^[A-Za-z0-9_]{5,32}$/)).optional(),
   SERVER_API_SHARED_SECRET: z.string().min(32).optional(),
   UNISWAP_TWAP_WINDOW_SECONDS: z.coerce.number().int().min(60).max(86_400)
 });
@@ -144,6 +146,9 @@ export function contractConfigForVersion(config: AppConfig, version: ContractVer
 
 export function loadConfig(environment: Record<string, string | undefined> = process.env): AppConfig {
   const config = schema.parse(environment);
+  if (Boolean(config.TELEGRAM_BOT_TOKEN) !== Boolean(config.TELEGRAM_BOT_USERNAME)) {
+    throw new Error("TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_USERNAME must be configured together");
+  }
   const derivedSignerAddress = privateKeyToAccount(config.ORACLE_SIGNER_PRIVATE_KEY as `0x${string}`).address;
   if (derivedSignerAddress.toLowerCase() !== config.ORACLE_SIGNER_ADDRESS.toLowerCase()) {
     throw new Error("ORACLE_SIGNER_ADDRESS does not match ORACLE_SIGNER_PRIVATE_KEY");

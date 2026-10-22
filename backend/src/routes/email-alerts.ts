@@ -3,6 +3,7 @@ import { Router } from "express";
 import type { Pool } from "pg";
 import { formatUnits, recoverMessageAddress } from "viem";
 import type { AppConfig } from "../config";
+import { sendTelegramLiquidationNotice } from "./telegram-alerts";
 
 const walletPattern = /^0x[a-fA-F0-9]{40}$/;
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -128,18 +129,37 @@ export async function sendLiquidationNotice(
   database: Pool, config: AppConfig,
   event: { eventKey: string; version: string; trader: string; market: string; priceE18: string; transactionHash: string }
 ): Promise<void> {
-  const pending = await database.query<{ email: string }>(
-    "SELECT email FROM public.liquidation_email_preferences WHERE wallet_address=$1 AND enabled=true AND verified_at IS NOT NULL",
-    [event.trader.toLowerCase()]
-  );
-  for (const { email } of pending.rows) {
+  if (config.RESEND_API_KEY) {
+    const pending = await database.query<{ email: string }>(
+      "SELECT email FROM public.liquidation_email_preferences WHERE wallet_address=$1 AND enabled=true AND verified_at IS NOT NULL",
+      [event.trader.toLowerCase()]
+    );
     const [whole = "0", fraction = ""] = formatUnits(BigInt(event.priceE18), 18).split(".");
     const decimals = fraction.slice(0, 4).replace(/0+$/, "");
     const price = `${BigInt(whole).toLocaleString("en-US")}${decimals ? `.${decimals}` : ""}`;
     const safeMarket = event.market.replace(/[^A-Za-z0-9.-]/g, "");
     const txUrl = `https://robinhoodchain.blockscout.com/tx/${encodeURIComponent(event.transactionHash)}`;
-    await sendEmail(config, email, `FloatSheets: ${safeMarket} position liquidated`,
-      `<p>A position in <strong>${safeMarket}</strong> for wallet <code>${event.trader}</code> was liquidated on FloatSheets ${event.version}.</p><p>Oracle execution price: ${price} USDG.</p><p><a href="${txUrl}">View transaction</a></p><p>Manage email alerts in FloatSheets dashboard settings.</p>`,
-      `liquidation-${event.eventKey}-${digest(email).slice(0, 16)}`);
+    for (const { email } of pending.rows) {
+      const recipientKey = digest(email).slice(0, 32);
+      const delivered = await database.query(
+        "SELECT 1 FROM public.liquidation_alert_deliveries WHERE event_key=$1 AND channel='email' AND recipient_key=$2",
+        [event.eventKey, recipientKey]
+      );
+      if (delivered.rowCount) continue;
+      await sendEmail(config, email, `FloatSheets: ${safeMarket} position liquidated`,
+        `<p>A position in <strong>${safeMarket}</strong> for wallet <code>${event.trader}</code> was liquidated on FloatSheets ${event.version}.</p><p>Oracle execution price: ${price} USDG.</p><p><a href="${txUrl}">View transaction</a></p><p>Manage email alerts in FloatSheets dashboard settings.</p>`,
+        `liquidation-${event.eventKey}-${recipientKey.slice(0, 16)}`);
+      await database.query(
+        "INSERT INTO public.liquidation_alert_deliveries(event_key,channel,recipient_key) VALUES($1,'email',$2) ON CONFLICT DO NOTHING",
+        [event.eventKey, recipientKey]
+      );
+    }
   }
+  const [whole = "0", fraction = ""] = formatUnits(BigInt(event.priceE18), 18).split(".");
+  const decimals = fraction.slice(0, 4).replace(/0+$/, "");
+  const price = `${BigInt(whole).toLocaleString("en-US")}${decimals ? `.${decimals}` : ""}`;
+  await sendTelegramLiquidationNotice(database, config, {
+    eventKey: event.eventKey, version: event.version, trader: event.trader,
+    market: event.market, price, transactionHash: event.transactionHash
+  });
 }

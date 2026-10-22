@@ -528,7 +528,7 @@
     if(!document.getElementById('liquidation-email-alerts')){
       const alertRow=document.createElement('section'); alertRow.id='liquidation-email-alerts'; alertRow.className='list-row liquidation-email-alerts';
       alertRow.style.cssText='display:block;padding:18px 0;border-top:1px solid var(--line,#e5eaf1)';
-      alertRow.innerHTML='<div><strong>Liquidation email alerts</strong><p>Get an email after an on-chain liquidation is confirmed. You must verify the email address first. Uncheck to pause alerts; clear the address and save to remove it.</p></div><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px"><input id="liquidation-alert-email" type="email" autocomplete="email" maxlength="254" placeholder="you@example.com" aria-label="Alert email address" style="min-width:220px;flex:1;padding:10px 12px;border:1px solid var(--line,#d8deea);border-radius:8px"><label style="display:flex;gap:8px;align-items:center"><input id="liquidation-alert-enabled" type="checkbox"> Enable</label><button type="button" class="secondary-btn" id="liquidation-alert-save">Save</button></div><p id="liquidation-alert-status" role="status" aria-live="polite" style="margin:10px 0 0"></p>';
+      alertRow.innerHTML='<div><strong>Email liquidation alerts</strong><p>Get an email after an on-chain liquidation is confirmed. Verify the address before alerts are sent. Uncheck to pause email alerts; clear the address and save to remove it.</p></div><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px"><input id="liquidation-alert-email" type="email" autocomplete="email" maxlength="254" placeholder="you@example.com" aria-label="Alert email address" style="min-width:220px;flex:1;padding:10px 12px;border:1px solid var(--line,#d8deea);border-radius:8px"><label style="display:flex;gap:8px;align-items:center"><input id="liquidation-alert-enabled" type="checkbox"> Enable email</label><button type="button" class="secondary-btn" id="liquidation-alert-save">Save email</button></div><p id="liquidation-alert-status" role="status" aria-live="polite" style="margin:10px 0 0"></p>';
       settingsPanel.append(alertRow);
       const walletState=window.__FLOATSHEETS_WALLET_STATE__||{};
       const saved=walletState.address&&localStorage.getItem('floatsheets-liquidation-email-'+walletState.address.toLowerCase());
@@ -544,6 +544,49 @@
         try { const result=await wallet.configureEmailAlerts(emailInput.value.trim(),enabled); status.textContent=result.message||'Settings saved.'; }
         catch(error){status.textContent=error instanceof Error?error.message:'Could not update email alerts.';}
         finally {button.disabled=false;}
+      });
+    }
+    if(!document.getElementById('liquidation-telegram-alerts')){
+      const telegramRow=document.createElement('section'); telegramRow.id='liquidation-telegram-alerts'; telegramRow.className='list-row liquidation-telegram-alerts';
+      telegramRow.style.cssText='display:block;padding:18px 0;border-top:1px solid var(--line,#e5eaf1)';
+      telegramRow.innerHTML='<div><strong>Telegram liquidation alerts</strong><p>Link your Telegram account once to this wallet. FloatSheets only sends this bot a message after a confirmed liquidation for your wallet.</p></div><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px"><button type="button" class="secondary-btn" id="liquidation-telegram-link">Link Telegram</button><label style="display:flex;gap:8px;align-items:center"><input id="liquidation-telegram-enabled" type="checkbox" disabled> Enable Telegram</label><span id="liquidation-telegram-linked"></span><a id="liquidation-telegram-open" href="#" target="_blank" rel="noopener noreferrer" hidden>Open Telegram ↗</a></div><p id="liquidation-telegram-status" role="status" aria-live="polite" style="margin:10px 0 0"></p>';
+      settingsPanel.append(telegramRow);
+      const walletState=window.__FLOATSHEETS_WALLET_STATE__||{};
+      const walletAddress=walletState.address&&walletState.address.toLowerCase();
+      const saved=walletAddress&&localStorage.getItem('floatsheets-liquidation-telegram-'+walletAddress);
+      const toggle=telegramRow.querySelector('#liquidation-telegram-enabled');
+      const linked=telegramRow.querySelector('#liquidation-telegram-linked');
+      const linkButton=telegramRow.querySelector('#liquidation-telegram-link');
+      const status=telegramRow.querySelector('#liquidation-telegram-status');
+      if(saved){try{const pref=JSON.parse(saved);toggle.disabled=false;toggle.checked=pref.enabled===true;linked.textContent=pref.username?'Linked as '+pref.username:'Telegram linked';}catch{}}
+      toggle.addEventListener('change',async function(){
+        const wallet=window.__FLOATSHEETS_WALLET__;
+        if(!wallet?.connected||typeof wallet.configureTelegramAlerts!=='function'){toggle.checked=false;status.textContent='Connect your wallet on Robinhood Chain first.';return;}
+        const prior=!toggle.checked; toggle.disabled=true; status.textContent='Waiting for wallet signature…';
+        try{const result=await wallet.configureTelegramAlerts(toggle.checked);status.textContent=result.message||'Telegram alert settings saved.';}
+        catch(error){toggle.checked=prior;status.textContent=error instanceof Error?error.message:'Could not update Telegram alerts.';}
+        finally{toggle.disabled=false;}
+      });
+      linkButton.addEventListener('click',async function(){
+        const wallet=window.__FLOATSHEETS_WALLET__;
+        if(!wallet?.connected||typeof wallet.startTelegramAlertLink!=='function'){status.textContent='Connect your wallet on Robinhood Chain first.';return;}
+        linkButton.disabled=true; status.textContent='Confirm the wallet signature to create a one-time link…';
+        try{
+          const result=await wallet.startTelegramAlertLink();
+          const open=telegramRow.querySelector('#liquidation-telegram-open'); open.href=result.link_url; open.hidden=false;
+          status.textContent='Open Telegram, then tap Start. This one-time link expires in 10 minutes.';
+          if(window.__FLOATSHEETS_TELEGRAM_LINK_POLL__)clearInterval(window.__FLOATSHEETS_TELEGRAM_LINK_POLL__);
+          let checking=false; const started=Date.now();
+          window.__FLOATSHEETS_TELEGRAM_LINK_POLL__=setInterval(async function(){
+            if(checking)return; checking=true;
+            try{
+              const state=await wallet.getTelegramAlertLinkStatus(result.token);
+              if(state.linked){clearInterval(window.__FLOATSHEETS_TELEGRAM_LINK_POLL__);window.__FLOATSHEETS_TELEGRAM_LINK_POLL__=null;const pref={enabled:true,username:state.telegram_username||null};localStorage.setItem('floatsheets-liquidation-telegram-'+wallet.address.toLowerCase(),JSON.stringify(pref));toggle.disabled=false;toggle.checked=true;linked.textContent=pref.username?'Linked as '+pref.username:'Telegram linked';status.textContent='Telegram linked and liquidation alerts enabled.';open.hidden=true;linkButton.disabled=false;}
+              else if(Date.now()-started>10*60*1000){clearInterval(window.__FLOATSHEETS_TELEGRAM_LINK_POLL__);window.__FLOATSHEETS_TELEGRAM_LINK_POLL__=null;status.textContent='Link expired. Start again to get a new one-time link.';linkButton.disabled=false;}
+            }catch(error){clearInterval(window.__FLOATSHEETS_TELEGRAM_LINK_POLL__);window.__FLOATSHEETS_TELEGRAM_LINK_POLL__=null;status.textContent=error instanceof Error?error.message:'Could not check Telegram link status.';linkButton.disabled=false;}
+            finally{checking=false;}
+          },2500);
+        }catch(error){status.textContent=error instanceof Error?error.message:'Could not create Telegram link.';linkButton.disabled=false;}
       });
     }
     if(!window.__FLOATSHEETS_EMAIL_ALERTS_RESULT_LISTENER__){

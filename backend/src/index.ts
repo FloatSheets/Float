@@ -17,6 +17,8 @@ import { createKeeperChain, PositionKeeper } from "./keeper/keeper";
 import { createKeeperRouter } from "./routes/keeper";
 import { createEmailAlertsRouter } from "./routes/email-alerts";
 import { LiquidationAlertService } from "./alerts/liquidation-alerts";
+import { TelegramBotService } from "./alerts/telegram-bot";
+import { createTelegramAlertsRouter } from "./routes/telegram-alerts";
 
 const config = loadConfig();
 const meadowConfig = contractConfigForVersion(config, "meadow");
@@ -34,6 +36,7 @@ const monitor = new MarketMonitor(db, rpc, Math.min(config.UNISWAP_TWAP_WINDOW_S
 const oraclePublisher = new OraclePublisher(db, rpc, config);
 const keeper = new PositionKeeper(db, createKeeperChain(config, rpc), config);
 const liquidationAlerts = new LiquidationAlertService(db, config);
+const telegramBot = new TelegramBotService(db, config);
 app.use("/v1/markets", createMarketsRouter(db, config.ORACLE_PRICE_MAX_AGE_SECONDS, {
   ...(goldlakeConfig ? { goldlake: { rpc, clearingHouse: goldlakeConfig.FLOAT_CLEARING_HOUSE_ADDRESS as `0x${string}`, oracle: goldlakeConfig.FLOAT_ORACLE_ADDRESS as `0x${string}` } } : {}),
   ...(silverlakeConfig ? { silverlake: { rpc, clearingHouse: silverlakeConfig.FLOAT_CLEARING_HOUSE_ADDRESS as `0x${string}`, oracle: silverlakeConfig.FLOAT_ORACLE_ADDRESS as `0x${string}` } } : {}),
@@ -45,6 +48,7 @@ app.use("/v1/markets", createMarketsRouter(db, config.ORACLE_PRICE_MAX_AGE_SECON
 app.use("/ready", createReadinessRouter(db));
 app.use("/v1/keeper", createKeeperRouter(keeper));
 app.use("/v1/email-alerts", createEmailAlertsRouter(db, config));
+app.use("/v1/telegram-alerts", createTelegramAlertsRouter(db, config));
 app.use("/v1/protocol", createProtocolRouter(config));
 app.use("/v1/protocol/transactions", createProtocolTransactionsRouter(config, db, rpc, oraclePublisher));
 let lastOraclePublishAt = 0;
@@ -78,7 +82,7 @@ async function refreshMarkets(): Promise<void> {
     console.error("FloatSheets keeper run failed", error);
   }
   try {
-    if (config.RESEND_API_KEY && Date.now() - lastLiquidationAlertsRunAt >= 15_000) {
+    if ((config.RESEND_API_KEY || config.TELEGRAM_BOT_TOKEN) && Date.now() - lastLiquidationAlertsRunAt >= 15_000) {
       lastLiquidationAlertsRunAt = Date.now();
       await liquidationAlerts.runOnce();
     }
@@ -109,7 +113,9 @@ app.listen(port, () => {
   console.log(`FloatSheets API listening on :${port}`);
   void refreshMarkets();
   void refreshHalts();
+  void telegramBot.pollOnce();
 });
 
 setInterval(() => void refreshMarkets(), config.MARKET_POLL_INTERVAL_MS).unref();
 setInterval(() => void refreshHalts(), config.HALT_POLL_INTERVAL_SECONDS * 1_000).unref();
+if (config.TELEGRAM_BOT_TOKEN) setInterval(() => void telegramBot.pollOnce(), 5_000).unref();

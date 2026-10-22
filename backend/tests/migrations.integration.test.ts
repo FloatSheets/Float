@@ -46,9 +46,11 @@ test("is idempotent within its isolated schema", async () => {
     `SELECT count(*) FROM information_schema.tables
      WHERE table_schema=$1 AND table_name IN (
        'liquidation_email_preferences','liquidation_email_challenges',
-       'liquidation_alert_cursors','liquidation_alert_events'
+       'liquidation_alert_cursors','liquidation_alert_events',
+       'liquidation_telegram_wallet_challenges','liquidation_telegram_link_codes',
+       'liquidation_telegram_links','telegram_bot_state','liquidation_alert_deliveries'
      )`, [schema]
   );
-  expect(migrations.rows[0]?.count).toBe("11");
-  expect(alertTables.rows[0]?.count).toBe("4");
+  expect(migrations.rows[0]?.count).toBe("12");
+  expect(alertTables.rows[0]?.count).toBe("9");
 }, 60_000);
