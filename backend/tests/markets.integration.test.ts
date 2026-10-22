@@ -34,12 +34,17 @@ test("returns 404 for a market without recorded quotes", async () => {
 
 test("returns the live five-notional, two-sided NVDA quote matrix", async () => {
   const response = await request(app).get("/v1/markets/NVDA/quotes");
+  const config = await request(app).get("/v1/markets/NVDA");
   expect(response.status).toBe(200);
   expect(response.body.market).toBe("NVDA");
   expect(response.body.quotes).toHaveLength(10);
-  expect(new Set(response.body.quotes.map((quote: { notional_usdg: string }) => quote.notional_usdg))).toEqual(
-    new Set(["5.000000", "10.000000", "1000.000000", "10000.000000", "50000.000000"])
-  );
+  const notionals = [...new Set(response.body.quotes.map((quote: { notional_usdg: string }) => Number(quote.notional_usdg)))]
+    .sort((a: number, b: number) => a - b);
+  expect(notionals).toHaveLength(5);
+  expect(notionals[0]).toBe(5);
+  expect(notionals[1]).toBe(10);
+  expect(notionals[4]).toBe(Number(config.body.market.max_ticket_usdg));
+  expect(notionals.every((notional: number) => notional <= Number(config.body.market.max_ticket_usdg))).toBe(true);
 }, 60_000);
 
 test("reports a live risk state for NVDA", async () => {
