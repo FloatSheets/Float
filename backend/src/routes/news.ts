@@ -21,6 +21,7 @@ type NewsItem = {
 
 const supportedForms = new Set(["8-K", "10-K", "10-Q", "6-K", "20-F", "S-1", "DEF 14A"]);
 const investorRelations: Record<string, string> = {
+  AMC: "https://investor.amctheatres.com/",
   NVDA: "https://investor.nvidia.com/",
   CRCL: "https://investor.circle.com/",
   HIMS: "https://investors.hims.com/",
@@ -104,7 +105,7 @@ async function fetchCompanyFilings(symbol: string, company: SecCompany): Promise
 async function refreshNews(database: Pool): Promise<NewsItem[]> {
   if (refreshInFlight) return refreshInFlight;
   refreshInFlight = (async () => {
-    const { rows } = await database.query<{ symbol: string }>("SELECT symbol FROM public.markets ORDER BY symbol");
+    const { rows } = await database.query<{ symbol: string }>("SELECT symbol FROM public.markets WHERE listed = TRUE ORDER BY symbol");
     const index = await readCompanyIndex();
     // Keep requests comfortably below the SEC's published 10 requests/second ceiling.
     const results: NewsItem[] = [];
@@ -137,7 +138,7 @@ export function createNewsRouter(database: Pool): Router {
       const items = newsCache && newsCache.expiresAt > Date.now()
         ? newsCache.items
         : await refreshNews(database);
-      const { rows } = await database.query<{ symbol: string }>("SELECT symbol FROM public.markets ORDER BY symbol");
+      const { rows } = await database.query<{ symbol: string }>("SELECT symbol FROM public.markets WHERE listed = TRUE ORDER BY symbol");
       const index = await readCompanyIndex();
       response.setHeader("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
       response.json({

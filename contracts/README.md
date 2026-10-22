@@ -35,7 +35,7 @@ attestations fresh.
 - Deployment record: `deployments/goldlake-4663.json`
 - Owner/deployer: `0x4a4c4e9Ad9afc8c5603ef5EA91cEf98CCdFE91f3`
 
-Runtime bytecode was compared with the local Foundry artifacts after masking immutable constructor values. Ten markets are registered; NVDA, SPCX, CRCL, MU, TSLA, RDDT, and MSTR are active, while HIMS, PLTR, and QUBT are close-only. The oracle publisher wallet must keep sufficient RH ETH to refresh enabled active market prices.
+Runtime bytecode was compared with the local Foundry artifacts after masking immutable constructor values. Ten markets are registered; NVDA, SPCX, CRCL, MU, TSLA, RDDT, MSTR, and AMC are active, while PLTR and QUBT are close-only. HIMS was deregistered to make room for AMC after confirming it had no open exposure. AMC starts at 2x leverage with a 1,000 USDG per-position limit. The oracle publisher wallet must keep sufficient RH ETH to refresh enabled active market prices.
 
 ### Retired Amber deployment
 
@@ -89,8 +89,8 @@ spot observation. HIMS was switched to active after its spot/TWAP deviation
 returned below the 50 bps breaker. Oracle prices expire after 120 seconds, so
 the backend's publisher must keep running against a working Robinhood RPC.
 
-`ConfigureFloatMarkets.s.sol` runs four markets at a time using
-`MARKET_BATCH_INDEX` (0, 1, or 2) to keep each attestation batch inside its
-expiry window. Supply separate `PRICE_<SYMBOL>_E18` and `SPOT_<SYMBOL>_E18`
-values from validated current observations; do not seed from old oracle prices.
+`ConfigureFloatMarkets.s.sol` uses `MARKET_BATCH_INDEX` to configure Goldlake
+markets. Batch 3 replaces HIMS with AMC after checking that HIMS has no open
+exposure. Supply separate `PRICE_<SYMBOL>_E18` and `SPOT_<SYMBOL>_E18` values
+from validated current observations; do not seed from old oracle prices.
 The deployer keystore and password are intentionally ignored by Git.

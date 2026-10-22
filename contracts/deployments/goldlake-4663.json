@@ -32,12 +32,15 @@
       "MU",
       "TSLA",
       "RDDT",
-      "MSTR"
+      "MSTR",
+      "AMC"
     ],
     "closeOnly": [
-      "HIMS",
       "PLTR",
       "QUBT"
+    ],
+    "retired": [
+      "HIMS"
     ]
   },
   "configurationBatches": [
@@ -66,6 +69,12 @@
       "0x51d0159cbfa05a5823861dff267a4260694ea12daf29416835812e415c9b613f",
       "0xd4d86fee6e5a2b2a3661af49470a4a66cbdf9cb5a94a7f5e7f08bf3b08b827b4",
       "0x15156039fab87bc940d99a3007041d6873853e8a98678ed8bd2ee52cfb6ea30e"
+    ],
+    [
+      "0x7c873130d185aab6adce91e50076620c4d630794cf10a3420220d52f9ab0e2fc",
+      "0x4bd1a34863073021ebe171ebf21fd3517fefe9bde2fa4d19cb86f22ed1f4b0a4",
+      "0xfde35909c3ca324e2b40ec7c75aca1df70ff241994093a672c376666fbbefd79",
+      "0x97477276996842a710f16c96dec80c5706b75d99f020b95f98b9536d737aba08"
     ]
   ],
   "configurationTransactions": [
@@ -88,7 +97,11 @@
     "0x77e5a62effe54f498bea63b2193d180b3d9a7519f144ffb351e050adc447a745",
     "0x51d0159cbfa05a5823861dff267a4260694ea12daf29416835812e415c9b613f",
     "0xd4d86fee6e5a2b2a3661af49470a4a66cbdf9cb5a94a7f5e7f08bf3b08b827b4",
-    "0x15156039fab87bc940d99a3007041d6873853e8a98678ed8bd2ee52cfb6ea30e"
+    "0x15156039fab87bc940d99a3007041d6873853e8a98678ed8bd2ee52cfb6ea30e",
+    "0x7c873130d185aab6adce91e50076620c4d630794cf10a3420220d52f9ab0e2fc",
+    "0x4bd1a34863073021ebe171ebf21fd3517fefe9bde2fa4d19cb86f22ed1f4b0a4",
+    "0xfde35909c3ca324e2b40ec7c75aca1df70ff241994093a672c376666fbbefd79",
+    "0x97477276996842a710f16c96dec80c5706b75d99f020b95f98b9536d737aba08"
   ],
   "initialOraclePrices": {
     "status": "published",
@@ -101,6 +114,13 @@
       "SPCX": "0x07333a97384fe7fba260315cda13bdbddc3cef1e49994c6ad8a130bec08b00cb",
       "TSLA": "0x3f1538d5b554c22549b117b211251ede45cdf4a42cbfea9a9a064f2b5cd5729c"
     },
-    "verification": "All seven active markets have nonzero oracle sequence, fresh marks, and no circuit breaker; close-only markets currently have no exposure."
+    "verification": "The seven original active markets have fresh marks; AMC is enabled and will receive its initial mark from the backend publisher on demand."
+  },
+  "marketReplacement": {
+    "removed": "HIMS",
+    "added": "AMC",
+    "blockStart": 94998887,
+    "blockEnd": 94998959,
+    "status": "confirmed"
   }
 }

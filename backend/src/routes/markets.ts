@@ -47,7 +47,7 @@ export function createMarketsRouter(
                   spot_twap_deviation_bps, oracle_tradable FROM public.pool_snapshots
            WHERE market_id = m.id ORDER BY observed_at DESC LIMIT 1
          ) s ON true
-         ORDER BY m.symbol`
+         WHERE m.listed = TRUE ORDER BY m.symbol`
       );
       const halts = await readActiveHalts(database);
       const rows = await Promise.all(result.rows.map(async (row) => ({
@@ -81,7 +81,7 @@ export function createMarketsRouter(
       const symbols = await database.query<{ symbol: string; twap_price_usdg: string | null }>(
         `SELECT m.symbol, s.twap_price_usdg::text FROM public.markets m LEFT JOIN LATERAL (
            SELECT twap_price_usdg FROM public.pool_snapshots WHERE market_id=m.id ORDER BY observed_at DESC LIMIT 1
-         ) s ON true ORDER BY m.symbol`
+         ) s ON true WHERE m.listed = TRUE ORDER BY m.symbol`
       );
       response.json({
         enabled: bandOptions.enabled,

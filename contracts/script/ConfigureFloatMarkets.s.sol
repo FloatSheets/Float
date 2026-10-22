@@ -35,6 +35,13 @@ contract ConfigureFloatMarkets is Script {
         } else if (batch == 2) {
             _configure(oracle, clearing, "PLTR", 2, 2, 500, 10_000);
             _configure(oracle, clearing, "QUBT", 2, 2, 750, 1_000);
+        } else if (batch == 3) {
+            // Reuse HIMS's empty market slot for AMC; its quote-quality screen
+            // passed, so launch with 2x leverage and a $1,000 position cap.
+            bytes32 himsId = keccak256("HIMS");
+            clearing.deregisterMarket(himsId);
+            oracle.setMarketEnabled(himsId, false);
+            _configure(oracle, clearing, "AMC", 1, 2, 75, 1_000);
         } else {
             revert InvalidBatch();
         }
