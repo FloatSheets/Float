@@ -31,12 +31,20 @@ test("applies the market schema to an isolated deployed-Postgres schema", async 
   const hims = await db.query<{ max_ticket_usdg: string }>(
     `SELECT max_ticket_usdg::text FROM "${schema}".markets WHERE symbol='HIMS'`
   );
+  const listings = await db.query<{ symbol: string; listed: boolean }>(
+    `SELECT symbol, listed FROM "${schema}".markets WHERE symbol IN ('AMC','HIMS') ORDER BY symbol`
+  );
 
-  expect(markets.rows[0]?.count).toBe("10");
+  expect(markets.rows[0]?.count).toBe("11");
   expect(statuses.rows).toEqual([
-    { count: "10", status: "active" }
+    { count: "10", status: "active" },
+    { count: "1", status: "disabled" }
   ]);
   expect(hims.rows[0]?.max_ticket_usdg).toBe("15000.000000");
+  expect(listings.rows).toEqual([
+    { symbol: "AMC", listed: true },
+    { symbol: "HIMS", listed: false }
+  ]);
 }, 60_000);
 
 test("is idempotent within its isolated schema", async () => {
@@ -51,6 +59,6 @@ test("is idempotent within its isolated schema", async () => {
        'liquidation_telegram_links','telegram_bot_state','liquidation_alert_deliveries'
      )`, [schema]
   );
-  expect(migrations.rows[0]?.count).toBe("12");
+  expect(migrations.rows[0]?.count).toBe("13");
   expect(alertTables.rows[0]?.count).toBe("9");
 }, 60_000);
