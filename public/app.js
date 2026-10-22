@@ -8,6 +8,7 @@ function modal(title,body,confirmLabel,confirm){onConfirm=confirm||null;dialog.i
 dialog.addEventListener('click',e=>{if(e.target===dialog){const r=dialog.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)dialog.close();}});
 const toastBox=document.createElement('div');toastBox.className='fs-toast';toastBox.setAttribute('role','status');document.body.append(toastBox);let toastTimer;
 function toast(text){toastBox.textContent=text;toastBox.classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>toastBox.classList.remove('visible'),3800)}
+document.addEventListener('click',async e=>{const button=e.target.closest('[data-copy-token-ca]');if(!button)return;try{await navigator.clipboard.writeText(button.dataset.copyTokenCa);button.textContent='Copied';toast('Token CA copied')}catch{toast('Could not copy token CA in this browser')}setTimeout(()=>{button.textContent='Copy'},1800)});
 document.addEventListener('click',e=>{const s=e.target.closest('[data-social]');if(!s)return;const href=socialLinks[s.dataset.social];if(href){if(s.tagName==='BUTTON')window.open(href,'_blank','noopener,noreferrer');return}e.preventDefault();modal(s.dataset.social+' is coming soon.','<p>Our official '+s.dataset.social+' channel is on its way. You’ll find it here when it launches.</p>');});
 const nav=$('.fs-nav');
 if(nav){const brand=$('img',nav);if(brand){brand.src='/assets/floatsheets-mark.png';brand.alt='FloatSheets logo';}
