@@ -175,9 +175,15 @@ export function createProtocolTransactionsRouter(
   };
   router.use((request, response, next) => {
     const version = contractVersionFromRequest(request);
-    if (version !== "goldlake" && ["/trade-quote", "/trade-check", "/quote"].includes(request.path)) {
-      response.status(409).json({ error: `New position opens are disabled on ${version}; select FloatSheets Goldlake.` });
-      return;
+    if (version !== "goldlake") {
+      if (["/trade-quote", "/trade-check", "/quote"].includes(request.path)) {
+        response.status(409).json({ error: `New position opens are disabled on ${version}; select FloatSheets Goldlake.` });
+        return;
+      }
+      if (["/approve", "/deposit", "/vault-approve", "/vault-deposit"].includes(request.path)) {
+        response.status(409).json({ error: `New margin and liquidity deposits are disabled on ${version}; existing positions and vault shares remain withdrawable.` });
+        return;
+      }
     }
     const versionRouter = versions[version as keyof typeof versions];
     if (!versionRouter) {

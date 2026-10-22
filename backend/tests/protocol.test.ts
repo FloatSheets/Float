@@ -154,8 +154,8 @@ test("builds a real USDG approval transaction", async () => {
   expect(deferred.body.transaction.data.length).toBeGreaterThan(10);
 });
 
-test("blocks new position issuance for retired versions", async () => {
-  for (const version of ["jasper", "meadow", "legacy-orion"] as const) {
+test("blocks new position issuance for every non-Goldlake version", async () => {
+  for (const version of ["silverlake", "amber", "jasper", "meadow", "legacy-orion"] as const) {
     const response = await request(server)
       .post("/v1/protocol/transactions/trade-quote")
       .set("x-floatsheets-contract-version", version)
@@ -165,10 +165,25 @@ test("blocks new position issuance for retired versions", async () => {
   }
 });
 
-test("builds legacy vault transactions against Legacy Orion", async () => {
-  const response = await request(server).post("/v1/protocol/transactions/vault-deposit")
+test("blocks all new deposits outside Goldlake while preserving legacy withdrawals", async () => {
+  for (const version of ["silverlake", "amber", "jasper", "meadow", "legacy-orion"] as const) {
+    for (const path of ["approve", "deposit", "vault-approve", "vault-deposit"]) {
+      const body = path === "approve" || path === "vault-approve"
+        ? { amountUsdg: "1000000" }
+        : path === "deposit"
+          ? { market: "NVDA", amountUsdg: "1000000" }
+          : { amountUsdg: "1000000", receiver: "0x1111111111111111111111111111111111111111" };
+      const response = await request(server).post(`/v1/protocol/transactions/${path}`)
+        .set("x-floatsheets-contract-version", version)
+        .send(body);
+      expect(response.status).toBe(409);
+      expect(response.body.error).toContain("deposits are disabled");
+    }
+  }
+
+  const response = await request(server).post("/v1/protocol/transactions/vault-withdraw")
     .set("x-floatsheets-contract-version", "legacy-orion")
-    .send({ amountUsdg: "1000000", receiver: "0x1111111111111111111111111111111111111111" });
+    .send({ shares: "1000000000000", receiver: "0x1111111111111111111111111111111111111111" });
   expect(response.status).toBe(200);
   expect(response.body.transaction.to).toBe(config.LEGACY_ORION_FLOAT_VAULT_ADDRESS);
 });
