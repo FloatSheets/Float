@@ -15,6 +15,10 @@ const CLOSE_QUOTE_RATE_LIMIT = 180;
 const OTHER_TRANSACTION_RATE_LIMIT = 60;
 const serverApiSecret = process.env["SERVER_API_SHARED_SECRET"];
 
+export function resetRateLimitsForTest(): void {
+  rateWindows.clear();
+}
+
 app.disable("x-powered-by");
 // Trust the browser IP forwarded by the frontend server only when it proves
 // possession of the server-to-server secret. Ignore client supplied XFF.

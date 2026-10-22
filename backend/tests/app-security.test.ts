@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test";
 import request from "supertest";
 
-import { app } from "../src/app";
+import { app, resetRateLimitsForTest } from "../src/app";
 
 test("sets API security headers and rate limits burst traffic", async () => {
   // Keep this burst isolated from requests made by other tests in this process.
+  resetRateLimitsForTest();
   const client = () => request(app).get("/health").set("X-Forwarded-For", "198.51.100.42");
   const first = await client();
   expect(first.status).toBe(200);

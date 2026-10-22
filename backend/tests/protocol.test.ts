@@ -119,27 +119,27 @@ test("builds a real USDG approval transaction", async () => {
     amountUsdg: "1000000", receiver: "0x1111111111111111111111111111111111111111"
   });
   expect(vaultDeposit.status).toBe(200);
-  expect(vaultDeposit.body.transaction.to).toBe(config.JASPER_FLOAT_VAULT_ADDRESS);
+  expect(vaultDeposit.body.transaction.to).toBe(config.SILVERLAKE_FLOAT_VAULT_ADDRESS);
   expect(vaultDeposit.body.transaction.data).toMatch(/^0x6e553f65/);
 
   const vaultWithdraw = await request(server).post("/v1/protocol/transactions/vault-withdraw").send({
     shares: "1000000000000", receiver: "0x1111111111111111111111111111111111111111"
   });
   expect(vaultWithdraw.status).toBe(200);
-  expect(vaultWithdraw.body.transaction.to).toBe(config.JASPER_FLOAT_VAULT_ADDRESS);
+  expect(vaultWithdraw.body.transaction.to).toBe(config.SILVERLAKE_FLOAT_VAULT_ADDRESS);
   expect(vaultWithdraw.body.transaction.data).toMatch(/^0x00f714ce/);
 
   const settleQueue = await request(server).post("/v1/protocol/transactions/vault-settle-queue").send({});
   expect(settleQueue.status).toBe(200);
-  expect(settleQueue.body.transaction.to).toBe(config.JASPER_FLOAT_VAULT_ADDRESS);
+  expect(settleQueue.body.transaction.to).toBe(config.SILVERLAKE_FLOAT_VAULT_ADDRESS);
   const claimDeposit = await request(server).post("/v1/protocol/transactions/vault-claim-deposit").send({ epoch: "3" });
   expect(claimDeposit.status).toBe(200);
-  expect(claimDeposit.body.transaction.to).toBe(config.JASPER_FLOAT_VAULT_ADDRESS);
+  expect(claimDeposit.body.transaction.to).toBe(config.SILVERLAKE_FLOAT_VAULT_ADDRESS);
   const claimWithdrawal = await request(server).post("/v1/protocol/transactions/vault-claim-withdrawal").send({
     epoch: "3", receiver: "0x1111111111111111111111111111111111111111"
   });
   expect(claimWithdrawal.status).toBe(200);
-  expect(claimWithdrawal.body.transaction.to).toBe(config.JASPER_FLOAT_VAULT_ADDRESS);
+  expect(claimWithdrawal.body.transaction.to).toBe(config.SILVERLAKE_FLOAT_VAULT_ADDRESS);
 
   const claim = await request(server).post("/v1/protocol/transactions/claim").send({ receiver: "0x1111111111111111111111111111111111111111" });
   expect(claim.status).toBe(200);
@@ -184,7 +184,7 @@ test("signs an oracle attestation only with the master admin key", async () => {
     .send({ marketId: "0x" + "11".repeat(32), priceE18: "1000000000000000000", spotPriceE18: "1000000000000000000", confidenceBps: "50", timestamp: String(now), sequence: "1", expiry: String(now + 60) });
   expect(response.status).toBe(200);
   expect(response.body.signature).toMatch(/^0x[0-9a-f]{130}$/);
-  expect(response.body.transaction.to).toBe(config.JASPER_FLOAT_ORACLE_ADDRESS);
+  expect(response.body.transaction.to).toBe(config.SILVERLAKE_FLOAT_ORACLE_ADDRESS);
 });
 
 test("bounds and database-rate-limits admin market configuration", async () => {
@@ -225,7 +225,7 @@ test("builds a trader quote and execution transaction without exposing the quote
   let circuitBroken = false;
   const rpc: RpcTransport = {
     call: async ({ to, data }) => {
-      if (to.toLowerCase() !== config.JASPER_FLOAT_CLEARING_HOUSE_ADDRESS!.toLowerCase()) {
+      if (to.toLowerCase() !== config.SILVERLAKE_FLOAT_CLEARING_HOUSE_ADDRESS!.toLowerCase()) {
         return encodeFunctionResult({ abi: oracleAbi, functionName: "getPrice", result: [100_000000000000000000n, 100_000000000000000000n, 25n, 0n, BigInt(Math.floor(Date.now() / 1000)), 9n, circuitBroken] });
       }
       const positionSelector = "0x" + encodeFunctionData({
@@ -257,7 +257,7 @@ test("builds a trader quote and execution transaction without exposing the quote
     expect(response.body.quote.feeUsdg).toBe("600000");
     expect(BigInt(response.body.quote.expiry) - BigInt(Math.floor(Date.now() / 1_000))).toBeLessThanOrEqual(15n);
     expect(response.body.signature).toMatch(/^0x[0-9a-f]{130}$/);
-    expect(response.body.transaction.to).toBe(config.JASPER_FLOAT_CLEARING_HOUSE_ADDRESS);
+    expect(response.body.transaction.to).toBe(config.SILVERLAKE_FLOAT_CLEARING_HOUSE_ADDRESS);
     expect(refreshedMarkets).toEqual([]);
 
     const closeResponse = await request(quoteServer).post("/v1/protocol/transactions/close-quote").send({
@@ -265,7 +265,7 @@ test("builds a trader quote and execution transaction without exposing the quote
     });
     expect(closeResponse.status).toBe(200);
     expect(closeResponse.body.quote.sizeDeltaE18).toBe("-10000000000000000000");
-    expect(closeResponse.body.transaction.to).toBe(config.JASPER_FLOAT_CLEARING_HOUSE_ADDRESS);
+    expect(closeResponse.body.transaction.to).toBe(config.SILVERLAKE_FLOAT_CLEARING_HOUSE_ADDRESS);
     expect(refreshedMarkets).toEqual([]);
     circuitBroken = true;
     const breakerClose = await request(quoteServer).post("/v1/protocol/transactions/close-quote").send({
@@ -293,7 +293,7 @@ test("accepts a signed, in-band improvement from the live buy matrix", async () 
     }
   } as unknown as Pool;
   const rpc: RpcTransport = {
-    call: async ({ to, data }) => to.toLowerCase() === config.JASPER_FLOAT_CLEARING_HOUSE_ADDRESS!.toLowerCase()
+    call: async ({ to, data }) => to.toLowerCase() === config.SILVERLAKE_FLOAT_CLEARING_HOUSE_ADDRESS!.toLowerCase()
       ? data.startsWith(encodeFunctionData({ abi: clearingAbi, functionName: "badDebtUsdg" }).slice(0, 10))
         ? encodeFunctionResult({ abi: clearingAbi, functionName: "badDebtUsdg", result: 0n })
         : data.startsWith(encodeFunctionData({ abi: clearingAbi, functionName: "getPosition", args: ["0x1111111111111111111111111111111111111111", (`0x${"00".repeat(32)}`) as `0x${string}`] }).slice(0, 10))
@@ -338,8 +338,8 @@ test("rejects an unfunded or vault-capacity-exceeding opening quote before walle
   } as unknown as Pool;
   const rpc: RpcTransport = {
     call: async ({ to, data }) => {
-      if (to.toLowerCase() === config.JASPER_FLOAT_VAULT_ADDRESS!.toLowerCase()) return encodeFunctionResult({ abi: vaultAbi, functionName: "totalAssets", result: 2_750_000n });
-      if (to.toLowerCase() === config.JASPER_FLOAT_ORACLE_ADDRESS!.toLowerCase()) return encodeFunctionResult({ abi: oracleAbi, functionName: "getPrice", result: [100_000000000000000000n, 100_000000000000000000n, 25n, 0n, BigInt(Math.floor(Date.now() / 1000)), 9n, false] });
+      if (to.toLowerCase() === config.SILVERLAKE_FLOAT_VAULT_ADDRESS!.toLowerCase()) return encodeFunctionResult({ abi: vaultAbi, functionName: "totalAssets", result: 2_750_000n });
+      if (to.toLowerCase() === config.SILVERLAKE_FLOAT_ORACLE_ADDRESS!.toLowerCase()) return encodeFunctionResult({ abi: oracleAbi, functionName: "getPrice", result: [100_000000000000000000n, 100_000000000000000000n, 25n, 0n, BigInt(Math.floor(Date.now() / 1000)), 9n, false] });
       if (data.startsWith(positionSelector)) return encodeFunctionResult({ abi: clearingAbi, functionName: "getPosition", result: [0n, 0n, margin, 0n] });
       if (data.startsWith(exposureSelector)) return encodeFunctionResult({ abi: clearingAbi, functionName: "marketExposure", result: [0n, 0n] });
       if (data.startsWith(badDebtSelector)) return encodeFunctionResult({ abi: clearingAbi, functionName: "badDebtUsdg", result: 0n });
