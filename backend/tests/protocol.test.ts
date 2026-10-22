@@ -51,7 +51,9 @@ const config = loadConfig({
   QUOTE_SIGNER_PRIVATE_KEY: signerKey,
   RHC_ID: "4663",
   RHC_RPC_URL: "https://rpc.mainnet.chain.robinhood.com",
-  UNISWAP_TWAP_WINDOW_SECONDS: "300"
+  UNISWAP_TWAP_WINDOW_SECONDS: "300",
+  // Weekend bands depend on the wall clock; their behavior is covered in weekend-bands tests.
+  WEEKEND_BANDS_ENABLED: "false"
 });
 
 const app = express();

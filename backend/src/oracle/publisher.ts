@@ -9,6 +9,7 @@ import { marketId } from "../chain/protocol";
 import type { RpcTransport } from "../chain/rpc";
 import { readClearingExposure, readClearingMarket, readOraclePrice } from "../chain/protocol-read";
 import { signPriceAttestation } from "../signing/signer";
+import { bandedOracleMarks, weekendBandOptions, WeekendBands } from "../markets/weekend-bands";
 import type { PriceAttestation } from "../signing/types";
 
 const oracleAbi = parseAbi([
@@ -71,11 +72,13 @@ export class OraclePublisher {
   private readonly wallet;
   private readonly publicClient;
   private readonly refreshing = new Map<string, Promise<void>>();
+  private readonly weekendBands: WeekendBands;
 
   constructor(private readonly database: Pool, private readonly rpc: RpcTransport, private readonly config: AppConfig) {
     const account = privateKeyToAccount(config.ORACLE_PUBLISHER_PRIVATE_KEY as Hex);
     this.wallet = createWalletClient({ account, chain: { ...robinhoodChain, rpcUrls: { default: { http: [config.RHC_RPC_URL] } } }, transport: http(config.RHC_RPC_URL) });
     this.publicClient = createPublicClient({ chain: { ...robinhoodChain, rpcUrls: { default: { http: [config.RHC_RPC_URL] } } }, transport: http(config.RHC_RPC_URL) });
+    this.weekendBands = new WeekendBands(database, weekendBandOptions(config));
   }
 
   async publishFreshMarkets(): Promise<void> {
@@ -151,8 +154,14 @@ export class OraclePublisher {
     if (observedAt > chainNow || chainNow - observedAt > BigInt(this.config.ORACLE_PRICE_MAX_AGE_SECONDS)) {
       throw new Error("market snapshot is stale relative to chain time");
     }
-    const twapPriceE18 = decimalToE18(row.twap_price_usdg);
-    const spotPriceE18 = decimalToE18(row.spot_price_usdg);
+    const poolTwapE18 = decimalToE18(row.twap_price_usdg);
+    const poolSpotE18 = decimalToE18(row.spot_price_usdg);
+    // While the underlying is closed, hold the mark inside the weekend band so
+    // a thin-liquidity wick cannot move PnL or trigger liquidations.
+    const marks = await bandedOracleMarks(this.weekendBands, row.symbol, poolTwapE18, poolSpotE18);
+    const twapPriceE18 = marks.twapE18;
+    const spotPriceE18 = marks.spotE18;
+    if (marks.clamped) console.log(JSON.stringify({ event: "oracle_mark_clamped_to_weekend_band", version, market: row.symbol }));
     const nextCircuitBroken = circuitBroken(twapPriceE18, spotPriceE18);
     // On-demand calls are still rate-limited by oracle freshness. A newer pool
     // sample alone does not justify a gas transaction; publish on first use,
