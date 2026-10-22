@@ -96,9 +96,18 @@
 .trade-share-panel{position:relative;width:min(900px,100%);max-height:94vh;overflow:auto;padding:18px;border:1px solid #294258;border-radius:18px;background:#0b1724;box-shadow:0 24px 90px #0008}
 .trade-share-preview{display:block;width:100%;height:auto;border-radius:10px}
 .trade-share-close{position:absolute;top:23px;right:23px;width:38px;height:38px;border:1px solid #ffffff35;border-radius:50%;background:#08111ecc;color:#fff;font-size:25px;line-height:1;cursor:pointer}
+.trade-share-editor{display:grid;gap:10px;margin-top:16px;color:#eaf2f8}.trade-share-editor>strong{font-size:14px}
+.trade-share-themes{display:flex;flex-wrap:wrap;gap:8px}
+.trade-share-theme{min-width:92px;padding:9px 13px;border:1px solid #ffffff25;border-radius:9px;background:linear-gradient(120deg,var(--theme-start),var(--theme-middle));color:#fff;font:600 13px Arial,sans-serif;cursor:pointer}
+.trade-share-theme:before{display:inline-block;width:8px;height:8px;margin-right:7px;border-radius:50%;background:var(--theme-brand);content:""}
+.trade-share-theme[aria-pressed=true]{border-color:var(--theme-brand);box-shadow:0 0 0 1px var(--theme-brand)}
+.trade-share-photo-row{display:flex;align-items:center;flex-wrap:wrap;gap:10px}.trade-share-photo-row label{position:relative;overflow:hidden;cursor:pointer}
+.trade-share-photo-row input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}
+.trade-share-photo-row span{flex:1 1 260px;color:#9eb1c2;font-size:12px;line-height:1.5}
+.trade-share-reset{border:0;background:transparent;color:#9eb1c2;font:500 12px Arial,sans-serif;text-decoration:underline;cursor:pointer}
 .trade-share-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:14px}
 .trade-share-actions button{min-height:42px}
-@media(max-width:600px){.trade-share-overlay{padding:10px}.trade-share-panel{padding:10px;border-radius:14px}.trade-share-actions{display:grid;grid-template-columns:1fr 1fr}.trade-share-actions button{padding:10px 8px;font-size:13px}}
+@media(max-width:600px){.trade-share-overlay{padding:10px}.trade-share-panel{padding:10px;border-radius:14px}.trade-share-actions{display:grid;grid-template-columns:1fr 1fr}.trade-share-actions button{padding:10px 8px;font-size:13px}.trade-share-themes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.trade-share-theme{min-width:0}}
 
 /* The only inline form feedback: a live, read-only contract-risk check. */
 .trade-contract-warning{margin:-8px 0 16px;padding:10px 12px;border:1px solid #e3ae34;border-radius:8px;background:#fff8df;color:#805900;font-size:12px;line-height:1.45}

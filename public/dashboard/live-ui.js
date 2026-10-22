@@ -359,14 +359,21 @@
     root.querySelectorAll('[data-pnl-mode]').forEach(function(button){button.setAttribute('aria-pressed',String((button.dataset.pnlMode === 'realized') === realized));});
   }
 
-  function createTradeShareCard(position){
+  const tradeCardThemes={
+    current:{label:'Ocean',brand:'#4de0b1',start:'#07111e',middle:'#102c39',end:'#061018',shape:'waves'},
+    aurora:{label:'Aurora',brand:'#b4a0ff',start:'#100d27',middle:'#183646',end:'#07121d',shape:'rings'},
+    ember:{label:'Ember',brand:'#ffb66e',start:'#271018',middle:'#432523',end:'#10111c',shape:'diagonal'},
+    mono:{label:'Mono',brand:'#d8e2ed',start:'#151a20',middle:'#30343a',end:'#0c1015',shape:'grid'}
+  };
+
+  function createTradeShareCard(position,themeName,backgroundImage){
     const width=1600,height=900,canvas=document.createElement('canvas');
     canvas.width=width;canvas.height=height;
     const context=canvas.getContext('2d');
     if(!context) throw new Error('This browser cannot create the trade image.');
     const pnl=BigInt(position.pnlUsdg),margin=BigInt(position.marginUsdg),size=BigInt(position.sizeE18);
     const entry=BigInt(position.entryPriceE18),mark=position.markPriceE18?BigInt(position.markPriceE18):entry;
-    const isLong=size>0n,positive=pnl>=0n,accent=positive?'#54e0ad':'#ff7387';
+    const isLong=size>0n,positive=pnl>=0n,accent=positive?'#54e0ad':'#ff7387',theme=tradeCardThemes[themeName]||tradeCardThemes.current;
     const price=function(raw){return '$'+(Number(raw)/1e18).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4});};
     const amount=function(raw){return (Number(raw)/1e6).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});};
     const pnlText=(pnl>0n?'+':pnl<0n?'−':'')+'$'+amount(pnl<0n?-pnl:pnl);
@@ -374,13 +381,27 @@
     const leverage=margin>0n?Number(notional)/Number(margin):0;
     const contractNames={jaguar:'JAGUAR',goldlake:'GOLDLAKE',silverlake:'SILVERLAKE',amber:'AMBER',jasper:'JASPER',meadow:'MEADOW','legacy-orion':'LEGACY ORION'};
     const version=contractNames[selectedContractVersion()]||'FLOATSHEETS';
-    const gradient=context.createLinearGradient(0,0,width,height);gradient.addColorStop(0,'#07111e');gradient.addColorStop(.58,'#102c39');gradient.addColorStop(1,'#061018');
-    context.fillStyle=gradient;context.fillRect(0,0,width,height);
+    if(backgroundImage){
+      const scale=Math.max(width/backgroundImage.width,height/backgroundImage.height),cropWidth=width/scale,cropHeight=height/scale;
+      context.drawImage(backgroundImage,(backgroundImage.width-cropWidth)/2,(backgroundImage.height-cropHeight)/2,cropWidth,cropHeight,0,0,width,height);
+      context.fillStyle='#061018b8';context.fillRect(0,0,width,height);
+      const photoShade=context.createLinearGradient(0,0,width,height);photoShade.addColorStop(0,'#07111e99');photoShade.addColorStop(1,'#061018cc');context.fillStyle=photoShade;context.fillRect(0,0,width,height);
+    }else{
+      const gradient=context.createLinearGradient(0,0,width,height);gradient.addColorStop(0,theme.start);gradient.addColorStop(.58,theme.middle);gradient.addColorStop(1,theme.end);
+      context.fillStyle=gradient;context.fillRect(0,0,width,height);
+    }
     const glow=context.createRadialGradient(1260,180,10,1260,180,600);glow.addColorStop(0,positive?'#1d796055':'#932e4650');glow.addColorStop(1,'#06101800');context.fillStyle=glow;context.fillRect(700,0,900,640);
     context.strokeStyle='#ffffff12';context.lineWidth=1;
-    for(let x=80;x<width;x+=80){context.beginPath();context.moveTo(x,360);context.lineTo(x,790);context.stroke();}
-    for(let y=360;y<800;y+=72){context.beginPath();context.moveTo(80,y);context.lineTo(1520,y);context.stroke();}
-    context.fillStyle='#4de0b1';context.beginPath();context.arc(95,105,10,0,Math.PI*2);context.arc(122,86,7,0,Math.PI*2);context.arc(125,123,7,0,Math.PI*2);context.fill();
+    if(theme.shape==='rings'){
+      context.strokeStyle=theme.brand+'24';context.lineWidth=2;for(let radius=150;radius<800;radius+=90){context.beginPath();context.arc(1300,420,radius,0,Math.PI*2);context.stroke();}
+    }else if(theme.shape==='diagonal'){
+      context.strokeStyle=theme.brand+'1c';context.lineWidth=3;for(let offset=-900;offset<1900;offset+=95){context.beginPath();context.moveTo(offset,900);context.lineTo(offset+650,0);context.stroke();}
+    }else if(theme.shape==='waves'){
+      context.strokeStyle=theme.brand+'24';context.lineWidth=3;for(let line=0;line<8;line++){context.beginPath();for(let x=650;x<=1600;x+=20){const y=370+line*46+Math.sin(x/130+line*.7)*34;if(x===650)context.moveTo(x,y);else context.lineTo(x,y);}context.stroke();}
+    }else{
+      context.strokeStyle='#ffffff16';context.lineWidth=1;for(let x=80;x<width;x+=80){context.beginPath();context.moveTo(x,360);context.lineTo(x,790);context.stroke();}for(let y=360;y<800;y+=72){context.beginPath();context.moveTo(80,y);context.lineTo(1520,y);context.stroke();}
+    }
+    context.fillStyle=theme.brand;context.beginPath();context.arc(95,105,10,0,Math.PI*2);context.arc(122,86,7,0,Math.PI*2);context.arc(125,123,7,0,Math.PI*2);context.fill();
     context.fillStyle='#f4f8ff';context.font='700 34px Arial';context.fillText('FLOATSHEETS',155,116);
     context.fillStyle='#8ea5b6';context.font='600 20px Arial';context.textAlign='right';context.fillText(version+' · POSITION SNAPSHOT',1515,108);context.textAlign='left';
     context.fillStyle='#9db3c3';context.font='600 22px Arial';context.fillText('OPEN POSITION',90,210);
@@ -401,10 +422,30 @@
   }
 
   function openTradeShare(position){
-    let canvas;
-    try{canvas=createTradeShareCard(position);}catch(error){showActionModal('Could not create trade image',error instanceof Error?error.message:'Please try again.');return;}
+    let canvas,themeName='current',backgroundImage=null;
+    try{canvas=createTradeShareCard(position,themeName,backgroundImage);}catch(error){showActionModal('Could not create trade image',error instanceof Error?error.message:'Please try again.');return;}
     const overlay=document.createElement('div');overlay.className='trade-share-overlay';overlay.setAttribute('role','dialog');overlay.setAttribute('aria-modal','true');overlay.setAttribute('aria-label','Share trade snapshot');
     const image=document.createElement('img');image.className='trade-share-preview';image.alt='FloatSheets '+position.symbol+' position snapshot';image.src=canvas.toDataURL('image/png');
+    const editor=document.createElement('div');editor.className='trade-share-editor';
+    const themeLabel=document.createElement('strong');themeLabel.textContent='Choose a style';editor.append(themeLabel);
+    const themes=document.createElement('div');themes.className='trade-share-themes';
+    function redraw(){canvas=createTradeShareCard(position,themeName,backgroundImage);image.src=canvas.toDataURL('image/png');}
+    Object.keys(tradeCardThemes).forEach(function(name){
+      const option=document.createElement('button');option.type='button';option.className='trade-share-theme';option.dataset.theme=name;option.textContent=tradeCardThemes[name].label;option.setAttribute('aria-pressed',String(name===themeName));
+      option.style.setProperty('--theme-start',tradeCardThemes[name].start);option.style.setProperty('--theme-middle',tradeCardThemes[name].middle);option.style.setProperty('--theme-brand',tradeCardThemes[name].brand);
+      option.addEventListener('click',function(){themeName=name;themes.querySelectorAll('[data-theme]').forEach(function(item){item.setAttribute('aria-pressed',String(item.dataset.theme===name));});redraw();});themes.append(option);
+    });
+    editor.append(themes);
+    const uploadRow=document.createElement('div');uploadRow.className='trade-share-photo-row';
+    const uploadLabel=document.createElement('label');uploadLabel.className='secondary-btn';uploadLabel.textContent='Add your photo';
+    const upload=document.createElement('input');upload.type='file';upload.accept='image/png,image/jpeg,image/webp';upload.setAttribute('aria-label','Choose a background photo');uploadLabel.append(upload);
+    const photoNote=document.createElement('span');photoNote.textContent='Optional. Your photo stays in this browser and is only included in the exported image.';uploadRow.append(uploadLabel,photoNote);
+    upload.addEventListener('change',function(){
+      const file=upload.files?.[0];if(!file)return;
+      if(!['image/png','image/jpeg','image/webp'].includes(file.type)||file.size>8*1024*1024){photoNote.textContent='Choose a PNG, JPG, or WebP image under 8 MB.';upload.value='';return;}
+      const reader=new FileReader();reader.onerror=function(){photoNote.textContent='Could not read that photo. Try another image.';};reader.onload=function(){const photo=new Image();photo.onload=function(){backgroundImage=photo;photoNote.textContent='Custom photo added. It has not been uploaded.';redraw();};photo.onerror=function(){photoNote.textContent='Could not open that photo. Try another image.';};photo.src=String(reader.result);};reader.readAsDataURL(file);
+    });
+    const removePhoto=document.createElement('button');removePhoto.type='button';removePhoto.className='trade-share-reset';removePhoto.textContent='Remove photo';removePhoto.addEventListener('click',function(){backgroundImage=null;upload.value='';photoNote.textContent='Optional. Your photo stays in this browser and is only included in the exported image.';redraw();});uploadRow.append(removePhoto);editor.append(uploadRow);
     const actions=document.createElement('div');actions.className='trade-share-actions';
     const download=document.createElement('button');download.type='button';download.className='secondary-btn';download.textContent='Download PNG';
     download.addEventListener('click',function(){const link=document.createElement('a');link.download='floatsheets-'+position.symbol.toLowerCase()+'-trade.png';link.href=image.src;link.click();});
@@ -420,7 +461,7 @@
     const close=document.createElement('button');close.type='button';close.className='trade-share-close';close.setAttribute('aria-label','Close share preview');close.textContent='×';
     close.addEventListener('click',function(){overlay.remove();});overlay.addEventListener('click',function(event){if(event.target===overlay)overlay.remove();});
     overlay.addEventListener('keydown',function(event){if(event.key==='Escape')overlay.remove();});
-    actions.append(download,share);const panel=document.createElement('section');panel.className='trade-share-panel';panel.append(close,image,actions);overlay.append(panel);document.body.append(overlay);close.focus();
+    actions.append(download,share);const panel=document.createElement('section');panel.className='trade-share-panel';panel.append(close,image,editor,actions);overlay.append(panel);document.body.append(overlay);close.focus();
   }
 
   async function renderWalletContext(){
