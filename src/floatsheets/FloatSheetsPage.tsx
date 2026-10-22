@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { pages } from "./pages";
 import { installWalletButton } from "@/lib/walletconnect";
-import { getKeeperStatus, getLiveMarket, getMarketHistory, getMarkets, getWeekendAllowance } from "@/lib/server-api";
+import { getFloatNews, getKeeperStatus, getLiveMarket, getMarketHistory, getMarkets, getWeekendAllowance } from "@/lib/server-api";
 
 type DashboardContractVersion = "goldlake" | "silverlake" | "amber" | "meadow" | "legacy-orion";
 type DashboardServerApi = {
   getMarkets: (version: DashboardContractVersion) => Promise<any>;
+  getFloatNews: () => Promise<any>;
   getLiveMarket: (symbol: string, version: DashboardContractVersion) => Promise<any>;
   getMarketHistory: (symbol: string, range: string, version: DashboardContractVersion) => Promise<any>;
   getKeeperStatus: () => Promise<any>;
@@ -87,6 +88,7 @@ export function FloatSheetsPage({ page }: { page: FloatPage }) {
     let removeWalletButton: (() => void) | undefined;
     const serverApi: DashboardServerApi = {
       getMarkets: (version) => getMarkets({ data: { version } }),
+      getFloatNews: () => getFloatNews(),
       getLiveMarket: (symbol, version) => getLiveMarket({ data: { symbol, version } }),
       getMarketHistory: (symbol, range, version) => getMarketHistory({ data: { symbol, range, version } }),
       getKeeperStatus: () => getKeeperStatus(),

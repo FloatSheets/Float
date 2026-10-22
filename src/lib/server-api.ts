@@ -42,6 +42,7 @@ function symbolInput(input: unknown) {
 
 export const getProtocol = createServerFn({ method: "GET" }).validator((input: unknown) => versionOf((input as JsonRecord | undefined)?.["version"])).handler(({ data }): Promise<any> => getJson("/v1/protocol", data));
 export const getMarkets = createServerFn({ method: "GET" }).validator((input: unknown) => versionOf((input as JsonRecord | undefined)?.["version"])).handler(({ data }): Promise<any> => getJson("/v1/markets", data));
+export const getFloatNews = createServerFn({ method: "GET" }).handler((): Promise<any> => getJson("/v1/news"));
 export const getMarket = createServerFn({ method: "GET" }).validator(symbolInput).handler(({ data }): Promise<any> => getJson(`/v1/markets/${data}`));
 export const getMarketQuotes = createServerFn({ method: "GET" }).validator(symbolInput).handler(({ data }): Promise<any> => getJson(`/v1/markets/${data}/quotes`));
 export const getMarketRisk = createServerFn({ method: "GET" }).validator(symbolInput).handler(({ data }): Promise<any> => getJson(`/v1/markets/${data}/risk`));
