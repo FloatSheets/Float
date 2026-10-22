@@ -230,7 +230,12 @@ export class PositionKeeper {
    * authoritative; a database lease prevents two service instances from
    * submitting the same epoch transactions at once. */
   private async advanceLpQueue(version: ContractVersion, chainNow: bigint): Promise<void> {
-    if (version === "jaguar" || version === "legacy-orion") return;
+    // Goldlake is the active queued-liquidity deployment. Jaguar settles LP
+    // deposits and withdrawals instantly, while older deployments have
+    // different vault/clearing-house ABIs and must not be probed with the
+    // current queue selectors. Position discovery and liquidation still run
+    // for those versions above.
+    if (version !== "goldlake") return;
     if (!this.chain.vaultQueueState || !this.chain.settleVaultQueue || !this.chain.startNextVaultEpoch) return;
     const versionConfig = contractConfigForVersion(this.config, version);
     const vault = versionConfig.FLOAT_VAULT_ADDRESS as Address;
