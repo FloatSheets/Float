@@ -7,6 +7,7 @@
   const icon = {USDG:'/usdg_logo.png',ETH:'/eth.jpeg'};
   function selectedContractVersion(){
     const selected=localStorage.getItem('floatsheets-contract-version-v1');
+    if(selected==='jaguar') return 'jaguar';
     if(selected==='legacy-orion') return 'legacy-orion';
     if(selected==='goldlake') return 'goldlake';
     if(selected==='copper') return 'copper';
@@ -216,8 +217,10 @@
           const wallet=walletApi();if(!wallet?.checkTrade) throw new Error('Trading checks are still loading.');
           const result=await wallet.checkTrade({market:selected.symbol,isLong:isLong,marginUsdg:margin.toString(),notionalUsdg:notional.toString(),targetLeverage:lev.toString()});
           if(request!==validationRequest||!ticket.isConnected)return;
-          tradeAccepted=result?.acceptable===true;
-          if(!tradeAccepted) showContractWarning(typeof result?.reason==='string'?result.reason:'This position is not available right now.',result?.field==='margin'?'margin':'leverage');
+          const firstPriceWillPublishOnQuote=result?.refresh_on_quote===true;
+          tradeAccepted=result?.acceptable===true||firstPriceWillPublishOnQuote;
+          if(firstPriceWillPublishOnQuote){warning.hidden=false;warning.textContent=typeof result?.reason==='string'?result.reason:'A first on-chain price will publish when you request a quote.';}
+          else if(!tradeAccepted) showContractWarning(typeof result?.reason==='string'?result.reason:'This position is not available right now.',result?.field==='margin'?'margin':'leverage');
         } catch(reason) {
           if(request!==validationRequest||!ticket.isConnected)return;
           tradeAccepted=false;showContractWarning(reason instanceof Error?reason.message:'This position could not be checked right now.','leverage');
@@ -343,6 +346,13 @@
 
   function paintPnl(snapshot, portfolio){
     const realized = portfolio && portfolioPnlMode === 'realized';
+    if(realized&&snapshot.realizedUsdg==null){
+      const value=root.querySelector('#wallet-market-pnl');if(!value)return;
+      root.querySelector('#pnl-label').textContent='Realized PnL';value.replaceChildren(document.createTextNode('—'));value.removeAttribute('data-value');
+      value.classList.remove('positive','negative');root.querySelector('#pnl-percent').textContent='—';
+      root.querySelector('#pnl-caption').textContent=snapshot.historyError||'Trading history is unavailable right now. Your open positions are still shown below.';
+      root.querySelectorAll('[data-pnl-mode]').forEach(function(button){button.setAttribute('aria-pressed',String(button.dataset.pnlMode==='realized'));});return;
+    }
     const raw = BigInt(realized ? snapshot.realizedUsdg : snapshot.unrealizedUsdg);
     const denominator = realized ? snapshot.depositedUsdg : snapshot.activeMarginUsdg;
     const value = root.querySelector('#wallet-market-pnl');
@@ -355,6 +365,114 @@
     percent.title = realized ? 'Return on total margin deposited across your markets.' : 'Return on the current margin backing your open positions.';
     root.querySelector('#pnl-caption').textContent = realized ? 'After trading fees · all markets' : (snapshot.stale ? 'Last available price · update delayed' : 'Before closing fees');
     root.querySelectorAll('[data-pnl-mode]').forEach(function(button){button.setAttribute('aria-pressed',String((button.dataset.pnlMode === 'realized') === realized));});
+  }
+
+  const tradeCardThemes={
+    current:{label:'Black',background:'#101113',foreground:'#f6f6f4',muted:'#97999d',line:'#ffffff1c'},
+    navy:{label:'Navy',background:'#14254a',foreground:'#f5f6fb',muted:'#a9b7d1',line:'#ffffff26'},
+    plum:{label:'Plum',background:'#322335',foreground:'#fcf5fa',muted:'#c0a9bd',line:'#ffffff26'},
+    paper:{label:'Ivory',background:'#f2efe7',foreground:'#171a20',muted:'#64656a',line:'#171a2026'}
+  };
+  let tradeCardLogoPromise;
+  function loadTradeCardLogo(){
+    if(!tradeCardLogoPromise)tradeCardLogoPromise=new Promise(function(resolve,reject){
+      const logo=new Image();logo.onload=function(){resolve(logo);};logo.onerror=function(){tradeCardLogoPromise=null;reject(new Error('Could not load the FloatSheets logo. Please try again.'));};logo.src='/assets/floatsheets-mark.png';
+    });
+    return tradeCardLogoPromise;
+  }
+
+  function createTradeShareCard(position,themeName,backgroundImage,logo){
+    const width=720,height=420,canvas=document.createElement('canvas');
+    canvas.width=width*2;canvas.height=height*2;
+    const ctx=canvas.getContext('2d');
+    if(!ctx)throw new Error('This browser cannot create the trade image.');
+    ctx.scale(2,2);
+    const theme=tradeCardThemes[themeName]||tradeCardThemes.current;
+    const light=!backgroundImage&&themeName==='paper';
+    const foreground=backgroundImage?'#ffffff':theme.foreground,muted=backgroundImage?'#d1d2d5':theme.muted;
+    const pnl=BigInt(position.pnlUsdg),margin=BigInt(position.marginUsdg),size=BigInt(position.sizeE18);
+    const entry=BigInt(position.entryPriceE18),mark=position.markPriceE18?BigInt(position.markPriceE18):entry;
+    const notional=mark*(size<0n?-size:size)/10n**30n;
+    const accent=pnl<0n?(light?'#c83251':'#ff7f98'):(light?'#087b54':'#54e4ad');
+    const amount=function(raw){const value=Number(raw)/1e6;return value.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:Math.abs(value)<1?6:2});};
+    const price=function(raw){return '$'+(Number(raw)/1e18).toLocaleString('en-US',{maximumFractionDigits:4,minimumFractionDigits:2});};
+    const text=function(value,x,y,font,color,maxWidth){
+      ctx.fillStyle=color;let pixels=font;ctx.font='500 '+pixels+'px Arial';
+      while(maxWidth&&ctx.measureText(value).width>maxWidth&&pixels>12){pixels--;ctx.font='500 '+pixels+'px Arial';}
+      ctx.fillText(value,x,y);
+    };
+    ctx.fillStyle=theme.background;ctx.fillRect(0,0,width,height);
+    if(backgroundImage){
+      const scale=Math.max(width/backgroundImage.width,height/backgroundImage.height),cw=width/scale,ch=height/scale;
+      ctx.drawImage(backgroundImage,(backgroundImage.width-cw)/2,(backgroundImage.height-ch)/2,cw,ch,0,0,width,height);
+      const shade=ctx.createLinearGradient(0,0,width,height);shade.addColorStop(0,'#08090ce8');shade.addColorStop(.6,'#08090c88');shade.addColorStop(1,'#08090cb8');ctx.fillStyle=shade;ctx.fillRect(0,0,width,height);
+    }
+    text(position.symbol,32,61,30,foreground,340);
+    const side=size>0n?'Long':'Short';
+    text(side+' / '+(margin>0n?Number(notional)/Number(margin):0).toFixed(1)+'×',33,88,14,muted);
+    ctx.save();ctx.filter=light?'none':'brightness(0) invert(1)';ctx.drawImage(logo,526,29,32,32);ctx.restore();
+    text('FloatSheets',564,52,20,foreground);
+    ctx.fillStyle=backgroundImage?'#ffffff33':theme.line;ctx.fillRect(32,111,656,1);
+    text('Margin',33,149,13,muted);text(amount(margin)+' USDG',33,175,18,foreground,230);
+    text('Position size',33,216,13,muted);text(amount(notional)+' USDG',33,242,18,foreground,230);
+    ctx.textAlign='right';
+    text('Unrealized PnL · USDG',687,150,13,muted);
+    const pnlText=(pnl>0n?'+':pnl<0n?'−':'')+amount(pnl<0n?-pnl:pnl);
+    text(pnlText,690,232,64,accent,430);
+    const pct=margin>0n?Number(pnl)*100/Number(margin):null;
+    text(pct===null?'—':(pct>0?'+':'')+pct.toLocaleString('en-US',{maximumFractionDigits:3})+'%',687,265,23,accent);
+    ctx.textAlign='left';
+    ctx.fillStyle=backgroundImage?'#ffffff33':theme.line;ctx.fillRect(32,307,656,1);
+    text('Entry price',33,338,12,muted);text(price(entry),33,365,19,foreground,250);
+    ctx.textAlign='right';text(position.stale?'Last mark · delayed':'Mark price',687,338,12,muted);text(price(mark),687,365,19,foreground,250);
+    text('floatsheets.app',687,399,11,muted);ctx.textAlign='left';
+    return canvas;
+  }
+
+  async function openTradeShare(position){
+    let logo;
+    try{logo=await loadTradeCardLogo();}catch(error){showActionModal('Could not create trade image',error.message);return;}
+    let canvas,themeName='current',backgroundImage=null;
+    try{canvas=createTradeShareCard(position,themeName,backgroundImage,logo);}catch(error){showActionModal('Could not create trade image',error instanceof Error?error.message:'Please try again.');return;}
+    const overlay=document.createElement('div');overlay.className='trade-share-overlay';overlay.setAttribute('role','dialog');overlay.setAttribute('aria-modal','true');overlay.setAttribute('aria-label','Share trade snapshot');
+    const image=document.createElement('img');image.className='trade-share-preview';image.alt='FloatSheets '+position.symbol+' position snapshot';image.src=canvas.toDataURL('image/png');
+    const editor=document.createElement('div');editor.className='trade-share-editor';
+    const themeLabel=document.createElement('strong');themeLabel.textContent='Choose a style';editor.append(themeLabel);
+    const themes=document.createElement('div');themes.className='trade-share-themes';
+    function redraw(){canvas=createTradeShareCard(position,themeName,backgroundImage,logo);image.src=canvas.toDataURL('image/png');}
+    Object.keys(tradeCardThemes).forEach(function(name){
+      const option=document.createElement('button');option.type='button';option.className='trade-share-theme';option.dataset.theme=name;option.textContent=tradeCardThemes[name].label;option.setAttribute('aria-pressed',String(name===themeName));
+      option.style.setProperty('--theme-background',tradeCardThemes[name].background);option.style.setProperty('--theme-foreground',tradeCardThemes[name].foreground);
+      option.addEventListener('click',function(){themeName=name;themes.querySelectorAll('[data-theme]').forEach(function(item){item.setAttribute('aria-pressed',String(item.dataset.theme===name));});redraw();});themes.append(option);
+    });
+    editor.append(themes);
+    const uploadRow=document.createElement('div');uploadRow.className='trade-share-photo-row';
+    const uploadLabel=document.createElement('label');uploadLabel.className='secondary-btn';uploadLabel.textContent='Add your photo';
+    const upload=document.createElement('input');upload.type='file';upload.accept='image/png,image/jpeg,image/webp';upload.setAttribute('aria-label','Choose a background photo');uploadLabel.append(upload);
+    const photoNote=document.createElement('span');photoNote.textContent='JPG, PNG or WebP · up to 8 MB';uploadRow.append(uploadLabel,photoNote);
+    upload.addEventListener('change',function(){
+      const file=upload.files?.[0];if(!file)return;
+      if(!['image/png','image/jpeg','image/webp'].includes(file.type)||file.size>8*1024*1024){photoNote.textContent='Choose a PNG, JPG, or WebP image under 8 MB.';upload.value='';return;}
+      const reader=new FileReader();reader.onerror=function(){photoNote.textContent='Could not read that photo. Try another image.';};reader.onload=function(){const photo=new Image();photo.onload=function(){backgroundImage=photo;photoNote.textContent='Photo added';redraw();};photo.onerror=function(){photoNote.textContent='Could not open that photo. Try another image.';};photo.src=String(reader.result);};reader.readAsDataURL(file);
+    });
+    const removePhoto=document.createElement('button');removePhoto.type='button';removePhoto.className='trade-share-reset';removePhoto.textContent='Remove photo';removePhoto.addEventListener('click',function(){backgroundImage=null;upload.value='';photoNote.textContent='JPG, PNG or WebP · up to 8 MB';redraw();});uploadRow.append(removePhoto);editor.append(uploadRow);
+    const actions=document.createElement('div');actions.className='trade-share-actions';
+    const download=document.createElement('button');download.type='button';download.className='secondary-btn';download.textContent='Download PNG';
+    download.addEventListener('click',function(){const link=document.createElement('a');link.download='floatsheets-'+position.symbol.toLowerCase()+'-trade.png';link.href=image.src;link.click();});
+    const share=document.createElement('button');share.type='button';share.className='primary-btn';share.textContent='Share image';
+    share.addEventListener('click',async function(){
+      try{
+        const blob=await new Promise(function(resolve,reject){canvas.toBlob(function(value){value?resolve(value):reject(new Error('Image export failed.'));},'image/png');});
+        const file=new File([blob],'floatsheets-'+position.symbol.toLowerCase()+'-trade.png',{type:'image/png'});
+        if(navigator.share&&navigator.canShare?.({files:[file]})) await navigator.share({files:[file],title:'My '+position.symbol+' position on FloatSheets',text:'Position snapshot from FloatSheets.'});
+        else {const link=document.createElement('a');link.download=file.name;link.href=URL.createObjectURL(blob);link.click();setTimeout(function(){URL.revokeObjectURL(link.href);},1000);share.textContent='Image downloaded';}
+      }catch(error){if(error?.name!=='AbortError')showActionModal('Could not share image',error instanceof Error?error.message:'Please download the image instead.');}
+    });
+    const heading=document.createElement('div');heading.className='trade-share-heading';const title=document.createElement('strong');title.textContent='Share position';heading.append(title);
+    const close=document.createElement('button');close.type='button';close.className='trade-share-close';close.setAttribute('aria-label','Close share preview');close.textContent='×';
+    close.addEventListener('click',function(){overlay.remove();});overlay.addEventListener('click',function(event){if(event.target===overlay)overlay.remove();});
+    overlay.addEventListener('keydown',function(event){if(event.key==='Escape')overlay.remove();});
+    actions.append(download,share);const panel=document.createElement('section');panel.className='trade-share-panel';heading.append(close);panel.append(heading,image,editor,actions);overlay.append(panel);document.body.append(overlay);close.focus();
   }
 
   async function renderWalletContext(){
@@ -390,12 +508,13 @@
       root.querySelector('#pnl-wallet-balance').textContent = balance;
       paintPnl(snapshot,portfolio);
       const open = snapshot.positions.filter(p=>BigInt(p.sizeE18)!==0n);
-      const table = '<div class="table-scroll"><table><thead><tr><th>Market</th><th>Direction</th><th>Base size</th><th>Entry price</th><th>Margin</th><th>uPnL (USDG)</th></tr></thead><tbody>'+open.map(function(p){
-        return '<tr><td>'+escapeMessage(p.symbol)+'</td><td class="'+(BigInt(p.sizeE18)>0n?'positive':'negative')+'">'+(BigInt(p.sizeE18)>0n?'Long':'Short')+'</td><td>'+Math.abs(Number(p.sizeE18)/1e18).toLocaleString(undefined,{maximumFractionDigits:8})+'</td><td>$'+(Number(p.entryPriceE18)/1e18).toLocaleString(undefined,{maximumFractionDigits:4})+'</td><td>'+displayUsdG(BigInt(p.marginUsdg))+' USDG</td><td>'+pnlDisplay.signedDecimal(p.pnlUsdg)+'</td></tr>';
+      const table = '<div class="table-scroll"><table><thead><tr><th>Market</th><th>Direction</th><th>Base size</th><th>Entry price</th><th>Margin</th><th>uPnL (USDG)</th>'+(portfolio?'<th>Share</th>':'')+'</tr></thead><tbody>'+open.map(function(p,index){
+        return '<tr><td>'+escapeMessage(p.symbol)+'</td><td class="'+(BigInt(p.sizeE18)>0n?'positive':'negative')+'">'+(BigInt(p.sizeE18)>0n?'Long':'Short')+'</td><td>'+Math.abs(Number(p.sizeE18)/1e18).toLocaleString(undefined,{maximumFractionDigits:8})+'</td><td>$'+(Number(p.entryPriceE18)/1e18).toLocaleString(undefined,{maximumFractionDigits:4})+'</td><td>'+displayUsdG(BigInt(p.marginUsdg))+' USDG</td><td>'+pnlDisplay.signedDecimal(p.pnlUsdg)+'</td>'+(portfolio?'<td><button class="small-btn" type="button" data-share-trade="'+index+'">Share</button></td>':'')+'</tr>';
       }).join('')+'</tbody></table></div>';
       if(portfolio){
         root.querySelector('#portfolio-position-count').textContent = String(open.length);
         root.querySelector('#portfolio-position-table').innerHTML = open.length ? table : '<div class="empty-state"><h3>No open positions</h3><p>Your closed trades are included in realized PnL.</p></div>';
+        root.querySelectorAll('[data-share-trade]').forEach(function(button){button.addEventListener('click',function(){const position=open[Number(button.dataset.shareTrade)];if(position)openTradeShare(position);});});
       } else {
         const position = snapshot.positions[0];
         root.querySelector('#wallet-market-margin').textContent = displayUsdG(BigInt(position.marginUsdg));
@@ -418,9 +537,10 @@
 
   function vaultPanel(){
     const wallet=walletState();
-    const withdrawalsOnly=!['goldlake','copper'].includes(selectedContractVersion());
+    // Jaguar and Copper use the instant-liquidity vault.
+    const version=selectedContractVersion(), instant=version==='jaguar'||version==='copper', withdrawalsOnly=version!=='goldlake'&&!instant;
     if(!wallet?.connected) return '<section class="panel live-only-panel"><h2>'+(withdrawalsOnly?'Withdraw liquidity':'Provide liquidity')+'</h2><p>'+(withdrawalsOnly?'Connect your wallet to manage or withdraw existing vault shares. New deposits are disabled for this version.':'Connect your wallet to deposit USDG and receive vault shares.')+'</p><button class="primary-btn" id="connect-to-vault" type="button">Connect wallet</button></section>';
-    return '<section class="panel live-only-panel" id="live-vault-panel"><h2>'+(withdrawalsOnly?'Manage legacy liquidity':'Provide liquidity')+'</h2><p>'+(withdrawalsOnly?'View existing shares and queue withdrawals. New liquidity deposits are disabled for this version.':'Your USDG helps back all FloatSheets markets. Your vault share value changes as traders profit or lose.')+'</p><div id="live-vault-data"><p>Loading vault balances.</p></div></section>';
+    return '<section class="panel live-only-panel" id="live-vault-panel"><h2>'+(withdrawalsOnly?'Manage legacy liquidity':instant?(version==='copper'?'Copper instant liquidity':'Jaguar instant liquidity'):'Provide liquidity')+'</h2><p>'+(withdrawalsOnly?'View existing shares and queue withdrawals. New liquidity deposits are disabled for this version.':instant?'Deposit and withdraw shares in one transaction when NAV is fresh and unreserved liquidity is available.':'Your USDG helps back all FloatSheets markets. Your vault share value changes as traders profit or lose.')+'</p><div id="live-vault-data"><p>Loading vault balances.</p></div></section>';
   }
 
   function claimCenterPanel(){
@@ -433,13 +553,13 @@
     const wallet=walletApi(),api=window.__FLOATSHEETS_SERVER_API__;
     if(!target||!wallet?.address||!api?.getClaims) return;
     try{
-      const report=await api.getClaims(wallet.address,fresh===true);
+      const report=await api.getClaims(wallet.address,fresh===true,selectedContractVersion());
       if(!target.isConnected) return;
       const usd=function(value){return '$'+Number(value).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});};
       if(badge) badge.textContent=Number(report.claimable_now_usdg)>0?usd(report.claimable_now_usdg)+' CLAIMABLE':report.action_count?report.action_count+' TO REVIEW':'ALL CLEAR';
       const sections=report.deployments.map(function(deployment){
         const rows=deployment.items.map(function(item,index){
-          const label=item.kind==='close_position'?'Close position':item.kind==='settle_epoch'?'Settle':item.kind==='queue_lp_withdrawal'?'Queue withdrawal':'Claim';
+          const label=item.kind==='close_position'?'Close position':item.kind==='settle_epoch'?'Settle':item.kind==='queue_lp_withdrawal'?'Queue withdrawal':item.kind==='withdraw_lp_instant'?'Withdraw now':'Claim';
           return '<div class="list-row"><div><strong>'+escapeHtml(item.title)+(item.amount_usdg?' · '+usd(item.amount_usdg):'')+'</strong><p>'+escapeHtml(item.detail)+'</p></div><button class="small-btn primary" type="button" data-claim-version="'+escapeHtml(deployment.version)+'" data-claim-index="'+index+'">'+label+'</button></div>';
         }).join('');
         const pending=Number(deployment.pending_payout_usdg)>0?'<p class="info-note">'+usd(deployment.pending_payout_usdg)+' of profit is still owed by the vault and becomes claimable as you withdraw or close.</p>':'';
@@ -523,7 +643,7 @@
       const now=Math.floor(Date.now()/1000),readyAt=Number(vault.epochStartedAt)+Number(vault.epochDuration),settleReady=!vault.epochSettled&&vault.navFresh&&now>=readyAt;
       // Copper deposits are open in the UI; the API refuses them (with a clear message)
       // until COPPER_LP_DEPOSITS_ENABLED or the depositor is on COPPER_LP_ALLOWLIST.
-      const depositsEnabled=['goldlake','copper'].includes(selectedContractVersion());
+      const instant=['jaguar','copper'].includes(selectedContractVersion()),depositsEnabled=selectedContractVersion()==='goldlake'||instant;
       const pending=(vault.requests||[]).filter(function(row){return (BigInt(row.depositAssets)>0n&&!row.depositClaimed)||(BigInt(row.withdrawalShares)>0n&&!row.withdrawalClaimed);});
       const requestRows=pending.map(function(row){
         const depositPending=BigInt(row.depositAssets)>0n&&!row.depositClaimed,withdrawPending=BigInt(row.withdrawalShares)>0n&&!row.withdrawalClaimed;
@@ -533,12 +653,12 @@
         const status=withdrawPending&&BigInt(row.settledWithdrawalShares||'0')===0n?'Withdrawal was deferred because vault liquidity was insufficient. Release your shares and retry later.':'Settlement is complete. Claim your shares or USDG.';
         return '<div class="list-row"><div><strong>Epoch '+row.epoch+' · '+text+'</strong><p>'+status+'</p></div><div>'+ (depositPending?'<button class="small-btn" data-claim-deposit="'+row.epoch+'">Claim shares</button> ':'')+withdrawalAction+'</div></div>';
       }).join('');
-      const queueStatus='<div class="list-row"><div><strong>Daily LP epoch · '+vault.epoch+'</strong><p>'+(vault.epochSettled?'This epoch is settled. New requests start the next epoch.':!vault.navFresh?'Settlement paused until all open markets have fresh, unbroken oracle marks.':settleReady?'The epoch is ready for settlement.':'Requests settle after '+new Date(readyAt*1000).toLocaleString()+'.')+'</p></div>'+(settleReady?'<button class="small-btn" id="settle-vault-queue">Settle requests</button>':'<span class="pill">'+(vault.epochSettled?'SETTLED':!vault.navFresh?'NAV PAUSED':'24 HOUR QUEUE')+'</span>')+'</div>';
-      target.innerHTML='<div class="metric-grid"><div class="metric featured"><small>Vault assets</small><strong>'+displayUsdG(assets)+'</strong><div class="metric-note"><span class="asset-ref"><img src="/usdg_logo.png" alt="USDG">USDG</span> · '+(vault.navFresh?'marked to open PnL':'NAV unavailable while oracle marks are stale')+'</div></div><div class="metric"><small>Your vault value</small><strong>'+displayUsdG(shareValue)+'</strong><div class="metric-note"><span class="asset-ref"><img src="/usdg_logo.png" alt="USDG">USDG</span> · '+ownership+'% of vault</div></div><div class="metric"><small>Available liquidity</small><strong>'+displayUsdG(available)+'</strong><div class="metric-note">After market stress reserve</div></div><div class="metric"><small>Insurance tranche</small><strong>'+displayUsdG(BigInt(vault.insuranceAssets))+'</strong><div class="metric-note">First-loss buffer</div></div></div><p class="info-note">'+(depositsEnabled?'Deposits and withdrawals enter a daily queue and are priced at epoch settlement.':'New deposits are disabled. Existing withdrawals and claims remain available.')+' Share value reflects current open trader PnL.</p>'+queueStatus+(requestRows?'<section class="queue-requests">'+requestRows+'</section>':'')+(depositsEnabled?tokenAmountInput('live-vault-deposit','USDG to deposit')+'<button class="primary-btn" id="submit-vault-deposit" type="button">Queue deposit</button>':'')+(usableShares>0n?'<button class="secondary-btn" id="submit-vault-withdraw" type="button">Queue withdrawal of available shares</button>':'');
+      const queueStatus=instant?'<div class="list-row"><div><strong>Instant LP access</strong><p>Deposits and withdrawals settle in one transaction when NAV is fresh and sufficient unreserved liquidity is available.</p></div><span class="pill">INSTANT</span></div>':'<div class="list-row"><div><strong>Daily LP epoch · '+vault.epoch+'</strong><p>'+(vault.epochSettled?'This epoch is settled. New requests start the next epoch.':!vault.navFresh?'Settlement paused until all open markets have fresh, unbroken oracle marks.':settleReady?'The epoch is ready for settlement.':'Requests settle after '+new Date(readyAt*1000).toLocaleString()+'.')+'</p></div>'+(settleReady?'<button class="small-btn" id="settle-vault-queue">Settle requests</button>':'<span class="pill">'+(vault.epochSettled?'SETTLED':!vault.navFresh?'NAV PAUSED':'24 HOUR QUEUE')+'</span>')+'</div>';
+      target.innerHTML='<div class="metric-grid"><div class="metric featured"><small>Vault assets</small><strong>'+displayUsdG(assets)+'</strong><div class="metric-note"><span class="asset-ref"><img src="/usdg_logo.png" alt="USDG">USDG</span> · '+(vault.navFresh?'marked to open PnL':'NAV unavailable while oracle marks are stale')+'</div></div><div class="metric"><small>Your vault value</small><strong>'+displayUsdG(shareValue)+'</strong><div class="metric-note"><span class="asset-ref"><img src="/usdg_logo.png" alt="USDG">USDG</span> · '+ownership+'% of vault</div></div><div class="metric"><small>Available liquidity</small><strong>'+displayUsdG(available)+'</strong><div class="metric-note">After market stress reserve</div></div><div class="metric"><small>Insurance tranche</small><strong>'+displayUsdG(BigInt(vault.insuranceAssets))+'</strong><div class="metric-note">First-loss buffer</div></div></div><p class="info-note">'+(instant?'Deposits mint shares immediately. Withdrawals pay immediately up to available unreserved liquidity.':depositsEnabled?'Deposits and withdrawals enter a daily queue and are priced at epoch settlement.':'New deposits are disabled. Existing withdrawals and claims remain available.')+' Share value reflects current open trader PnL.</p>'+queueStatus+(requestRows?'<section class="queue-requests">'+requestRows+'</section>':'')+(depositsEnabled?tokenAmountInput('live-vault-deposit','USDG to deposit')+'<button class="primary-btn" id="submit-vault-deposit" type="button">'+(instant?'Deposit instantly':'Queue deposit')+'</button>':'')+(usableShares>0n?'<button class="secondary-btn" id="submit-vault-withdraw" type="button">'+(instant?'Withdraw available liquidity now':'Queue withdrawal of available shares')+'</button>':'');
       const input=target.querySelector('#live-vault-deposit'),deposit=target.querySelector('#submit-vault-deposit'),withdraw=target.querySelector('#submit-vault-withdraw');
       input?.addEventListener('input',function(){paintTokenAmount(input);});paintTokenAmount(input);
-      deposit?.addEventListener('click',async function(){try{const amount=rawUsdG(input.value);if(amount===0n)throw new Error('Enter a USDG amount greater than zero.');deposit.disabled=true;const allowance=await wallet.vaultAllowance();if(allowance<amount){deposit.textContent='Confirm USDG approval…';const approval=await wallet.buildTransaction('vault-approve',{amountUsdg:amount.toString()});await wallet.send(approval.transaction);}deposit.textContent='Confirm queue request…';const tx=await wallet.buildTransaction('vault-deposit',{amountUsdg:amount.toString()});const hash=await wallet.send(tx.transaction);render();showActionModal('Deposit queued','Your USDG deposit is queued for daily epoch settlement. Transaction: '+hash);}catch(reason){deposit.disabled=false;deposit.textContent='Queue deposit';showActionModal('Could not queue deposit',reason instanceof Error?reason.message:'Deposit could not be queued.');}});
-      withdraw?.addEventListener('click',async function(){try{withdraw.disabled=true;withdraw.textContent='Confirm queue request…';const tx=await wallet.buildTransaction('vault-withdraw',{shares:usableShares.toString()});const hash=await wallet.send(tx.transaction);render();showActionModal('Withdrawal queued','Your shares are queued for daily epoch settlement. Transaction: '+hash);}catch(reason){withdraw.disabled=false;withdraw.textContent='Queue withdrawal of available shares';showActionModal('Could not queue withdrawal',reason instanceof Error?reason.message:'Withdrawal could not be queued.');}});
+      deposit?.addEventListener('click',async function(){try{const amount=rawUsdG(input.value);if(amount===0n)throw new Error('Enter a USDG amount greater than zero.');deposit.disabled=true;const allowance=await wallet.vaultAllowance();if(allowance<amount){deposit.textContent='Confirm USDG approval…';const approval=await wallet.buildTransaction('vault-approve',{amountUsdg:amount.toString()});await wallet.send(approval.transaction);}deposit.textContent=instant?'Confirm instant deposit…':'Confirm queue request…';const tx=await wallet.buildTransaction('vault-deposit',{amountUsdg:amount.toString()});const hash=await wallet.send(tx.transaction);render();showActionModal(instant?'Deposit complete':'Deposit queued',instant?'Shares were minted in the confirmed transaction. Transaction: '+hash:'Your USDG deposit is queued for daily epoch settlement. Transaction: '+hash);}catch(reason){deposit.disabled=false;deposit.textContent=instant?'Deposit instantly':'Queue deposit';showActionModal('Could not deposit liquidity',reason instanceof Error?reason.message:'Deposit could not be completed.');}});
+      withdraw?.addEventListener('click',async function(){try{withdraw.disabled=true;withdraw.textContent=instant?'Confirm instant withdrawal…':'Confirm queue request…';const tx=await wallet.buildTransaction('vault-withdraw',{shares:usableShares.toString()});const hash=await wallet.send(tx.transaction);render();showActionModal(instant?'Withdrawal complete':'Withdrawal queued',instant?'Available USDG was transferred in the confirmed transaction. Transaction: '+hash:'Your shares are queued for daily epoch settlement. Transaction: '+hash);}catch(reason){withdraw.disabled=false;withdraw.textContent=instant?'Withdraw available liquidity now':'Queue withdrawal of available shares';showActionModal('Could not withdraw liquidity',reason instanceof Error?reason.message:'Withdrawal could not be completed.');}});
       target.querySelector('#settle-vault-queue')?.addEventListener('click',async function(event){const button=event.currentTarget;try{button.disabled=true;const tx=await wallet.buildTransaction('vault-settle-queue',{});const hash=await wallet.send(tx.transaction);render();showActionModal('LP epoch settled','Queued deposits and withdrawals were priced at the same vault NAV. Transaction: '+hash);}catch(reason){button.disabled=false;showActionModal('Could not settle LP requests',reason instanceof Error?reason.message:'Epoch settlement failed.');}});
       target.querySelectorAll('[data-claim-deposit]').forEach(function(button){button.addEventListener('click',async function(){try{const epoch=button.getAttribute('data-claim-deposit');const tx=await wallet.buildTransaction('vault-claim-deposit',{epoch});const hash=await wallet.send(tx.transaction);render();showActionModal('Shares claimed','Your queued deposit shares were claimed. Transaction: '+hash);}catch(reason){showActionModal('Could not claim shares',reason instanceof Error?reason.message:'Share claim failed.');}});});
       target.querySelectorAll('[data-claim-withdrawal]').forEach(function(button){button.addEventListener('click',async function(){try{const epoch=button.getAttribute('data-claim-withdrawal');const tx=await wallet.buildTransaction('vault-claim-withdrawal',{epoch,receiver:wallet.address});const hash=await wallet.send(tx.transaction);render();showActionModal('Withdrawal claimed','Your queued USDG withdrawal was claimed. Transaction: '+hash);}catch(reason){showActionModal('Could not claim withdrawal',reason instanceof Error?reason.message:'Withdrawal claim failed.');}});});
@@ -672,12 +792,13 @@
     }
     if(!document.getElementById('contract-version-select')){
       const versionRow=document.createElement('div'); versionRow.className='list-row contract-version-row';
-      versionRow.innerHTML='<div><strong>Contract version</strong><p>Choose which FloatSheets contracts power your dashboard and wallet actions.</p></div><select id="contract-version-select" aria-label="Contract version"><option value="goldlake">FloatSheets Goldlake · large caps</option><option value="copper">FloatSheets Copper · penny stocks</option><option value="silverlake">FloatSheets Silverlake · legacy access</option><option value="amber" disabled>FloatSheets Amber · retired</option><option value="jasper" disabled>FloatSheets Jasper · paused</option><option value="meadow" disabled>FloatSheets Meadow · paused</option><option value="legacy-orion">FloatSheets Legacy Orion · vault access</option></select>';
+      versionRow.innerHTML='<div><strong>Contract version</strong><p>Choose which FloatSheets contracts power your dashboard and wallet actions.</p></div><select id="contract-version-select" aria-label="Contract version"><option value="goldlake">FloatSheets Goldlake · large caps</option><option value="copper">FloatSheets Copper · penny stocks</option><option value="jaguar" disabled>FloatSheets Jaguar · instant LP access · setup in progress</option><option value="silverlake">FloatSheets Silverlake · legacy access</option><option value="amber" disabled>FloatSheets Amber · retired</option><option value="jasper" disabled>FloatSheets Jasper · paused</option><option value="meadow" disabled>FloatSheets Meadow · paused</option><option value="legacy-orion">FloatSheets Legacy Orion · vault access</option></select>';
       settingsPanel.append(versionRow);
       const select=versionRow.querySelector('select');
       select.value=selectedContractVersion();
+      window.__FLOATSHEETS_SERVER_API__?.getProtocol?.('jaguar').then(function(){const option=select.querySelector('option[value="jaguar"]');if(option){option.disabled=false;option.textContent='FloatSheets Jaguar · instant LP access';}if(localStorage.getItem('floatsheets-contract-version-v1')==='jaguar')select.value='jaguar';}).catch(function(){});
       select.addEventListener('change',function(){
-        const version=select.value==='legacy-orion'?'legacy-orion':select.value==='silverlake'?'silverlake':select.value==='copper'?'copper':'goldlake';
+        const version=select.value==='jaguar'?'jaguar':select.value==='legacy-orion'?'legacy-orion':select.value==='silverlake'?'silverlake':select.value==='copper'?'copper':'goldlake';
         localStorage.setItem('floatsheets-contract-version-v1',version);
         window.dispatchEvent(new CustomEvent('floatsheets-contract-version-change',{detail:{version:version}}));
       });
@@ -696,7 +817,7 @@
     if(window.__FLOATSHEETS_WELCOME_SHOWN__||typeof modal!=='function')return;
     window.__FLOATSHEETS_WELCOME_SHOWN__=true;
     const version=selectedContractVersion();
-    const name=version==='legacy-orion'?'FloatSheets Legacy Orion':version==='goldlake'?'FloatSheets Goldlake':version==='copper'?'FloatSheets Copper':version==='amber'?'FloatSheets Amber':version==='silverlake'?'FloatSheets Silverlake':'FloatSheets Silverlake';
+    const name=version==='jaguar'?'FloatSheets Jaguar':version==='legacy-orion'?'FloatSheets Legacy Orion':version==='goldlake'?'FloatSheets Goldlake':version==='copper'?'FloatSheets Copper':version==='amber'?'FloatSheets Amber':version==='silverlake'?'FloatSheets Silverlake':'FloatSheets Silverlake';
     modal('Welcome to FloatSheets.','<p>Your dashboard is using <strong>'+name+'</strong>.</p><p>You can switch contract versions any time in <strong>Settings → Contract version</strong>. The selected version controls the contracts used for your wallet, positions, oracle data, and vault.</p>','Open Settings',function(){dialog.close();location.hash='settings';});
   }
 

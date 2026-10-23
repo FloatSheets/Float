@@ -2,7 +2,7 @@
 pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
-import {FloatVault} from "../src/FloatVault.sol";
+import {FloatInstantVault} from "../src/FloatInstantVault.sol";
 import {FloatOracle} from "../src/FloatOracle.sol";
 import {FloatClearingHouse} from "../src/FloatClearingHouse.sol";
 import {MockUsdG} from "./FloatSecurity.t.sol";
@@ -20,14 +20,14 @@ contract CopperReleaseTest is Test {
 
     MockUsdG private token;
     FloatOracle private oracle;
-    FloatVault private vault;
+    FloatInstantVault private vault;
     FloatClearingHouse private clearing;
     uint64 private sequence;
 
     function setUp() public {
         token = new MockUsdG();
         oracle = new FloatOracle(address(this), vm.addr(ORACLE_KEY));
-        vault = new FloatVault(address(this), address(token));
+        vault = new FloatInstantVault(address(this), address(token));
         clearing = new FloatClearingHouse(
             address(this), address(token), address(vault), address(oracle), vm.addr(QUOTE_KEY), address(this), 120
         );
@@ -36,14 +36,12 @@ contract CopperReleaseTest is Test {
         clearing.registerMarket(PENNY, _market(5, 500));
         oracle.enableInitialMarket(PENNY);
 
+        // Copper uses the instant vault: team liquidity counts as soon as it is deposited.
+        _publish(5 * E18, 5 * E18);
         token.mint(address(this), 200_000 * USDG);
         token.approve(address(vault), type(uint256).max);
         vault.deposit(200_000 * USDG, address(this));
-        vm.warp(block.timestamp + vault.QUEUE_EPOCH_DURATION());
-        _publish(5 * E18, 5 * E18);
-        vault.settleQueue();
-        vault.claimDeposit(vault.queueEpoch());
-        vault.startNextQueueEpoch();
+        assertEq(vault.totalAssets(), 200_000 * USDG);
         for (uint256 i; i < 2; ++i) {
             address trader = i == 0 ? TRADER : TRADER_TWO;
             token.mint(trader, 10_000 * USDG);
@@ -145,23 +143,34 @@ contract CopperReleaseTest is Test {
     }
 
     function _publish(uint256 twap, uint256 spot) private {
-        FloatOracle.PriceAttestation memory a =
-            FloatOracle.PriceAttestation(PENNY, twap, spot, 50, uint64(block.timestamp), ++sequence, uint64(block.timestamp + 60));
+        FloatOracle.PriceAttestation memory a = FloatOracle.PriceAttestation(
+            PENNY, twap, spot, 50, uint64(block.timestamp), ++sequence, uint64(block.timestamp + 60)
+        );
         bytes32 structHash = keccak256(
             abi.encode(
                 keccak256(
                     "PriceAttestation(bytes32 marketId,uint256 priceE18,uint256 spotPriceE18,uint256 confidenceBps,uint64 timestamp,uint64 sequence,uint64 expiry)"
                 ),
-                a.marketId, a.priceE18, a.spotPriceE18, a.confidenceBps, a.timestamp, a.sequence, a.expiry
+                a.marketId,
+                a.priceE18,
+                a.spotPriceE18,
+                a.confidenceBps,
+                a.timestamp,
+                a.sequence,
+                a.expiry
             )
         );
         bytes32 domain = keccak256(
             abi.encode(
                 keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
-                keccak256("FloatSheetsOracle"), keccak256("1"), block.chainid, address(oracle)
+                keccak256("FloatSheetsOracle"),
+                keccak256("1"),
+                block.chainid,
+                address(oracle)
             )
         );
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(ORACLE_KEY, keccak256(abi.encodePacked("\x19\x01", domain, structHash)));
+        (uint8 v, bytes32 r, bytes32 s) =
+            vm.sign(ORACLE_KEY, keccak256(abi.encodePacked("\x19\x01", domain, structHash)));
         oracle.publish(a, abi.encodePacked(r, s, v));
     }
 
@@ -191,17 +200,28 @@ contract CopperReleaseTest is Test {
                 keccak256(
                     "TradeQuote(bytes32 marketId,address trader,int256 sizeDeltaE18,uint256 executionPriceE18,uint256 feeUsdg,uint256 maxLeverageE18,uint64 oracleSequence,uint64 nonce,uint64 expiry)"
                 ),
-                quote.marketId, quote.trader, quote.sizeDeltaE18, quote.executionPriceE18, quote.feeUsdg,
-                quote.maxLeverageE18, quote.oracleSequence, quote.nonce, quote.expiry
+                quote.marketId,
+                quote.trader,
+                quote.sizeDeltaE18,
+                quote.executionPriceE18,
+                quote.feeUsdg,
+                quote.maxLeverageE18,
+                quote.oracleSequence,
+                quote.nonce,
+                quote.expiry
             )
         );
         bytes32 domain = keccak256(
             abi.encode(
                 keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
-                keccak256("FloatSheetsClearing"), keccak256("1"), block.chainid, address(clearing)
+                keccak256("FloatSheetsClearing"),
+                keccak256("1"),
+                block.chainid,
+                address(clearing)
             )
         );
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(QUOTE_KEY, keccak256(abi.encodePacked("\x19\x01", domain, structHash)));
+        (uint8 v, bytes32 r, bytes32 s) =
+            vm.sign(QUOTE_KEY, keccak256(abi.encodePacked("\x19\x01", domain, structHash)));
         return abi.encodePacked(r, s, v);
     }
 

@@ -1,0 +1,86 @@
+{
+  "chainId": 4663,
+  "network": "Robinhood Chain",
+  "version": "floatsheets-jaguar",
+  "settlementAsset": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+  "owner": "0x4a4c4e9Ad9afc8c5603ef5EA91cEf98CCdFE91f3",
+  "deployer": "0x4a4c4e9Ad9afc8c5603ef5EA91cEf98CCdFE91f3",
+  "oracle": "0x3b626C2Cdb2682852d5410971c35c25979A3C2Df",
+  "vault": "0x1ED22D8f5a0762754178aDE4a71Ca731EF480dc3",
+  "clearingHouse": "0x50672E55C5824ee757b929224d0341ADbFFac361",
+  "oracleSigner": "0x9417f45d924b43587fE1a03803001fA073ce3a5a",
+  "quoteSigner": "0x325Fd0FA56AC44dfe6015c6F4c2C426967aFb3ad",
+  "feeRecipient": "0x5140a99bf0fB56637a3DBDA7685cc4E190F15c94",
+  "deploymentTransactions": [
+    "0xeceafc8055cd0ab4205da9e3aa10d458518ef4ee274243c1738365895b2ca107",
+    "0x36114e61fbe980b7c270b9c1ba3cc3681820c868064178cb1d5c10254861b0d3",
+    "0x3181d1ccb91f39f8d0e36f907545dcd355d3f8f719c12132e5d9997b49f2ef6a",
+    "0x5b12cfdbf4929b817665dca60faddc512b0afadaa6a856d35a80a11f64a56ce5"
+  ],
+  "deploymentBlock": 95315783,
+  "verification": {
+    "runtimeBytecode": "matches local Foundry artifacts for all three contracts after masking immutable constructor slots",
+    "vaultAsset": "matches USDG",
+    "vaultClearingHouseLink": "matches deployed clearing house",
+    "oracleSigner": "matches configured oracle signer",
+    "quoteSigner": "matches configured quote signer",
+    "owner": "matches configured owner"
+  },
+  "markets": {
+    "active": [
+      "NVDA",
+      "SPCX",
+      "CRCL",
+      "MU",
+      "TSLA",
+      "RDDT",
+      "MSTR",
+      "AMC"
+    ],
+    "closeOnly": [
+      "PLTR",
+      "QUBT"
+    ],
+    "retired": [
+      "HIMS"
+    ]
+  },
+  "configurationBatches": [
+    [
+      "0x36c9fc3bdf481efb9c49cad5af306a6b8bade4324bace4c523088d8e90ca4122",
+      "0xcc81ef65c1110c1093e9b774963c8ca365b8bd267d0e1e4d4d7ab5ec3df1adb9",
+      "0x80bf94830e693484ee562af3530279f9d841294a4a58133178ec3c28619b343d",
+      "0x8d878ab7f9464545a2e7fc079281f3a4b7cfffcc00fedb5a2848405d04ce3c36",
+      "0xc8773f8fc40799757f69ed7553ee59f45354d69310837ed76be9123a34751baf",
+      "0x87ee0bfba4634d941ebe5753bc15b3382bb5248c468e680421f59ea39877f649",
+      "0x60f0c4e566cd772c2ca3eea32df926502206b84b96fa39018fe68a2a6ba15ae0",
+      "0x6f00c4c8c384f570dfaf0c2bdd585264b58a60397c5f09a7999acdd534f81130"
+    ],
+    [
+      "0x8fa82d31a5a3f45a8f8bc5644dfce8da82af95448794949015bb7237ae9908d2",
+      "0x2b94c0cbf0b4512f99fbab3917b5d59ca9f25b399efdf9b0de168fffc667242d",
+      "0xbbdc65c15d4af39ac1bf127e2c64f20f27ccc8831e709a4b535a5afdce9e9fcd",
+      "0xf5109fe0508a1518a11a5dbaab69b573059ec9fe26d6bdadeef4cc5b14bfbd7b",
+      "0x5a7e01a895c6dc55262c07b833dec75e16d210366171a31bde5477542405f1d1",
+      "0x0cdb5b6b529afae08fa7dde924d10c69fe04751641715998e63b3621b21a9643",
+      "0xb2aa50f2eb01e3ed88b5e178e15ac011b69d0178fd023eefcd5ee9f9fc8f4dd2",
+      "0xfa4c77954ba80cfef1e81c29818c42de8d7b1f7b1838ee621d29f1158b311412"
+    ],
+    [
+      "0x4005f422d0e33c4ad9d73caaf49287ecb059710d37e097ad48f6c4ffd791b352",
+      "0xa713fa4f5dc0cd4e69b44a90a93941bf24a8ddb8669aff5d66c5faa5248fc871",
+      "0xbc5c3767863c25de62961097a9bda1ce1d45da16529b1ed9200067c1826336e3",
+      "0x9c3945d0a27a0f9fbe63d88914924550ae31848515777e970e735e137536683a"
+    ],
+    [
+      "0xa04f106c14274ed14715b3f020fbf4ca7b5a495efd664df4a6a8963ca6e86234",
+      "0x68f2f1e146f1719777dd833722345975662a96c12351ddca9b76c7371c6c1efd",
+      "0xfa211ac925d0931c7d26b8190a5d04a9e1a43403061797a0ce93dc0816b7ae7f",
+      "0x112442e61403f7c8e7c6422b1e0174f5cb249f617f6e589d9ea59350fed01d22"
+    ]
+  ],
+  "notes": [
+    "No LP funds were seeded as part of deployment.",
+    "Goldlake remains the frontend default; Jaguar is selectable in Settings."
+  ]
+}

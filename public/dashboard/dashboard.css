@@ -92,6 +92,25 @@
 .dashboard-dark .token-amount-shell{background:transparent;border-color:#2a3b5b}.dashboard-dark .token-amount-shell:focus-within{border-color:#809dff;box-shadow:0 0 0 3px #809dff22}.dashboard-dark .token-amount-value,.dashboard-dark .token-amount-value input{color:#edf3ff!important}.dashboard-dark .token-amount-value>span{color:#8493aa}.dashboard-dark .token-amount-value input::placeholder{color:#526179}.dashboard-dark .token-amount-token,.dashboard-dark .token-amount-equivalent{color:#9fb2d4}
 @media(max-width:720px){.token-amount-shell{padding:14px 12px 16px;border-radius:14px}.token-amount-value input{font-size:clamp(38px,13vw,54px)!important}.token-amount-value>span{font-size:clamp(30px,10vw,42px)}.token-amount-equivalent{font-size:13px}}
 
+.trade-share-overlay{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;padding:18px;background:#050609b8;backdrop-filter:blur(8px)}
+.trade-share-panel{width:min(620px,100%);max-height:92vh;overflow:auto;padding:20px;border:1px solid #ffffff1c;border-radius:16px;background:#18191d;color:#f2f2f2;box-shadow:0 24px 90px #0006}
+.trade-share-heading{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;font-size:16px;font-weight:500}
+.trade-share-close{width:28px;height:28px;border:0;border-radius:6px;background:transparent;color:#9e9fa5;font-size:24px;line-height:1;cursor:pointer}
+.trade-share-preview{display:block;width:100%;height:auto;border:1px solid #ffffff14;border-radius:8px}
+.trade-share-editor{display:grid;gap:10px;margin-top:18px}.trade-share-editor>strong{color:#a7a8af;font-size:12px;font-weight:500}
+.trade-share-themes{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.trade-share-theme{padding:11px 10px;border:1px solid #ffffff1f;border-radius:6px;background:var(--theme-background);color:var(--theme-foreground);font:500 12px Arial,sans-serif;cursor:pointer}
+.trade-share-theme[aria-pressed=true]{outline:1px solid #e6e7eb;outline-offset:2px}
+.trade-share-photo-row{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-top:8px}.trade-share-photo-row label{position:relative;overflow:hidden;cursor:pointer}
+.trade-share-photo-row input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}
+.trade-share-photo-row span{flex:1 1 150px;color:#8c8e98;font-size:11px;line-height:1.5}
+.trade-share-reset{border:0;background:transparent;color:#a3a5ae;font:500 11px Arial,sans-serif;cursor:pointer}
+.trade-share-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px;padding-top:16px;border-top:1px solid #ffffff12}
+.trade-share-panel .secondary-btn,.trade-share-panel .primary-btn{display:inline-flex;justify-content:center;align-items:center;min-height:36px;padding:9px 14px;border:1px solid #ffffff28;border-radius:6px;background:transparent;color:#e9e9ed;font:500 12px Arial,sans-serif;cursor:pointer}
+.trade-share-panel .primary-btn{background:#f0f0f2;border-color:#f0f0f2;color:#141518}
+.trade-share-panel button:focus-visible,.trade-share-photo-row label:focus-within{outline:2px solid #c1c8f7;outline-offset:3px}
+@media(max-width:600px){.trade-share-overlay{padding:10px}.trade-share-panel{padding:14px}.trade-share-actions{display:grid;grid-template-columns:1fr 1fr}}
+
 /* The only inline form feedback: a live, read-only contract-risk check. */
 .trade-contract-warning{margin:-8px 0 16px;padding:10px 12px;border:1px solid #e3ae34;border-radius:8px;background:#fff8df;color:#805900;font-size:12px;line-height:1.45}
 .token-amount-shell.is-contract-invalid,.live-leverage-field.is-contract-invalid{border-color:#e3ae34!important;box-shadow:0 0 0 3px #e3ae3429}

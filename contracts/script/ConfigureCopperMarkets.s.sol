@@ -41,7 +41,10 @@ contract ConfigureCopperMarkets is Script {
         FloatClearingHouse clearing = FloatClearingHouse(vm.envAddress("FLOAT_CLEARING_HOUSE_ADDRESS"));
         uint8 state = uint8(vm.envOr("COPPER_MARKET_STATE", uint256(3)));
         bytes32 profile = keccak256(bytes(vm.envOr("COPPER_LEVERAGE_PROFILE", string("launch"))));
-        require(profile == keccak256("launch") || profile == keccak256("step-up") || profile == keccak256("closure"), "unknown profile");
+        require(
+            profile == keccak256("launch") || profile == keccak256("step-up") || profile == keccak256("closure"),
+            "unknown profile"
+        );
         bool stepUp = profile == keccak256("step-up");
         closureProfile = profile == keccak256("closure");
         require(state == 1 || state == 2 || state == 3, "COPPER_MARKET_STATE must be 1, 2 or 3");
@@ -74,8 +77,8 @@ contract ConfigureCopperMarkets is Script {
         (uint256 leverage, uint64 maintenance, uint256 cap) = closureProfile
             ? (3, uint64(2_500), tier == 1 ? uint256(1_000) : uint256(500))
             : tier == 1
-            ? (stepUp ? (10, uint64(600), uint256(1_000)) : (5, uint64(500), uint256(1_000)))
-            : (5, uint64(500), uint256(500));
+                ? (stepUp ? (10, uint64(600), uint256(1_000)) : (5, uint64(500), uint256(1_000)))
+                : (5, uint64(500), uint256(500));
         FloatClearingHouse.Market memory market = FloatClearingHouse.Market({
             state: FloatClearingHouse.MarketState(state),
             maxLeverageE18: uint64(leverage * E18),

@@ -41,6 +41,22 @@ test("uses the deployed Goldlake addresses by default in production", () => {
   expect(goldlake.FLOAT_VAULT_ADDRESS).toBe("0x24B530f2ef4c76D10003e861182208ceA4120C45");
 });
 
+test("uses the deployed Jaguar instant vault addresses and chain start block by default", () => {
+  const config = loadConfig({ ...validEnvironment, NODE_ENV: "production" });
+  const jaguar = contractConfigForVersion(config, "jaguar");
+  expect(jaguar.FLOAT_CLEARING_HOUSE_ADDRESS).toBe("0x50672E55C5824ee757b929224d0341ADbFFac361");
+  expect(jaguar.FLOAT_ORACLE_ADDRESS).toBe("0x3b626C2Cdb2682852d5410971c35c25979A3C2Df");
+  expect(jaguar.FLOAT_VAULT_ADDRESS).toBe("0x1ED22D8f5a0762754178aDE4a71Ca731EF480dc3");
+  expect(config.JAGUAR_DEPLOYMENT_BLOCK).toBe(95315783);
+});
+
+test("rejects partial Jaguar address overrides", () => {
+  expect(() => loadConfig({
+    ...validEnvironment,
+    JAGUAR_FLOAT_CLEARING_HOUSE_ADDRESS: "0x6666666666666666666666666666666666666666"
+  })).toThrow("All three Jaguar contract addresses must be configured together");
+});
+
 test("uses the current Amber addresses in production when no override is set", () => {
   const amber = contractConfigForVersion(loadConfig({ ...validEnvironment, NODE_ENV: "production" }), "amber");
   expect(amber.FLOAT_CLEARING_HOUSE_ADDRESS).toBe("0x022Cc8DFf79414DcB56812Bd93601854E2b7A700");

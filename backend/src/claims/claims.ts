@@ -32,9 +32,19 @@ const vaultAbi = parseAbi([
   "function withdrawalClaimed(uint64,address) view returns (bool)",
   "function queueSettlements(uint64) view returns (uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,bool)"
 ]);
+const instantVaultAbi = parseAbi([
+  "function totalAssets() view returns (uint256)",
+  "function totalShares() view returns (uint256)",
+  "function balanceOf(address) view returns (uint256)",
+  "function totalPayoutOwed() view returns (uint256)",
+  "function insuranceAssets() view returns (uint256)"
+]);
+const erc20Abi = parseAbi(["function balanceOf(address) view returns (uint256)"]);
+const liquidityAbi = parseAbi(["function availableLiquidity() view returns (uint256)"]);
 
 /** Deployments in display order: the current one first, then retired ones. */
 export const CLAIM_DEPLOYMENTS: { version: ContractVersion; name: string }[] = [
+  { version: "jaguar", name: "FloatSheets Jaguar" },
   { version: "goldlake", name: "FloatSheets Goldlake" },
   { version: "copper", name: "FloatSheets Copper" },
   { version: "silverlake", name: "FloatSheets Silverlake" },
@@ -47,7 +57,7 @@ export const CLAIM_DEPLOYMENTS: { version: ContractVersion; name: string }[] = [
 const EPOCH_LOOKBACK = 10n;
 const VIRTUAL_SHARES = 1_000_000n;
 
-export type ClaimKind = "claim_balance" | "claim_deferred" | "withdraw_margin" | "close_position" | "settle_epoch" | "claim_lp_deposit" | "claim_lp_withdrawal" | "queue_lp_withdrawal";
+export type ClaimKind = "claim_balance" | "claim_deferred" | "withdraw_margin" | "close_position" | "settle_epoch" | "claim_lp_deposit" | "claim_lp_withdrawal" | "queue_lp_withdrawal" | "withdraw_lp_instant";
 
 export type ClaimItem = {
   kind: ClaimKind;
@@ -89,14 +99,15 @@ export class ClaimCenter {
     return decodeFunctionResult({ abi: abi as any, functionName, data: result } as any);
   }
 
-  async forAccount(account: Address, now: Date = new Date()) {
+  async forAccount(account: Address, now: Date = new Date(), selectedVersion: ContractVersion = "goldlake") {
     const { rows } = await this.database.query<{ symbol: string }>("SELECT symbol FROM public.markets ORDER BY symbol");
     const symbols = rows.map((row) => row.symbol);
     const deployments: DeploymentClaims[] = [];
-    for (const { version, name } of CLAIM_DEPLOYMENTS) {
+    const orderedDeployments = [...CLAIM_DEPLOYMENTS].sort((a, b) => Number(b.version === selectedVersion) - Number(a.version === selectedVersion));
+    for (const { version, name } of orderedDeployments) {
       let addresses: AppConfig;
       try { addresses = contractConfigForVersion(this.config, version); } catch { continue; }
-      deployments.push(await this.deployment(version, name, addresses, account, symbols, now));
+      deployments.push(await this.deployment(version, name, addresses, account, symbols, now, selectedVersion));
     }
     const claimableNow = deployments.flatMap((item) => item.items)
       .filter((item) => item.kind === "claim_balance" || item.kind === "withdraw_margin" || item.kind === "claim_lp_withdrawal" || item.kind === "claim_deferred")
@@ -113,12 +124,12 @@ export class ClaimCenter {
   }
 
   private async deployment(
-    version: ContractVersion, name: string, addresses: AppConfig, account: Address, symbols: string[], now: Date
+    version: ContractVersion, name: string, addresses: AppConfig, account: Address, symbols: string[], now: Date, selectedVersion: ContractVersion
   ): Promise<DeploymentClaims> {
     const clearingHouse = addresses.FLOAT_CLEARING_HOUSE_ADDRESS as Address;
     const vault = addresses.FLOAT_VAULT_ADDRESS as Address;
     const result: DeploymentClaims = {
-      version, name, current: version === "goldlake" || version === "copper", clearing_house: clearingHouse, vault, items: [], pending_payout_usdg: "0.000000", error: null
+      version, name, current: version === selectedVersion, clearing_house: clearingHouse, vault, items: [], pending_payout_usdg: "0.000000", error: null
     };
     try {
       // Older deployments lack deferred payouts; a missing function means none are owed.
@@ -166,12 +177,38 @@ export class ClaimCenter {
       return result;
     }
     try {
-      await this.vaultItems(result, vault, account, now);
+      // Jaguar and Copper use the instant-liquidity vault.
+      if (version === "jaguar" || version === "copper") await this.instantVaultItems(result, vault, clearingHouse, account, addresses);
+      else await this.vaultItems(result, vault, account, now);
     } catch (error) {
       // Some retired vaults predate the daily queue; their clearing-house items still apply.
       console.warn(JSON.stringify({ event: "claim_center_vault_unreadable", version, error: safeErrorMessage(error) }));
     }
     return result;
+  }
+
+  private async instantVaultItems(result: DeploymentClaims, vault: Address, clearingHouse: Address, account: Address, addresses: AppConfig): Promise<void> {
+    const [shares, totalAssets, totalShares, owed, insurance, cash, availableLiquidity] = await Promise.all([
+      this.read(vault, instantVaultAbi, "balanceOf", [account]) as Promise<bigint>,
+      this.read(vault, instantVaultAbi, "totalAssets") as Promise<bigint>,
+      this.read(vault, instantVaultAbi, "totalShares") as Promise<bigint>,
+      this.read(vault, instantVaultAbi, "totalPayoutOwed") as Promise<bigint>,
+      this.read(vault, instantVaultAbi, "insuranceAssets") as Promise<bigint>,
+      this.read(addresses.USDG_ADDRESS as Address, erc20Abi, "balanceOf", [vault]) as Promise<bigint>,
+      this.read(clearingHouse, liquidityAbi, "availableLiquidity") as Promise<bigint>
+    ]);
+    if (shares === 0n || totalShares === 0n) return;
+    const value = shares * (totalAssets + 1n) / (totalShares + VIRTUAL_SHARES);
+    const protectedCash = owed + insurance;
+    const cashAvailable = cash > protectedCash ? cash - protectedCash : 0n;
+    const withdrawable = value < cashAvailable && value < availableLiquidity;
+    result.items.push({
+      kind: "withdraw_lp_instant", title: "Withdraw Jaguar LP shares", market: null, amount_usdg: usdg(value),
+      detail: withdrawable
+        ? "Jaguar can pay this estimated share value immediately, subject to the vault's live solvency checks."
+        : "Jaguar withdrawal is instant when the live vault cash and risk checks allow it. The requested withdrawal may exceed available liquidity.",
+      transaction: { ...withdrawVault(vault, shares, account), activity: "vault-withdraw" }
+    });
   }
 
   private async vaultItems(result: DeploymentClaims, vault: Address, account: Address, now: Date): Promise<void> {

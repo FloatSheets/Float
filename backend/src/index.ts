@@ -2,7 +2,7 @@ import "dotenv/config";
 
 import { app, setRateLimitDatabase } from "./app";
 import { createRpcTransport } from "./chain/rpc";
-import { contractConfigForVersion, isCopperConfigured, isGoldlakeConfigured, isSilverlakeConfigured, loadConfig } from "./config";
+import { contractConfigForVersion, isCopperConfigured, isGoldlakeConfigured, isSilverlakeConfigured, isJaguarConfigured, loadConfig } from "./config";
 import { ReferencePriceMonitor } from "./prices/reference";
 import { db } from "./db";
 import { migrate } from "./db/migrate";
@@ -17,7 +17,6 @@ import { createProtocolRouter } from "./routes/protocol";
 import { createProtocolTransactionsRouter } from "./routes/protocol-transactions";
 import { effectiveOraclePublishIntervalSeconds, OraclePublisher } from "./oracle/publisher";
 import { createKeeperChain, PositionKeeper } from "./keeper/keeper";
-import { createVaultEpochChain, VaultEpochKeeper } from "./keeper/vault-epochs";
 import { createKeeperRouter } from "./routes/keeper";
 import { createStatusRouter } from "./routes/status";
 import { createSolvencyRouter } from "./routes/solvency";
@@ -37,6 +36,7 @@ const jasperConfig = contractConfigForVersion(config, "jasper");
 const goldlakeConfig = isGoldlakeConfigured(config) ? contractConfigForVersion(config, "goldlake") : null;
 const copperConfig = isCopperConfigured(config) ? contractConfigForVersion(config, "copper") : null;
 const silverlakeConfig = isSilverlakeConfigured(config) ? contractConfigForVersion(config, "silverlake") : null;
+const jaguarConfig = isJaguarConfigured(config) ? contractConfigForVersion(config, "jaguar") : null;
 const amberConfig = contractConfigForVersion(config, "amber");
 const legacyConfig = contractConfigForVersion(config, "legacy-orion");
 const port = Number(process.env.PORT ?? 3001);
@@ -51,10 +51,10 @@ const referenceMonitor = new ReferencePriceMonitor(db, rpc, config);
 // monitor verifies every market's token (Robinhood beacon proxy or listed in
 // Robinhood's own price feed) before pricing it, and re-checks hourly.
 const keeper = new PositionKeeper(db, createKeeperChain(config, rpc), config);
-const vaultEpochs = new VaultEpochKeeper(config, createVaultEpochChain(config));
 const liquidationAlerts = new LiquidationAlertService(db, config);
 const telegramBot = new TelegramBotService(db, config);
 app.use("/v1/markets", createMarketsRouter(db, config.ORACLE_PRICE_MAX_AGE_SECONDS, {
+  ...(jaguarConfig ? { jaguar: { rpc, clearingHouse: jaguarConfig.FLOAT_CLEARING_HOUSE_ADDRESS as `0x${string}`, oracle: jaguarConfig.FLOAT_ORACLE_ADDRESS as `0x${string}` } } : {}),
   ...(goldlakeConfig ? { goldlake: { rpc, clearingHouse: goldlakeConfig.FLOAT_CLEARING_HOUSE_ADDRESS as `0x${string}`, oracle: goldlakeConfig.FLOAT_ORACLE_ADDRESS as `0x${string}` } } : {}),
   ...(silverlakeConfig ? { silverlake: { rpc, clearingHouse: silverlakeConfig.FLOAT_CLEARING_HOUSE_ADDRESS as `0x${string}`, oracle: silverlakeConfig.FLOAT_ORACLE_ADDRESS as `0x${string}` } } : {}),
   ...(copperConfig ? { copper: { rpc, clearingHouse: copperConfig.FLOAT_CLEARING_HOUSE_ADDRESS as `0x${string}`, oracle: copperConfig.FLOAT_ORACLE_ADDRESS as `0x${string}` } } : {}),
@@ -96,7 +96,6 @@ app.use("/v1/protocol/transactions", createProtocolTransactionsRouter(config, db
 let lastOraclePublishAt = 0;
 let lastReferenceRefreshAt = 0;
 let lastKeeperRunAt = 0;
-let lastVaultEpochRunAt = 0;
 let lastLiquidationAlertsRunAt = 0;
 
 let refreshing = false;
@@ -130,15 +129,6 @@ async function refreshMarkets(): Promise<void> {
     }
   } catch (error) {
     console.error("FloatSheets keeper run failed", error);
-  }
-  // Settle and roll LP queue epochs so deposits become vault liquidity (every 5 minutes).
-  try {
-    if (config.KEEPER_ENABLED === "true" && Date.now() - lastVaultEpochRunAt >= 300_000) {
-      lastVaultEpochRunAt = Date.now();
-      await vaultEpochs.runOnce();
-    }
-  } catch (error) {
-    console.error("FloatSheets vault epoch run failed", error);
   }
   try {
     if ((config.RESEND_API_KEY || config.TELEGRAM_BOT_TOKEN) && Date.now() - lastLiquidationAlertsRunAt >= 15_000) {

@@ -16,6 +16,16 @@ const marketRiskAbi = parseAbi(['function markets(bytes32) view returns (uint8 s
 const clearingLiquidityAbi = parseAbi(["function availableLiquidity() view returns (uint256)"]);
 const clearingNavAbi = parseAbi(["function navPricesFresh() view returns (bool)"]);
 const oracleAbi = parseAbi(["function getPrice(bytes32) view returns (uint256,uint256,uint256,uint256,uint64,uint64,bool)"]);
+// Start event scans at each deployment rather than genesis. Robinhood RPC
+// rejects eth_getLogs requests spanning more than ten million blocks.
+const contractDeploymentBlocks: Record<string, bigint> = {
+  jaguar: 95_315_783n,
+  goldlake: 94_807_521n,
+  silverlake: 94_764_216n,
+  amber: 94_624_581n,
+  jasper: 94_292_113n,
+};
+const MAX_LOG_BLOCK_SPAN = 9_000_000n;
 const vaultAbi = parseAbi([
   "function totalAssets() view returns (uint256)", "function totalShares() view returns (uint256)",
   "function balanceOf(address) view returns (uint256)",
@@ -51,7 +61,7 @@ export function RainbowProviders({ children, queryClient }: { children: ReactNod
 
 export function RainbowWalletBridge() {
   const { address, chainId, isConnected } = useAccount();
-  const [contractVersion, setContractVersion] = useState<"goldlake" | "copper" | "silverlake" | "amber" | "jasper" | "meadow" | "legacy-orion">("goldlake");
+  const [contractVersion, setContractVersion] = useState<"jaguar" | "goldlake" | "copper" | "silverlake" | "amber" | "jasper" | "meadow" | "legacy-orion">("goldlake");
   const [protocolAddresses, setProtocolAddresses] = useState<{ usdg: Address; vault: Address; clearingHouse: Address; oracle: Address } | null>(null);
   const usdgAddress = protocolAddresses?.usdg ?? DEFAULT_USDG_ADDRESS;
   const { data: usdgBalance, refetch: refetchUsdG } = useReadContract({ address: usdgAddress, abi: erc20Abi, functionName: "balanceOf", args: [address ?? "0x0000000000000000000000000000000000000000"], query: { enabled: Boolean(address) && chainId === robinhoodChain.id } });
@@ -81,7 +91,7 @@ export function RainbowWalletBridge() {
   useEffect(() => {
     let active = true;
     let requestId = 0;
-    const loadProtocol = (version: "goldlake" | "copper" | "silverlake" | "amber" | "jasper" | "meadow" | "legacy-orion") => {
+    const loadProtocol = (version: "jaguar" | "goldlake" | "copper" | "silverlake" | "amber" | "jasper" | "meadow" | "legacy-orion") => {
       const currentRequest = ++requestId;
       void getProtocol({ data: { version } }).then((protocol) => {
       if (!active || currentRequest !== requestId) return;
@@ -95,12 +105,12 @@ export function RainbowWalletBridge() {
       }).catch((error) => console.warn("FloatSheets protocol address lookup failed", error));
     };
     const saved = window.localStorage.getItem("floatsheets-contract-version-v1");
-    const initialVersion = saved === "legacy-orion" ? "legacy-orion" : saved === "silverlake" ? "silverlake" : saved === "copper" ? "copper" : "goldlake";
+    const initialVersion = saved === "jaguar" ? "jaguar" : saved === "legacy-orion" ? "legacy-orion" : saved === "silverlake" ? "silverlake" : saved === "copper" ? "copper" : "goldlake";
     setContractVersion(initialVersion);
     loadProtocol(initialVersion);
     const onVersionChange = (event: Event) => {
       const selected = (event as CustomEvent<{ version?: string }>).detail?.version;
-      const version = selected === "legacy-orion" ? "legacy-orion" : selected === "silverlake" ? "silverlake" : selected === "copper" ? "copper" : "goldlake";
+      const version = selected === "jaguar" ? "jaguar" : selected === "legacy-orion" ? "legacy-orion" : selected === "silverlake" ? "silverlake" : selected === "copper" ? "copper" : "goldlake";
       setContractVersion(version);
       setProtocolAddresses(null);
       loadProtocol(version);
@@ -184,20 +194,26 @@ export function RainbowWalletBridge() {
       async vault() {
         if (!connected || !address || !publicClient) return null;
         if (!protocolAddresses) throw new Error("Trading configuration is still loading. Please try again.");
-        const [assets, shares, totalShares, lockedShares, availableLiquidity, navFresh, epoch, epochStartedAt, epochSettled, epochDuration, insuranceAssets] = await Promise.all([
+        const [assets, shares, totalShares, availableLiquidity, navFresh, insuranceAssets] = await Promise.all([
           publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "totalAssets" }),
           publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "balanceOf", args: [address] }),
           publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "totalShares" }),
-          publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "lockedWithdrawalShares", args: [address] }),
           publicClient.readContract({ address: protocolAddresses.clearingHouse, abi: clearingLiquidityAbi, functionName: "availableLiquidity" }),
-          contractVersion === "goldlake"
+          contractVersion === "goldlake" || contractVersion === "jaguar" || contractVersion === "copper"
             ? publicClient.readContract({ address: protocolAddresses.clearingHouse, abi: clearingNavAbi, functionName: "navPricesFresh" })
             : Promise.resolve(true),
+          publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "insuranceAssets" })
+        ]);
+        // Jaguar and Copper use the instant-liquidity vault: no LP queue to read.
+        if (contractVersion === "jaguar" || contractVersion === "copper") {
+          return { assets: assets.toString(), shares: shares.toString(), lockedShares: "0", totalShares: totalShares.toString(), availableLiquidity: availableLiquidity.toString(), navFresh, epoch: "0", epochStartedAt: "0", epochSettled: true, epochDuration: "0", insuranceAssets: insuranceAssets.toString(), requests: [], instant: true };
+        }
+        const [lockedShares, epoch, epochStartedAt, epochSettled, epochDuration] = await Promise.all([
+          publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "lockedWithdrawalShares", args: [address] }),
           publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "queueEpoch" }),
           publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "queueEpochStartedAt" }),
           publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "queueEpochSettled" }),
-          publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "QUEUE_EPOCH_DURATION" }),
-          publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "insuranceAssets" })
+          publicClient.readContract({ address: protocolAddresses.vault, abi: vaultAbi, functionName: "QUEUE_EPOCH_DURATION" })
         ]);
         const epochs = Array.from({length: Number(epoch) > 9 ? 10 : Number(epoch) + 1}, (_, i) => BigInt(epoch) - BigInt(i));
         const requests = await Promise.all(epochs.map(async (requestEpoch) => {
@@ -230,6 +246,7 @@ export function RainbowWalletBridge() {
         if (!connected || !address || !publicClient || !protocolAddresses) throw new Error('Connect your wallet and wait for trading settings to load.');
         const block = await publicClient.getBlock();
         let history: ReturnType<typeof replayAccount> | undefined;
+        let historyError: string | null = null;
         if (includeHistory) {
           const events = [
             parseAbiItem('event MarginDeposited(address indexed trader, bytes32 indexed marketId, uint256 assets)'),
@@ -237,22 +254,36 @@ export function RainbowWalletBridge() {
             parseAbiItem('event TradeExecuted(address indexed trader, bytes32 indexed marketId, int256 sizeDeltaE18, uint256 executionPriceE18, uint256 feeUsdg)'),
             parseAbiItem('event PositionLiquidated(address indexed trader, bytes32 indexed marketId, uint256 priceE18, int256 pnlUsdg, uint256 penaltyUsdg, address liquidator)'),
           ] as const;
-          const groups = await Promise.all(events.map(event => publicClient.getLogs({
-            address: protocolAddresses.clearingHouse, event, args: { trader: address }, fromBlock: 0n, toBlock: block.number, strict: true,
-          })));
-          const logs = groups.flat().filter(log => !log.removed).sort((a, b) =>
-            a.blockNumber === b.blockNumber ? a.logIndex - b.logIndex : a.blockNumber < b.blockNumber ? -1 : 1);
-          history = replayAccount(logs as AccountEvent[]);
+          try {
+            const fromBlock = contractDeploymentBlocks[contractVersion] ?? 0n;
+            const groups = await Promise.all(events.map(async event => {
+              const logs = [];
+              for (let start = fromBlock; start <= block.number; start += MAX_LOG_BLOCK_SPAN) {
+                const end = start + MAX_LOG_BLOCK_SPAN - 1n < block.number ? start + MAX_LOG_BLOCK_SPAN - 1n : block.number;
+                logs.push(...await publicClient.getLogs({
+                  address: protocolAddresses.clearingHouse, event, args: { trader: address }, fromBlock: start, toBlock: end, strict: true,
+                }));
+              }
+              return logs;
+            }));
+            const logs = groups.flat().filter(log => !log.removed).sort((a, b) =>
+              a.blockNumber === b.blockNumber ? a.logIndex - b.logIndex : a.blockNumber < b.blockNumber ? -1 : 1);
+            history = replayAccount(logs as AccountEvent[]);
+          } catch (error) {
+            historyError = error instanceof Error ? error.message : 'Trading history is temporarily unavailable.';
+            console.warn('FloatSheets realized PnL history unavailable', error);
+          }
         }
         const ids = new Map(symbols.map(symbol => [keccak256(stringToHex(symbol.toUpperCase())), symbol]));
         for (const id of history?.markets.keys() ?? []) if (!ids.has(id as Hex)) ids.set(id as Hex, id.slice(0, 10));
+        let historyConsistent = true;
         const positions = await Promise.all([...ids].map(async ([id, symbol]) => {
           const p = await publicClient.readContract({ address: protocolAddresses.clearingHouse, abi: clearingAbi, functionName: 'getPosition', args: [address, id], blockNumber: block.number });
           if (history) {
             const replayed = history.markets.get(id.toLowerCase()) ?? { size: 0n, entry: 0n, margin: 0n };
-            if (replayed.size !== p[0] || replayed.entry !== p[1] || replayed.margin !== p[2]) throw new Error('Trading history is still syncing. Please try again.');
+            if (replayed.size !== p[0] || replayed.entry !== p[1] || replayed.margin !== p[2]) historyConsistent = false;
           }
-          let pnl = 0n, stale = false, liquidationPriceE18: string | null = null;
+          let pnl = 0n, stale = false, liquidationPriceE18: string | null = null, markPriceE18: string | null = null;
           if (p[0] !== 0n) {
             const [mark, risk] = await Promise.all([
               publicClient.readContract({ address: protocolAddresses.oracle, abi: oracleAbi, functionName: 'getPrice', args: [id], blockNumber: block.number }),
@@ -260,13 +291,18 @@ export function RainbowWalletBridge() {
             ]);
             liquidationPriceE18 = liquidationPrice(p[0], p[1], p[2], risk[2])?.toString() ?? null;
             if (mark[0] === 0n) throw new Error('A price is not available yet.');
+            markPriceE18 = mark[0].toString();
             pnl = unrealizedPnl(p[0], p[1], mark[0]);
             stale = block.timestamp > mark[4] + 120n || mark[6];
           }
-          return { symbol, sizeE18: p[0].toString(), entryPriceE18: p[1].toString(), marginUsdg: p[2].toString(), pnlUsdg: pnl.toString(), liquidationPriceE18, stale };
+          return { symbol, sizeE18: p[0].toString(), entryPriceE18: p[1].toString(), markPriceE18, marginUsdg: p[2].toString(), pnlUsdg: pnl.toString(), liquidationPriceE18, stale };
         }));
+        if (history && !historyConsistent) {
+          history = undefined;
+          historyError = 'Trading history does not match the current on-chain position yet.';
+        }
         return {
-          positions, address, blockNumber: block.number.toString(),
+          positions, address, blockNumber: block.number.toString(), historyAvailable: !includeHistory || Boolean(history), historyError,
           unrealizedUsdg: positions.reduce((sum, p) => sum + BigInt(p.pnlUsdg), 0n).toString(),
           activeMarginUsdg: positions.reduce((sum, p) => sum + (BigInt(p.sizeE18) !== 0n ? BigInt(p.marginUsdg) : 0n), 0n).toString(),
           realizedUsdg: history?.realized.toString() ?? null,

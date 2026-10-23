@@ -41,7 +41,8 @@ jobs:
       - run: bun run check
       - run: bun run db:migrate
       - run: bun run ci:refresh-market
-      - run: bun test
+      # These integration tests share process-wide rate-limit state and the CI Postgres database.
+      - run: bun test --max-concurrency=1
 
   frontend:
     if: github.repository == 'floatsheets/float'

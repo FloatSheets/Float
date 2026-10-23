@@ -16,26 +16,30 @@
 | Group | Markets | Leverage | Max ticket | Half-spread band |
 | --- | --- | ---: | ---: | ---: |
 | Standard | NVDA, SPCX | 5x | $50,000 | 15–30 bps |
-| Standard | CRCL, HIMS | 4x | $25,000 | 40–80 bps |
+| Standard | CRCL | 4x | $25,000 | 40–80 bps |
 | Standard | MU, TSLA | 3x | $10,000 | 50–150 bps |
 | Standard | RDDT, MSTR | 2x | $5,000 | 125–300 bps |
 | Restricted | PLTR | 2x | $10,000 | 75–500 bps |
-| Pilot | QUBT | 2x | $1,000 | 100–750 bps |
+| Pilot | AMC, QUBT | 2x | $1,000 | 75–750 bps |
 
-AMC and GME remain excluded until their direct stock/USDG pool quotes pass validation.
+HIMS was retired and replaced by AMC after AMC's direct stock/USDG pool quotes passed validation. GME remains excluded.
 
 ## Contract versions
 
 | Version | Status | Dashboard behavior |
 | --- | --- | --- |
-| FloatSheets Goldlake | Deployed; markets registered and configured | Default for new positions |
+| FloatSheets Goldlake | Deployed; markets registered and configured | Dashboard default |
+| FloatSheets Jaguar | Deployed; instant-liquidity vault and markets configured | Selectable in Settings for instant LP deposits/withdrawals and trading |
+| FloatSheets Copper | Ready to deploy: penny-stock markets on the existing contracts with an instant vault ([runbook](docs/copper-release.md)) | "Penny stocks" tab on the Markets page once its addresses are configured |
 | FloatSheets Silverlake | Deployed predecessor; retain for existing positions and vault access | Existing positions only |
 | FloatSheets Amber | Deployed predecessor; retain for existing position close and vault access | Retired, disabled in selector |
 | FloatSheets Jasper | Paused on-chain | Visible in settings, disabled |
 | FloatSheets Meadow | Paused on-chain | Visible in settings, disabled |
 | FloatSheets Legacy Orion | Legacy deployment | Vault viewing and withdrawals; trade, portfolio, oracle, and listings pages are disabled |
 
-Goldlake is the current immutable release. It includes the oracle freshness, vault NAV, and queued-withdrawal protections described below. Its runtime bytecode matches the local Foundry artifacts, and deployment plus market configuration transactions are recorded in [`contracts/deployments/goldlake-4663.json`](contracts/deployments/goldlake-4663.json). Silverlake remains available for existing positions and vault access; new positions use Goldlake. Oracle publishing must remain funded for fresh prices.
+Goldlake remains the dashboard default and retains its queued LP flow. Jaguar is a separate deployment for instant LP deposits and withdrawals, subject to the same risk and solvency checks. Deployment and market configuration transactions are recorded in [`contracts/deployments/jaguar-4663.json`](contracts/deployments/jaguar-4663.json). Silverlake remains available for existing positions and vault access. Oracle publishing must remain funded for fresh prices.
+
+The keeper also advances daily epochs on queue-based vaults: after the epoch duration and a fresh NAV, it calls `settleQueue()` and then `startNextQueueEpoch()`. A PostgreSQL lease and transaction record prevent duplicate submissions across service instances; a process-local lock prevents overlap inside one instance. Jaguar's instant vault skips this queue task.
 
 | Goldlake contract | Robinhood Chain address |
 | --- | --- |
@@ -81,10 +85,10 @@ The production backend is available at [`https://api.floatsheets.app`](https://a
 | `GET /v1/markets/:symbol/live` | Current monitored and on-chain oracle/market state. Includes `opening_bell` terms during the first 10 minutes after the 9:30 ET open, when new positions pay +15 bps and use half the max ticket. |
 | `GET /v1/markets/:symbol/quotes` | Latest complete executable quote sample matrix. |
 | `GET /v1/markets/:symbol/history?range=1H` | Stored TWAP/spot history; supported ranges are `1H`, `4H`, `1D`, `1W`, and `1M`. Add `format=candles` for candles. |
-| `GET /v1/keeper` | Protocol keeper status: watched positions, liquidations, expiry closes, and recent keeper transactions. |
 | `GET /v1/status` | Public system status shown at `/status/`: component health checked every minute, 90-day uptime, current market restrictions, and incidents that open after two failed checks and resolve on recovery. Administrators add post-mortems with `POST /v1/status/incidents/:id/postmortem`. |
 | `GET /v1/solvency` | Public proof of solvency shown at `/solvency/`, read live from the vault, clearing house, oracle and USDG contracts: vault cash and NAV, insurance, amounts owed to traders and LPs, trader margin held versus owed, bad debt, open interest and skew against the contract caps, and a 25% stress test. |
 | `GET /v1/claims/:account` | Everything a wallet can claim or withdraw on every FloatSheets deployment, including retired ones: protocol balances, deferred payouts, idle margin, open positions to close, settled LP requests and LP shares, each with the transaction that releases it. Shown as the Claim center on the dashboard Portfolio view. |
+| `GET /v1/keeper` | Protocol keeper status: watched positions, liquidations, expiry closes, LP queue epoch processing and transaction history, and recent keeper transactions. |
 | `GET /v1/markets/halts` | Listing-exchange trading halts mirrored from the Nasdaq Trader halt feed. A halted market is close-only until the exchange resumes trading. |
 | `GET /v1/markets/weekend-bands` | Weekend and holiday price bands. While a market's underlying is closed, opens pause if its pool leaves the band around the last close, and oracle marks are held inside it. |
 | `GET /v1/markets/corporate-actions` | Upcoming splits and cash dividends from the Nasdaq calendars. Markets go close-only 7 days before a split (positions cannot be resized, and every open position reaches its 7-day limit first) and around dividends of 2% or more; smaller dividends show a notice with the expected price drop. |
@@ -145,7 +149,7 @@ Use a Render **Native Environment** service rooted at `backend`:
 | Start command | `bun run start` |
 | Health check | `/health` |
 
-Set `DATABASE_URL`, `DATABASE_PASSWORD`, `RHC_ID`, `RHC_RPC_URL`, `PROTOCOL_FEE_WALLET`, `FRONTEND_URL`, `NODE_ENV=production`, and Render’s `PORT`. Goldlake addresses are the backend defaults; keep the Silverlake, Amber, Jasper, Meadow, and Orion address variables populated for existing positions and vault flows. Keep the oracle publisher wallet funded with RH ETH so price attestations stay fresh. Set `SERVER_API_SHARED_SECRET` to the same random value used by Vercel's `FLOATSHEETS_SERVER_API_SECRET`; these authenticate forwarded client IPs for close-quote rate limits. For Telegram liquidation alerts, set the server-only `TELEGRAM_BOT_TOKEN` and `TELEGRAM_BOT_USERNAME` on the backend service. The API applies migrations during startup.
+Set `DATABASE_URL`, `DATABASE_PASSWORD`, `RHC_ID`, `RHC_RPC_URL`, `PROTOCOL_FEE_WALLET`, `FRONTEND_URL`, `NODE_ENV=production`, and Render’s `PORT`. Goldlake and Jaguar addresses are backend defaults; keep the Silverlake, Amber, Jasper, Meadow, and Orion address variables populated for existing positions and vault flows. Keep the oracle publisher wallet funded with RH ETH so price attestations stay fresh. The keeper wallet (or the publisher wallet when `KEEPER_PRIVATE_KEY` is unset) also needs RH ETH to submit liquidations and daily LP queue transactions. Set `SERVER_API_SHARED_SECRET` to the same random value used by Vercel's `FLOATSHEETS_SERVER_API_SECRET`; these authenticate forwarded client IPs for close-quote rate limits. For Telegram liquidation alerts, set the server-only `TELEGRAM_BOT_TOKEN` and `TELEGRAM_BOT_USERNAME` on the backend service. The API applies migrations during startup.
 
 The public repository's GitHub workflow also publishes `ghcr.io/floatsheets/float-backend:latest` and a SHA-tagged image. If Render is configured to pull the GHCR image instead, provide registry credentials when the package is private. Set `RENDER_DEPLOY_HOOK_URL` in the public repository's Actions secrets to have successful backend image builds trigger Render automatically.
 

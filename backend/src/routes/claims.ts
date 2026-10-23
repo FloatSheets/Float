@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { Address } from "viem";
 
 import type { ClaimCenter } from "../claims/claims";
+import { contractVersionFromRequest } from "../contract-version";
 import { safeErrorMessage } from "../safe-error";
 
 const CACHE_MS = 20_000;
@@ -16,11 +17,13 @@ export function createClaimsRouter(center: Pick<ClaimCenter, "forAccount">): Rou
     if (!parsed.success) return response.status(400).json({ error: "A valid wallet address is required" });
     const account = parsed.data.toLowerCase() as Address;
     const fresh = request.query.fresh === "1";
-    const hit = cache.get(account);
+    const version = contractVersionFromRequest(request);
+    const cacheKey = `${version}:${account}`;
+    const hit = cache.get(cacheKey);
     if (hit && !fresh && Date.now() - hit.at < CACHE_MS) return response.json(hit.value);
     try {
-      const value = await center.forAccount(account);
-      cache.set(account, { at: Date.now(), value });
+      const value = await center.forAccount(account, new Date(), version);
+      cache.set(cacheKey, { at: Date.now(), value });
       if (cache.size > 5_000) for (const [key, entry] of cache) if (Date.now() - entry.at >= CACHE_MS) cache.delete(key);
       response.json(value);
     } catch (error) {

@@ -6,6 +6,7 @@ FloatSheets Amber is a pool-vs-trader deployment: a single USDG vault backs ever
 
 - `FloatOracle.sol` stores EIP-712 signed, sequence-monotonic TWAP and spot-price attestations and enforces the configured spot/TWAP circuit breaker on-chain.
 - `FloatVault.sol` prices queued LP deposits and withdrawals once per daily epoch using a NAV that marks open trader PnL. Virtual shares protect against donation inflation. A separately accounted insurance balance is spent before LP cash on trader payouts; unused insurance cannot be withdrawn by the owner.
+- `FloatInstantVault.sol` is the Jaguar LP path. It mints and burns shares in the deposit or withdrawal transaction, uses the same virtual-share and NAV accounting, and permits withdrawal only when both actual unreserved cash and the clearing house's risk-adjusted available liquidity cover the payout.
 - `FloatClearingHouse.sol` verifies exact signed-size EIP-712 trade quotes bound to the caller and contract, enforces oracle freshness, leverage, exposure, stress-reserve and fee limits, and enables permissionless liquidation below maintenance margin or after the seven-day maximum position duration. Crowded-side borrow fees accrue hourly and are sent to insurance. Uncovered losses are recorded as bad debt and pause risk-increasing trades until recapitalized. Deferred trader payouts can be claimed later.
 
 Jasper risk defaults are explicit, conservative starting values rather than calibrated parameters: 25% stress move on net market skew, a 50% NAV cap on aggregate stress reserves, and borrow fees of 1 bp/hour plus up to 9 bp/hour as skew approaches one-sided. They should be monitored and independently reviewed before increasing risk.
@@ -13,6 +14,33 @@ Jasper risk defaults are explicit, conservative starting values rather than cali
 Silverlake retains Amber's no-delay configuration, fixed 7.5% quote/oracle deviation cap, price-jump circuit breaker, fee floors, queue rounding conservation, and hourly payout cap. It replaces retroactive borrow-fee calculation with cumulative side-specific indexes checkpointed before exposure changes. Existing positions remain on their original contracts.
 
 Goldlake is the current release. In addition to Silverlake's borrow-fee indexing, its oracle does not refresh the timestamp for a rejected price jump. The clearing house exposes NAV freshness for every exposed market and blocks liquidation on a circuit-broken mark. The vault protects pending deposits from payouts, blocks settlement on unsafe NAV, and lets LPs cancel an unfunded withdrawal request after the epoch settles without withdrawals.
+
+### Jaguar instant-liquidity deployment
+
+Jaguar uses a separate `FloatInstantVault` and clearing house so its capital and
+open-interest capacity remain separate from Goldlake. It retains the same
+clearing-house risk engine, oracle freshness and confidence checks, exposure
+caps, stress reserve, hourly payout limit, liquidation rules, and seven-day
+maximum position duration. LP deposits mint shares immediately at fresh NAV.
+LP withdrawals transfer immediately only when fresh NAV, unreserved token cash,
+and the clearing house's available-liquidity check cover the full withdrawal.
+The Jaguar vault has no queue, epoch, or LP settlement wait.
+
+Deployment and market registration are recorded in
+[`deployments/jaguar-4663.json`](deployments/jaguar-4663.json). The backend
+ships with these public contract addresses and deployment block as defaults;
+the dashboard remains set to Goldlake unless a user selects Jaguar in Settings.
+
+| Jaguar contract | Robinhood Chain address |
+| --- | --- |
+| Oracle | `0x3b626C2Cdb2682852d5410971c35c25979A3C2Df` |
+| Instant vault | `0x1ED22D8f5a0762754178aDE4a71Ca731EF480dc3` |
+| Clearing house | `0x50672E55C5824ee757b929224d0341ADbFFac361` |
+| Deployment block | `95315783` |
+
+Active markets: NVDA, SPCX, CRCL, MU, TSLA, RDDT, MSTR, and AMC. PLTR and
+QUBT are close-only. HIMS was deregistered to match the current Goldlake
+listing set. No LP funds were seeded as part of deployment.
 
 ### Silverlake deployment
 
