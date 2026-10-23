@@ -15,6 +15,10 @@ import {FloatClearingHouse} from "../src/FloatClearingHouse.sol";
 /// Environment:
 /// - FLOAT_ORACLE_ADDRESS, FLOAT_CLEARING_HOUSE_ADDRESS: the Copper contracts
 /// - COPPER_MARKET_STATE: 3 = Paused (default, first run), 1 = Active (after 24h of clean marks)
+/// - COPPER_POSITION_CAP_USDG: optional whole-USDG cap on every market's position size.
+///   Keep it at or below ~10% of the vault (the contract's one-sided skew limit), e.g. 40
+///   for a 440 USDG vault, so users aren't refused with a capacity error. Raise it as the
+///   vault grows; it never exceeds the tier caps below.
 /// - COPPER_LEVERAGE_PROFILE: "launch" (default), "step-up" (after 14 days without bad debt) or
 ///   "closure" (3x, 25% maintenance) to run before every weekend/holiday closure: positions
 ///   above 3x must add margin or are liquidated by the keeper at the live price before the
@@ -30,6 +34,7 @@ import {FloatClearingHouse} from "../src/FloatClearingHouse.sol";
 /// gaps above 20% are walked in 19% steps by the backend publisher.
 contract ConfigureCopperMarkets is Script {
     bool private closureProfile;
+    uint256 private positionCapUsdg;
     uint256 private constant E18 = 1e18;
     uint256 private constant USDG_UNIT = 1e6;
     uint64 private constant MAX_ORACLE_CONFIDENCE_BPS = 50;
@@ -47,6 +52,7 @@ contract ConfigureCopperMarkets is Script {
         );
         bool stepUp = profile == keccak256("step-up");
         closureProfile = profile == keccak256("closure");
+        positionCapUsdg = vm.envOr("COPPER_POSITION_CAP_USDG", uint256(0));
         require(state == 1 || state == 2 || state == 3, "COPPER_MARKET_STATE must be 1, 2 or 3");
 
         vm.startBroadcast();
@@ -79,6 +85,8 @@ contract ConfigureCopperMarkets is Script {
             : tier == 1
                 ? (stepUp ? (10, uint64(600), uint256(1_000)) : (5, uint64(500), uint256(1_000)))
                 : (5, uint64(500), uint256(500));
+        // Size the cap to the vault: the contract refuses one-sided exposure above 10% of it.
+        if (positionCapUsdg != 0 && positionCapUsdg < cap) cap = positionCapUsdg;
         FloatClearingHouse.Market memory market = FloatClearingHouse.Market({
             state: FloatClearingHouse.MarketState(state),
             maxLeverageE18: uint64(leverage * E18),
