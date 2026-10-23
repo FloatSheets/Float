@@ -4,7 +4,7 @@ import { contractConfigForVersion, type AppConfig, type ContractVersion } from "
 import { sendLiquidationNotice } from "../routes/email-alerts";
 import { marketId } from "../chain/protocol";
 
-const versions: ContractVersion[] = ["goldlake", "silverlake", "amber", "jasper", "meadow", "legacy-orion"];
+const versions: ContractVersion[] = ["goldlake", "copper", "silverlake", "amber", "jasper", "meadow", "legacy-orion"];
 const liquidated = parseAbiItem("event PositionLiquidated(address indexed trader, bytes32 indexed marketId, uint256 priceE18, int256 pnlUsdg, uint256 penaltyUsdg, address liquidator)");
 const maxLogSpan = 5_000n;
 const chain = defineChain({ id: 4663, name: "Robinhood Chain", nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 }, rpcUrls: { default: { http: ["https://rpc.mainnet.chain.robinhood.com"] } } });

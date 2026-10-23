@@ -5,7 +5,7 @@ import type { Address } from "viem";
 import type { Hex } from "viem";
 import type { Pool } from "pg";
 
-import { contractConfigForVersion, isGoldlakeConfigured, isSilverlakeConfigured, type AppConfig, type ContractVersion } from "../config";
+import { acceptsNewRisk, configuredVersions, contractConfigForVersion, type AppConfig, type ContractVersion } from "../config";
 import { contractVersionFromRequest } from "../contract-version";
 import {
   approveUsdG, cancelVaultWithdrawal, claimDeferredPayout, claimProtocolBalance, claimVaultDeposit, claimVaultWithdrawal, configureMarket, depositMargin, depositVault, enableMarket, liquidate, marketId, settleVaultQueue, startVaultQueueEpoch, withdrawMargin, withdrawVault
@@ -15,7 +15,7 @@ import { requireMasterAdmin } from "../auth/master-admin";
 import { signPriceAttestation, signTradeQuote } from "../signing/signer";
 import type { PriceAttestation, TradeQuote } from "../signing/types";
 import type { RpcTransport } from "../chain/rpc";
-import { readQuoteUsed, readBadDebt, readClearingExposure, readClearingMarket, readClearingPosition, readOraclePrice, readPayoutBalances, readVaultAssets } from "../chain/protocol-read";
+import { readQuoteUsed, readBadDebt, readClearingExposure, readClearingMarket, readClearingPosition, readOraclePrice, readOracleThresholds, readPayoutBalances, readVaultAssets } from "../chain/protocol-read";
 import type { OraclePublisher } from "../oracle/publisher";
 import { snapshotTimeOnChain } from "../oracle/publisher";
 import { safeErrorMessage } from "../safe-error";
@@ -24,6 +24,12 @@ import { readPoolPriceE18, weekendBandOptions, weekendBandRefusal, WeekendBands 
 import { weekendLimitOptions, WeekendWalletLimits } from "../markets/weekend-limits";
 import { corporateActionOptions, corporateActionRefusal, parseSplitRatio, readCorporateAction } from "../markets/corporate-actions";
 import { openingBellOptions, openingBellTerms, openingBellTicket, openingBellTicketMessage } from "../markets/opening-bell";
+import { closedWindow } from "../markets/sessions";
+
+/** Inside or within `leadHours` of a weekend/holiday closure of the underlying. */
+export function nearClosure(now: Date, leadHours: number): boolean {
+  return closedWindow(now) !== null || closedWindow(new Date(now.getTime() + leadHours * 3_600_000)) !== null;
+}
 
 const address = z.string().regex(/^0x[0-9a-fA-F]{40}$/);
 const uint = z.string().regex(/^\d+$/).max(78);
@@ -166,23 +172,17 @@ export function createProtocolTransactionsRouter(
   oraclePublisher?: Pick<OraclePublisher, "ensureFreshMarket">
 ): Router {
   const router = Router();
-  const versions = {
-    ...(isGoldlakeConfigured(config) ? {
-      goldlake: createProtocolTransactionsRouterForConfig(contractConfigForVersion(config, "goldlake"), database, rpc, oraclePublisher, "goldlake")
-    } : {}),
-    ...(isSilverlakeConfigured(config) ? {
-      silverlake: createProtocolTransactionsRouterForConfig(contractConfigForVersion(config, "silverlake"), database, rpc, oraclePublisher, "silverlake")
-    } : {}),
-    amber: createProtocolTransactionsRouterForConfig(contractConfigForVersion(config, "amber"), database, rpc, oraclePublisher, "amber"),
-    jasper: createProtocolTransactionsRouterForConfig(contractConfigForVersion(config, "jasper"), database, rpc, oraclePublisher, "jasper"),
-    meadow: createProtocolTransactionsRouterForConfig(contractConfigForVersion(config, "meadow"), database, rpc, oraclePublisher, "meadow"),
-    "legacy-orion": createProtocolTransactionsRouterForConfig(contractConfigForVersion(config, "legacy-orion"), database, rpc, oraclePublisher, "legacy-orion")
-  };
+  const versions: Partial<Record<ContractVersion, Router>> = {};
+  for (const version of configuredVersions(config)) {
+    try {
+      versions[version] = createProtocolTransactionsRouterForConfig(contractConfigForVersion(config, version), database, rpc, oraclePublisher, version);
+    } catch { /* addresses missing for this release: its routes answer 503 */ }
+  }
   router.use((request, response, next) => {
     const version = contractVersionFromRequest(request);
-    if (version !== "goldlake") {
+    if (!acceptsNewRisk(version)) {
       if (["/trade-quote", "/trade-check", "/quote"].includes(request.path)) {
-        response.status(409).json({ error: `New position opens are disabled on ${version}; select FloatSheets Goldlake.` });
+        response.status(409).json({ error: `New position opens are disabled on ${version}; select FloatSheets Goldlake or Copper.` });
         return;
       }
       if (["/approve", "/deposit", "/vault-approve", "/vault-deposit"].includes(request.path)) {
@@ -192,8 +192,16 @@ export function createProtocolTransactionsRouter(
     }
     const versionRouter = versions[version as keyof typeof versions];
     if (!versionRouter) {
-      response.status(503).json({ error: "Goldlake contracts are not deployed or configured" });
+      response.status(503).json({ error: `${version === "copper" ? "Copper" : "Goldlake"} contracts are not deployed or configured` });
       return;
+    }
+    // Copper's vault takes team liquidity first: outside LP deposits open only when enabled or allowlisted.
+    if (version === "copper" && request.path.toLowerCase().replace(/\/+$/, "") === "/vault-deposit" && config.COPPER_LP_DEPOSITS_ENABLED !== "true") {
+      const receiver = String((request.body as { receiver?: unknown } | undefined)?.receiver ?? "").toLowerCase();
+      if (!config.COPPER_LP_ALLOWLIST.includes(receiver)) {
+        response.status(409).json({ error: "Copper vault deposits are not open yet." });
+        return;
+      }
     }
     versionRouter(request, response, next);
   });
@@ -370,10 +378,11 @@ function createProtocolTransactionsRouterForConfig(
       const marketResult = await database.query<{
         id: string; status: "active" | "restricted" | "pilot" | "disabled"; max_ticket_usdg: string;
         max_half_spread_bps: number; observed_at: Date | null; oracle_tradable: boolean | null;
+        price_source: "uniswap_v3" | "reference"; spot_price_usdg: string | null;
       }>(
-        `SELECT m.id,m.status,m.max_ticket_usdg,m.max_half_spread_bps,s.observed_at,s.oracle_tradable
+        `SELECT m.id,m.status,m.max_ticket_usdg,m.max_half_spread_bps,m.price_source,s.observed_at,s.oracle_tradable,s.spot_price_usdg::text
          FROM public.markets m LEFT JOIN LATERAL (
-           SELECT observed_at,oracle_tradable FROM public.pool_snapshots WHERE market_id=m.id ORDER BY observed_at DESC LIMIT 1
+           SELECT observed_at,oracle_tradable,spot_price_usdg FROM public.pool_snapshots WHERE market_id=m.id ORDER BY observed_at DESC LIMIT 1
          ) s ON true WHERE m.symbol=$1`, [symbol]
       );
       const marketRow = marketResult.rows[0];
@@ -390,6 +399,12 @@ function createProtocolTransactionsRouterForConfig(
       if (oraclePrice.sequence === 0n || now > oraclePrice.timestamp + BigInt(config.ORACLE_PRICE_MAX_AGE_SECONDS)) throw new Error("on-chain oracle price is stale");
       if (oraclePrice.confidenceBps > onchainMarket.maxOracleConfidenceBps) throw new Error("oracle confidence exceeds market limit");
       if (oraclePrice.circuitBroken) throw new Error("market is temporarily close-only");
+      const reference = marketRow.price_source === "reference";
+      // Reference marks track the live mid: refuse to quote while the on-chain mark lags it.
+      if (reference && marketRow.spot_price_usdg !== null
+        && deviationBps(priceDecimalToE18(marketRow.spot_price_usdg), oraclePrice.priceE18) > 2n * BigInt(config.REFERENCE_REPUBLISH_BPS)) {
+        throw new Error("the price is moving; request a new quote in a few seconds");
+      }
 
       const direction = input.isLong ? "buy" : "sell";
       const sampleResult = await database.query<{ notional_usdg: string; execution_degradation_bps: number }>(
@@ -419,6 +434,15 @@ function createProtocolTransactionsRouterForConfig(
         ? oraclePrice.priceE18 * (BPS + spreadBps) / BPS
         : oraclePrice.priceE18 * (BPS - spreadBps) / BPS;
       if (executionPriceE18 === 0n || exceedsOracleDeviation(executionPriceE18, oraclePrice.priceE18, onchainMarket.maxExecutionDeviationBps)) throw new Error("execution price exceeds oracle deviation limit");
+      // A new position marked at the oracle must keep at least half of its margin
+      // headroom above maintenance; otherwise high leverage is liquidatable on open.
+      if (reference) {
+        const initialMarginBps = BPS * E18 / onchainMarket.maxLeverageE18;
+        const headroomBps = initialMarginBps > onchainMarket.maintenanceMarginBps ? initialMarginBps - onchainMarket.maintenanceMarginBps : 0n;
+        if (deviationBps(executionPriceE18, oraclePrice.priceE18) * 2n > headroomBps) {
+          throw new Error("the spread is too wide for this market's leverage right now; try a smaller size");
+        }
+      }
 
       const value: TradeQuote = {
         marketId: id, trader: input.trader as Address,
@@ -426,12 +450,25 @@ function createProtocolTransactionsRouterForConfig(
         feeUsdg: ceilingDiv(requestedNotional * TRADING_FEE_BPS, BPS),
         maxLeverageE18: onchainMarket.maxLeverageE18,
         oracleSequence: oraclePrice.sequence, nonce: quoteNonce(),
-        expiry: boundedQuoteExpiry(now, oraclePrice.timestamp, config.ORACLE_PRICE_MAX_AGE_SECONDS, config.QUOTE_TTL_SECONDS)
+        expiry: boundedQuoteExpiry(now, oraclePrice.timestamp, config.ORACLE_PRICE_MAX_AGE_SECONDS,
+          reference ? Math.min(config.QUOTE_TTL_SECONDS, config.REFERENCE_QUOTE_TTL_SECONDS) : config.QUOTE_TTL_SECONDS)
       };
       if (value.expiry <= now) throw new Error("on-chain oracle price is too close to expiry");
       const requiredMargin = ceilingDiv(notionalForSize(value.sizeDeltaE18, value.executionPriceE18) * E18, onchainMarket.maxLeverageE18) + value.feeUsdg;
       if (position.sizeE18 === 0n && position.marginUsdg < requiredMargin) {
         throw new Error(`add at least ${usdgDecimal(requiredMargin)} USDG margin before opening this position`);
+      }
+      // Penny markets freeze over weekends and holidays, and gaps on reopen are
+      // large: from COPPER_CLOSURE_LEAD_HOURS before a closure, new risk is
+      // capped at COPPER_CLOSURE_MAX_LEVERAGE on the whole position.
+      if (reference && nearClosure(new Date(), config.COPPER_CLOSURE_LEAD_HOURS)) {
+        const sizeAfter = position.sizeE18 + value.sizeDeltaE18;
+        const increases = position.sizeE18 === 0n || (position.sizeE18 > 0n) === (value.sizeDeltaE18 > 0n);
+        const notionalAfter = notionalForSize(sizeAfter, value.executionPriceE18);
+        const usableMargin = position.marginUsdg > value.feeUsdg ? position.marginUsdg - value.feeUsdg : 0n;
+        if (increases && notionalAfter > usableMargin * BigInt(config.COPPER_CLOSURE_MAX_LEVERAGE)) {
+          throw new Error(`before weekends and market holidays, penny positions are limited to ${config.COPPER_CLOSURE_MAX_LEVERAGE}x: add margin or reduce size`);
+        }
       }
       const nextSize = position.sizeE18 + value.sizeDeltaE18;
       const riskIncreasing = !(position.sizeE18 !== 0n && ((position.sizeE18 > 0n && value.sizeDeltaE18 < 0n) || (position.sizeE18 < 0n && value.sizeDeltaE18 > 0n)) && abs(value.sizeDeltaE18) <= abs(position.sizeE18));
@@ -450,8 +487,9 @@ function createProtocolTransactionsRouterForConfig(
         // The oracle is still walking toward a move beyond its 20% jump guard
         // (for example after a split): wait until the mark has caught up.
         const poolPrice = await readPoolPriceE18(database, symbol);
+        const { maxPriceJumpBps } = await readOracleThresholds(rpc, config.FLOAT_ORACLE_ADDRESS as Address, id);
         if (poolPrice !== null && oraclePrice.priceE18 > 0n
-          && (poolPrice > oraclePrice.priceE18 ? poolPrice - oraclePrice.priceE18 : oraclePrice.priceE18 - poolPrice) * BPS > 2_000n * oraclePrice.priceE18) {
+          && (poolPrice > oraclePrice.priceE18 ? poolPrice - oraclePrice.priceE18 : oraclePrice.priceE18 - poolPrice) * BPS > maxPriceJumpBps * oraclePrice.priceE18) {
           throw new Error(`${symbol}'s on-chain price is catching up to a large move in steps. New positions reopen once it has caught up; you can still close.`);
         }
         if (await readBadDebt(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address) !== 0n) throw new Error("new positions are paused while vault bad debt is outstanding");
@@ -556,11 +594,11 @@ function createProtocolTransactionsRouterForConfig(
       const id = marketId(symbol);
       const marketResult = await database.query<{
         id: string; status: "active" | "restricted" | "pilot" | "disabled"; max_half_spread_bps: number;
-        observed_at: Date | null;
+        observed_at: Date | null; price_source: "uniswap_v3" | "reference"; spot_price_usdg: string | null;
       }>(
-        `SELECT m.id,m.status,m.max_half_spread_bps,s.observed_at
+        `SELECT m.id,m.status,m.max_half_spread_bps,m.price_source,s.observed_at,s.spot_price_usdg::text
          FROM public.markets m LEFT JOIN LATERAL (
-           SELECT observed_at FROM public.pool_snapshots WHERE market_id=m.id ORDER BY observed_at DESC LIMIT 1
+           SELECT observed_at,spot_price_usdg FROM public.pool_snapshots WHERE market_id=m.id ORDER BY observed_at DESC LIMIT 1
          ) s ON true WHERE m.symbol=$1`, [symbol]
       );
       const marketRow = marketResult.rows[0];
@@ -589,13 +627,49 @@ function createProtocolTransactionsRouterForConfig(
          LIMIT 1`, [marketRow.id, direction, usdgDecimal(positionNotional)]
       );
       const sample = sampleResult.rows[0];
-      if (!oraclePrice.circuitBroken && (!sample || !Number.isFinite(sample.execution_degradation_bps) || Math.abs(sample.execution_degradation_bps) > marketRow.max_half_spread_bps)) throw new Error("market quote quality is outside its configured band");
-      // Preserve exits during a breaker, but price them at the on-chain TWAP
-      // instead of a potentially manipulated pool sample.
-      const degradationBps = oraclePrice.circuitBroken ? 0n : BigInt(sample!.execution_degradation_bps);
-      const executionPriceE18 = direction === "buy"
-        ? oraclePrice.priceE18 * (BPS + degradationBps) / BPS
-        : oraclePrice.priceE18 * (BPS - degradationBps) / BPS;
+      const reference = marketRow.price_source === "reference";
+      let executionPriceE18: bigint;
+      if (reference) {
+        // Reference samples come from off-chain quotes, so they are always used,
+        // breaker or not (a frozen market's samples carry the 700 bps frozen
+        // spread). The base is the worse of the on-chain mark and the live mid for
+        // the trader, so a lagging mark is never an exit at a stale price. If the
+        // live mid is beyond the protocol's execution bound from the on-chain mark,
+        // the mark is still catching up (ensureFreshMarket above moves it one step
+        // per call): ask the trader to retry instead of filling at a stale price.
+        if (!sample || !Number.isFinite(sample.execution_degradation_bps)) throw new Error("market quote quality is outside its configured band");
+        const degradationBps = BigInt(Math.max(0, sample.execution_degradation_bps));
+        const liveMid = marketRow.spot_price_usdg !== null ? priceDecimalToE18(marketRow.spot_price_usdg) : oraclePrice.priceE18;
+        const base = direction === "buy"
+          ? (liveMid > oraclePrice.priceE18 ? liveMid : oraclePrice.priceE18)
+          : (liveMid < oraclePrice.priceE18 ? liveMid : oraclePrice.priceE18);
+        executionPriceE18 = direction === "buy" ? base * (BPS + degradationBps) / BPS : base * (BPS - degradationBps) / BPS;
+        if (exceedsOracleDeviation(executionPriceE18, oraclePrice.priceE18, onchainMarket.maxExecutionDeviationBps)) {
+          throw new Error(`${symbol}'s on-chain price is catching up to a large move. Try closing again in a few seconds.`);
+        }
+        // While frozen, a close must not realize a loss beyond its margin: that
+        // would record bad debt and pause every Copper open. The position waits
+        // for trading to resume (or for liquidation once the market unfreezes).
+        if (oraclePrice.circuitBroken) {
+          const frozen = await readClearingPosition(rpc, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, input.trader as Address, id);
+          const absSize = frozen.sizeE18 < 0n ? -frozen.sizeE18 : frozen.sizeE18;
+          const priceMove = executionPriceE18 >= frozen.entryPriceE18 ? executionPriceE18 - frozen.entryPriceE18 : frozen.entryPriceE18 - executionPriceE18;
+          const losing = frozen.sizeE18 > 0n ? executionPriceE18 < frozen.entryPriceE18 : executionPriceE18 > frozen.entryPriceE18;
+          const loss = losing ? ceilingDiv(absSize * priceMove, E18 * USDG_TO_E18) : 0n;
+          const fee = ceilingDiv(notionalForSize(frozen.sizeE18, executionPriceE18) * TRADING_FEE_BPS, BPS);
+          if (frozen.marginUsdg < loss + fee) {
+            throw new Error(`${symbol} is frozen (halt or closed market) and closing now would lose more than this position's margin. It can close once trading resumes.`);
+          }
+        }
+      } else {
+        if (!oraclePrice.circuitBroken && (!sample || !Number.isFinite(sample.execution_degradation_bps) || Math.abs(sample.execution_degradation_bps) > marketRow.max_half_spread_bps)) throw new Error("market quote quality is outside its configured band");
+        // Preserve exits during a breaker, but price them at the on-chain TWAP
+        // instead of a potentially manipulated pool sample.
+        const degradationBps = oraclePrice.circuitBroken ? 0n : BigInt(sample!.execution_degradation_bps);
+        executionPriceE18 = direction === "buy"
+          ? oraclePrice.priceE18 * (BPS + degradationBps) / BPS
+          : oraclePrice.priceE18 * (BPS - degradationBps) / BPS;
+      }
       if (executionPriceE18 === 0n || exceedsOracleDeviation(executionPriceE18, oraclePrice.priceE18, onchainMarket.maxExecutionDeviationBps)) throw new Error("execution price exceeds oracle deviation limit");
       const sizeDeltaE18 = -position.sizeE18;
       const tradeNotional = notionalForSize(sizeDeltaE18, executionPriceE18);
@@ -604,7 +678,8 @@ function createProtocolTransactionsRouterForConfig(
         feeUsdg: ceilingDiv(tradeNotional * TRADING_FEE_BPS, BPS),
         maxLeverageE18: onchainMarket.maxLeverageE18,
         oracleSequence: oraclePrice.sequence, nonce: quoteNonce(),
-        expiry: boundedQuoteExpiry(now, oraclePrice.timestamp, config.ORACLE_PRICE_MAX_AGE_SECONDS, config.QUOTE_TTL_SECONDS)
+        expiry: boundedQuoteExpiry(now, oraclePrice.timestamp, config.ORACLE_PRICE_MAX_AGE_SECONDS,
+          reference ? Math.min(config.QUOTE_TTL_SECONDS, config.REFERENCE_QUOTE_TTL_SECONDS) : config.QUOTE_TTL_SECONDS)
       };
       if (value.expiry <= now) throw new Error("on-chain oracle price is too close to expiry");
       const signature = await signTradeQuote(config.QUOTE_SIGNER_PRIVATE_KEY as Hex, config.FLOAT_CLEARING_HOUSE_ADDRESS as Address, value);

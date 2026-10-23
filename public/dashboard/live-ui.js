@@ -9,6 +9,7 @@
     const selected=localStorage.getItem('floatsheets-contract-version-v1');
     if(selected==='legacy-orion') return 'legacy-orion';
     if(selected==='goldlake') return 'goldlake';
+    if(selected==='copper') return 'copper';
     if(selected==='silverlake') return 'silverlake';
     localStorage.setItem('floatsheets-contract-version-v1','goldlake');
     return 'goldlake';
@@ -417,7 +418,7 @@
 
   function vaultPanel(){
     const wallet=walletState();
-    const withdrawalsOnly=selectedContractVersion()!=='goldlake';
+    const withdrawalsOnly=!['goldlake','copper'].includes(selectedContractVersion());
     if(!wallet?.connected) return '<section class="panel live-only-panel"><h2>'+(withdrawalsOnly?'Withdraw liquidity':'Provide liquidity')+'</h2><p>'+(withdrawalsOnly?'Connect your wallet to manage or withdraw existing vault shares. New deposits are disabled for this version.':'Connect your wallet to deposit USDG and receive vault shares.')+'</p><button class="primary-btn" id="connect-to-vault" type="button">Connect wallet</button></section>';
     return '<section class="panel live-only-panel" id="live-vault-panel"><h2>'+(withdrawalsOnly?'Manage legacy liquidity':'Provide liquidity')+'</h2><p>'+(withdrawalsOnly?'View existing shares and queue withdrawals. New liquidity deposits are disabled for this version.':'Your USDG helps back all FloatSheets markets. Your vault share value changes as traders profit or lose.')+'</p><div id="live-vault-data"><p>Loading vault balances.</p></div></section>';
   }
@@ -520,7 +521,9 @@
       const ownership=totalShares===0n?'0.00':(Number(shares)*100/Number(totalShares)).toFixed(2);
       const shareValue=shares*(assets+1n)/(totalShares+1000000n);
       const now=Math.floor(Date.now()/1000),readyAt=Number(vault.epochStartedAt)+Number(vault.epochDuration),settleReady=!vault.epochSettled&&vault.navFresh&&now>=readyAt;
-      const depositsEnabled=selectedContractVersion()==='goldlake';
+      // Copper deposits are open in the UI; the API refuses them (with a clear message)
+      // until COPPER_LP_DEPOSITS_ENABLED or the depositor is on COPPER_LP_ALLOWLIST.
+      const depositsEnabled=['goldlake','copper'].includes(selectedContractVersion());
       const pending=(vault.requests||[]).filter(function(row){return (BigInt(row.depositAssets)>0n&&!row.depositClaimed)||(BigInt(row.withdrawalShares)>0n&&!row.withdrawalClaimed);});
       const requestRows=pending.map(function(row){
         const depositPending=BigInt(row.depositAssets)>0n&&!row.depositClaimed,withdrawPending=BigInt(row.withdrawalShares)>0n&&!row.withdrawalClaimed;
@@ -555,11 +558,30 @@
     });
   }
 
+  function bindReleaseSwitch(){
+    root.querySelectorAll('[data-release]').forEach(function(button){button.addEventListener('click',function(){
+      const key=button.getAttribute('data-release')==='copper'?'copper':'goldlake';
+      // "Large caps" only leaves Copper; users on a legacy version keep it.
+      if(key==='goldlake'&&selectedContractVersion()!=='copper'){ render(); return; }
+      if(key===selectedContractVersion()){ render(); return; }
+      localStorage.setItem('floatsheets-contract-version-v1',key);
+      window.__FLOATSHEETS_LIVE_MARKETS__=false;
+      window.dispatchEvent(new CustomEvent('floatsheets-contract-version-change',{detail:{version:key}}));
+      render();
+    });});
+  }
+
   function genuinePageContent(){
     const view=location.hash.slice(1)||'trade';
     const detailSymbol=location.pathname.match(/^\/dashboard\/([A-Za-z0-9.-]+)\/?$/)?.[1]?.toUpperCase();
     if(!detailSymbol && view==='trade') {
-      root.innerHTML='<div class="page-heading"><div><h1>Markets.</h1><p>Trade stock price moves with USDG on Robinhood Chain.</p></div></div><section class="panel markets-panel"><div class="panel-head"><h2>Available markets</h2><span class="pill">LIVE DATA</span></div><div class="table-scroll"><table><thead><tr><th>Market</th><th>Price</th><th>Price range</th><th>Leverage</th><th>Status</th></tr></thead><tbody>'+markets.map(function(m){return '<tr class="market-link-row" tabindex="0" data-market-href="/dashboard/'+encodeURIComponent(m.symbol)+'/" role="link"><td><a class="market-link" href="/dashboard/'+encodeURIComponent(m.symbol)+'/">'+m.symbol+'</a></td><td>$'+money(m.price)+'</td><td>±'+money(m.band*100)+'%</td><td>'+m.max+'×</td><td>'+stateBadge(m.state)+'</td></tr>';}).join('')+'</tbody></table></div></section>';
+      const penny=selectedContractVersion()==='copper';
+      const tab=function(key,label,active){return '<button type="button" role="tab" data-release="'+key+'" class="'+(active?'active':'')+'" aria-selected="'+active+'">'+label+'</button>';};
+      const releaseSwitch='<div class="segmented release-switch" role="tablist" aria-label="Market set">'+tab('goldlake','Large caps',!penny)+tab('copper','Penny stocks',penny)+'</div>';
+      const capCell=function(m){return penny?'<td>'+(m.marketCapUsd?'$'+(m.marketCapUsd>=1e9?money(m.marketCapUsd/1e9)+'B':Math.round(m.marketCapUsd/1e6)+'M'):'—')+'</td>':'';};
+      const reason=function(m){return penny&&m.state!=='LIVE'&&m.frozenReason?'<br><small>'+escapeHtml(m.frozenReason)+'</small>':'';};
+      root.innerHTML='<div class="page-heading"><div><h1>'+(penny?'Penny stocks.':'Markets.')+'</h1><p>'+(penny?'The 10 smallest Robinhood Stock Tokens, with high leverage and small position caps, on their own vault.':'Trade stock price moves with USDG on Robinhood Chain.')+'</p></div>'+releaseSwitch+'</div><section class="panel markets-panel"><div class="panel-head"><h2>'+(penny?'Penny markets':'Available markets')+'</h2><span class="pill">'+(penny?'COPPER · HIGH RISK':'LIVE DATA')+'</span></div><div class="table-scroll"><table><thead><tr><th>Market</th>'+(penny?'<th>Market cap</th>':'')+'<th>Price</th><th>Price range</th><th>Leverage</th><th>Status</th></tr></thead><tbody>'+markets.map(function(m){return '<tr class="market-link-row" tabindex="0" data-market-href="/dashboard/'+encodeURIComponent(m.symbol)+'/" role="link"><td><a class="market-link" href="/dashboard/'+encodeURIComponent(m.symbol)+'/">'+m.symbol+'</a></td>'+capCell(m)+'<td>$'+money(m.price,m.price<10?4:2)+'</td><td>±'+money(m.band*100)+'%</td><td>'+m.max+'×</td><td>'+stateBadge(m.state)+reason(m)+'</td></tr>';}).join('')+'</tbody></table></div>'+(penny?'<p class="release-note">Penny markets move fast. At 15× a move of about 2.7% against you (less after the opening spread) triggers liquidation, and gaps can take the whole margin. Prices come from Robinhood\'s own Stock Token quotes, cross-checked with a Pyth equity feed where one exists. If prices disagree or go stale the market stops new positions; during a halt or while a price is held, closes stay open at a wider spread.</p>':'')+'</section>';
+      bindReleaseSwitch();
       root.querySelectorAll('[data-market-href]').forEach(function(row){row.addEventListener('click',function(event){if(event.target.closest('a'))return;location.href=row.getAttribute('data-market-href');});row.addEventListener('keydown',function(event){if(event.key==='Enter'||event.key===' '){event.preventDefault();location.href=row.getAttribute('data-market-href');}});});
       return;
     }
@@ -650,12 +672,12 @@
     }
     if(!document.getElementById('contract-version-select')){
       const versionRow=document.createElement('div'); versionRow.className='list-row contract-version-row';
-      versionRow.innerHTML='<div><strong>Contract version</strong><p>Choose which FloatSheets contracts power your dashboard and wallet actions.</p></div><select id="contract-version-select" aria-label="Contract version"><option value="goldlake">FloatSheets Goldlake · latest</option><option value="silverlake">FloatSheets Silverlake · legacy access</option><option value="amber" disabled>FloatSheets Amber · retired</option><option value="jasper" disabled>FloatSheets Jasper · paused</option><option value="meadow" disabled>FloatSheets Meadow · paused</option><option value="legacy-orion">FloatSheets Legacy Orion · vault access</option></select>';
+      versionRow.innerHTML='<div><strong>Contract version</strong><p>Choose which FloatSheets contracts power your dashboard and wallet actions.</p></div><select id="contract-version-select" aria-label="Contract version"><option value="goldlake">FloatSheets Goldlake · large caps</option><option value="copper">FloatSheets Copper · penny stocks</option><option value="silverlake">FloatSheets Silverlake · legacy access</option><option value="amber" disabled>FloatSheets Amber · retired</option><option value="jasper" disabled>FloatSheets Jasper · paused</option><option value="meadow" disabled>FloatSheets Meadow · paused</option><option value="legacy-orion">FloatSheets Legacy Orion · vault access</option></select>';
       settingsPanel.append(versionRow);
       const select=versionRow.querySelector('select');
       select.value=selectedContractVersion();
       select.addEventListener('change',function(){
-        const version=select.value==='legacy-orion'?'legacy-orion':select.value==='silverlake'?'silverlake':'goldlake';
+        const version=select.value==='legacy-orion'?'legacy-orion':select.value==='silverlake'?'silverlake':select.value==='copper'?'copper':'goldlake';
         localStorage.setItem('floatsheets-contract-version-v1',version);
         window.dispatchEvent(new CustomEvent('floatsheets-contract-version-change',{detail:{version:version}}));
       });
@@ -674,7 +696,7 @@
     if(window.__FLOATSHEETS_WELCOME_SHOWN__||typeof modal!=='function')return;
     window.__FLOATSHEETS_WELCOME_SHOWN__=true;
     const version=selectedContractVersion();
-    const name=version==='legacy-orion'?'FloatSheets Legacy Orion':version==='goldlake'?'FloatSheets Goldlake':version==='amber'?'FloatSheets Amber':version==='silverlake'?'FloatSheets Silverlake':'FloatSheets Silverlake';
+    const name=version==='legacy-orion'?'FloatSheets Legacy Orion':version==='goldlake'?'FloatSheets Goldlake':version==='copper'?'FloatSheets Copper':version==='amber'?'FloatSheets Amber':version==='silverlake'?'FloatSheets Silverlake':'FloatSheets Silverlake';
     modal('Welcome to FloatSheets.','<p>Your dashboard is using <strong>'+name+'</strong>.</p><p>You can switch contract versions any time in <strong>Settings → Contract version</strong>. The selected version controls the contracts used for your wallet, positions, oracle data, and vault.</p>','Open Settings',function(){dialog.close();location.hash='settings';});
   }
 

@@ -6,9 +6,12 @@ import { safeErrorMessage } from "../safe-error";
 import { absoluteDeviationBps, quoteExactInputSingle, readPoolTwap } from "../chain/uniswap-v3";
 import { USDG_ADDRESS, USDG_DECIMALS } from "../chain/constants";
 
-const MAX_SPOT_TWAP_DEVIATION_BPS = 50;
-
-type Market = { id: string; symbol: string; uniswap_v3_pool_address: Address; uniswap_v3_fee_tier: number; max_ticket_usdg: string };
+type Market = {
+  id: string; symbol: string; uniswap_v3_pool_address: Address; uniswap_v3_fee_tier: number; max_ticket_usdg: string;
+  // Mirrors the on-chain oracle's per-market breaker band (default 50 bps).
+  max_spot_twap_deviation_bps: number;
+};
+const MARKET_COLUMNS = "id, symbol, uniswap_v3_pool_address, uniswap_v3_fee_tier, max_ticket_usdg::text, max_spot_twap_deviation_bps";
 
 export function quoteNotionalsForMarketCap(maxTicketUsdg: string): number[] {
   const cap = Number(maxTicketUsdg);
@@ -32,11 +35,11 @@ export class MarketMonitor {
 
   async refreshSymbol(symbol: string): Promise<void> {
     const { rows } = await this.database.query<Market>(
-      "SELECT id, symbol, uniswap_v3_pool_address, uniswap_v3_fee_tier, max_ticket_usdg::text FROM public.markets WHERE symbol=$1 AND status != 'disabled'",
+      `SELECT ${MARKET_COLUMNS} FROM public.markets WHERE symbol=$1 AND status != 'disabled' AND price_source = 'uniswap_v3'`,
       [symbol.toUpperCase()]
     );
     const market = rows[0];
-    if (!market) throw new Error(`Enabled market ${symbol.toUpperCase()} was not found`);
+    if (!market) throw new Error(`Enabled pool-priced market ${symbol.toUpperCase()} was not found`);
     await this.refreshMarket(market);
   }
 
@@ -48,7 +51,8 @@ export class MarketMonitor {
     if (!runId) throw new Error("Unable to create monitor run");
     let succeeded = 0;
     const { rows } = await this.database.query<Market>(
-      "SELECT id, symbol, uniswap_v3_pool_address, uniswap_v3_fee_tier, max_ticket_usdg::text FROM public.markets WHERE status != 'disabled' ORDER BY symbol"
+      // Reference-priced markets (Copper) are refreshed by ReferencePriceMonitor.
+      `SELECT ${MARKET_COLUMNS} FROM public.markets WHERE status != 'disabled' AND price_source = 'uniswap_v3' ORDER BY symbol`
     );
     try {
       for (const market of rows) {
@@ -87,7 +91,7 @@ export class MarketMonitor {
       await client.query<{ id: string }>(
         `INSERT INTO public.pool_snapshots (market_id, observed_at, sqrt_price_x96, liquidity, usdg_balance, twap_price_usdg, spot_price_usdg, spot_twap_deviation_bps, oracle_tradable)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
-        [market.id, observedAt, twap.sqrtPriceX96.toString(), twap.liquidity.toString(), twap.usdgBalance.toString(), twap.priceUsdg, twap.spotPriceUsdg, spotTwapDeviationBps, spotTwapDeviationBps <= MAX_SPOT_TWAP_DEVIATION_BPS]
+        [market.id, observedAt, twap.sqrtPriceX96.toString(), twap.liquidity.toString(), twap.usdgBalance.toString(), twap.priceUsdg, twap.spotPriceUsdg, spotTwapDeviationBps, spotTwapDeviationBps <= market.max_spot_twap_deviation_bps]
       );
 
       for (const notional of quoteNotionalsForMarketCap(market.max_ticket_usdg)) {

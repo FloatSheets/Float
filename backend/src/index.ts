@@ -2,7 +2,8 @@ import "dotenv/config";
 
 import { app, setRateLimitDatabase } from "./app";
 import { createRpcTransport } from "./chain/rpc";
-import { contractConfigForVersion, isGoldlakeConfigured, isSilverlakeConfigured, loadConfig } from "./config";
+import { contractConfigForVersion, isCopperConfigured, isGoldlakeConfigured, isSilverlakeConfigured, loadConfig } from "./config";
+import { ReferencePriceMonitor } from "./prices/reference";
 import { db } from "./db";
 import { migrate } from "./db/migrate";
 import { HaltMonitor } from "./markets/halts";
@@ -16,6 +17,7 @@ import { createProtocolRouter } from "./routes/protocol";
 import { createProtocolTransactionsRouter } from "./routes/protocol-transactions";
 import { effectiveOraclePublishIntervalSeconds, OraclePublisher } from "./oracle/publisher";
 import { createKeeperChain, PositionKeeper } from "./keeper/keeper";
+import { createVaultEpochChain, VaultEpochKeeper } from "./keeper/vault-epochs";
 import { createKeeperRouter } from "./routes/keeper";
 import { createStatusRouter } from "./routes/status";
 import { createSolvencyRouter } from "./routes/solvency";
@@ -33,6 +35,7 @@ const config = loadConfig();
 const meadowConfig = contractConfigForVersion(config, "meadow");
 const jasperConfig = contractConfigForVersion(config, "jasper");
 const goldlakeConfig = isGoldlakeConfigured(config) ? contractConfigForVersion(config, "goldlake") : null;
+const copperConfig = isCopperConfigured(config) ? contractConfigForVersion(config, "copper") : null;
 const silverlakeConfig = isSilverlakeConfigured(config) ? contractConfigForVersion(config, "silverlake") : null;
 const amberConfig = contractConfigForVersion(config, "amber");
 const legacyConfig = contractConfigForVersion(config, "legacy-orion");
@@ -43,12 +46,18 @@ await migrate();
 setRateLimitDatabase(db);
 const monitor = new MarketMonitor(db, rpc, Math.min(config.UNISWAP_TWAP_WINDOW_SECONDS, 300));
 const oraclePublisher = new OraclePublisher(db, rpc, config);
+const referenceMonitor = new ReferencePriceMonitor(db, rpc, config);
+// Impostor tokens copy Robinhood Stock Token names and symbols: the reference
+// monitor verifies every market's token (Robinhood beacon proxy or listed in
+// Robinhood's own price feed) before pricing it, and re-checks hourly.
 const keeper = new PositionKeeper(db, createKeeperChain(config, rpc), config);
+const vaultEpochs = new VaultEpochKeeper(config, createVaultEpochChain(config));
 const liquidationAlerts = new LiquidationAlertService(db, config);
 const telegramBot = new TelegramBotService(db, config);
 app.use("/v1/markets", createMarketsRouter(db, config.ORACLE_PRICE_MAX_AGE_SECONDS, {
   ...(goldlakeConfig ? { goldlake: { rpc, clearingHouse: goldlakeConfig.FLOAT_CLEARING_HOUSE_ADDRESS as `0x${string}`, oracle: goldlakeConfig.FLOAT_ORACLE_ADDRESS as `0x${string}` } } : {}),
   ...(silverlakeConfig ? { silverlake: { rpc, clearingHouse: silverlakeConfig.FLOAT_CLEARING_HOUSE_ADDRESS as `0x${string}`, oracle: silverlakeConfig.FLOAT_ORACLE_ADDRESS as `0x${string}` } } : {}),
+  ...(copperConfig ? { copper: { rpc, clearingHouse: copperConfig.FLOAT_CLEARING_HOUSE_ADDRESS as `0x${string}`, oracle: copperConfig.FLOAT_ORACLE_ADDRESS as `0x${string}` } } : {}),
   amber: { rpc, clearingHouse: amberConfig.FLOAT_CLEARING_HOUSE_ADDRESS as `0x${string}`, oracle: amberConfig.FLOAT_ORACLE_ADDRESS as `0x${string}` },
   jasper: { rpc, clearingHouse: jasperConfig.FLOAT_CLEARING_HOUSE_ADDRESS as `0x${string}`, oracle: jasperConfig.FLOAT_ORACLE_ADDRESS as `0x${string}` },
   meadow: { rpc, clearingHouse: meadowConfig.FLOAT_CLEARING_HOUSE_ADDRESS as `0x${string}`, oracle: meadowConfig.FLOAT_ORACLE_ADDRESS as `0x${string}` },
@@ -85,7 +94,9 @@ app.use("/v1/news", createNewsRouter(db));
 app.use("/v1/protocol", createProtocolRouter(config));
 app.use("/v1/protocol/transactions", createProtocolTransactionsRouter(config, db, rpc, oraclePublisher));
 let lastOraclePublishAt = 0;
+let lastReferenceRefreshAt = 0;
 let lastKeeperRunAt = 0;
+let lastVaultEpochRunAt = 0;
 let lastLiquidationAlertsRunAt = 0;
 
 let refreshing = false;
@@ -97,6 +108,12 @@ async function refreshMarkets(): Promise<void> {
   refreshing = true;
   try {
     await monitor.refreshAll();
+    if (config.REFERENCE_PRICES_ENABLED === "true" && Date.now() - lastReferenceRefreshAt >= config.REFERENCE_POLL_INTERVAL_SECONDS * 1_000) {
+      lastReferenceRefreshAt = Date.now();
+      await referenceMonitor.refreshAll();
+      // Follow the tape: republish exposed reference marks that moved past the band.
+      await oraclePublisher.publishReferenceMarkets();
+    }
     if (Date.now() - lastOraclePublishAt >= effectiveOraclePublishIntervalSeconds(config.ORACLE_PUBLISH_INTERVAL_SECONDS) * 1_000) {
       lastOraclePublishAt = Date.now();
       await oraclePublisher.publishFreshMarkets();
@@ -113,6 +130,15 @@ async function refreshMarkets(): Promise<void> {
     }
   } catch (error) {
     console.error("FloatSheets keeper run failed", error);
+  }
+  // Settle and roll LP queue epochs so deposits become vault liquidity (every 5 minutes).
+  try {
+    if (config.KEEPER_ENABLED === "true" && Date.now() - lastVaultEpochRunAt >= 300_000) {
+      lastVaultEpochRunAt = Date.now();
+      await vaultEpochs.runOnce();
+    }
+  } catch (error) {
+    console.error("FloatSheets vault epoch run failed", error);
   }
   try {
     if ((config.RESEND_API_KEY || config.TELEGRAM_BOT_TOKEN) && Date.now() - lastLiquidationAlertsRunAt >= 15_000) {

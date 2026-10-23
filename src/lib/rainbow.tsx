@@ -51,7 +51,7 @@ export function RainbowProviders({ children, queryClient }: { children: ReactNod
 
 export function RainbowWalletBridge() {
   const { address, chainId, isConnected } = useAccount();
-  const [contractVersion, setContractVersion] = useState<"goldlake" | "silverlake" | "amber" | "jasper" | "meadow" | "legacy-orion">("goldlake");
+  const [contractVersion, setContractVersion] = useState<"goldlake" | "copper" | "silverlake" | "amber" | "jasper" | "meadow" | "legacy-orion">("goldlake");
   const [protocolAddresses, setProtocolAddresses] = useState<{ usdg: Address; vault: Address; clearingHouse: Address; oracle: Address } | null>(null);
   const usdgAddress = protocolAddresses?.usdg ?? DEFAULT_USDG_ADDRESS;
   const { data: usdgBalance, refetch: refetchUsdG } = useReadContract({ address: usdgAddress, abi: erc20Abi, functionName: "balanceOf", args: [address ?? "0x0000000000000000000000000000000000000000"], query: { enabled: Boolean(address) && chainId === robinhoodChain.id } });
@@ -81,7 +81,7 @@ export function RainbowWalletBridge() {
   useEffect(() => {
     let active = true;
     let requestId = 0;
-    const loadProtocol = (version: "goldlake" | "silverlake" | "amber" | "jasper" | "meadow" | "legacy-orion") => {
+    const loadProtocol = (version: "goldlake" | "copper" | "silverlake" | "amber" | "jasper" | "meadow" | "legacy-orion") => {
       const currentRequest = ++requestId;
       void getProtocol({ data: { version } }).then((protocol) => {
       if (!active || currentRequest !== requestId) return;
@@ -95,12 +95,12 @@ export function RainbowWalletBridge() {
       }).catch((error) => console.warn("FloatSheets protocol address lookup failed", error));
     };
     const saved = window.localStorage.getItem("floatsheets-contract-version-v1");
-    const initialVersion = saved === "legacy-orion" ? "legacy-orion" : saved === "silverlake" ? "silverlake" : "goldlake";
+    const initialVersion = saved === "legacy-orion" ? "legacy-orion" : saved === "silverlake" ? "silverlake" : saved === "copper" ? "copper" : "goldlake";
     setContractVersion(initialVersion);
     loadProtocol(initialVersion);
     const onVersionChange = (event: Event) => {
       const selected = (event as CustomEvent<{ version?: string }>).detail?.version;
-      const version = selected === "legacy-orion" ? "legacy-orion" : selected === "silverlake" ? "silverlake" : "goldlake";
+      const version = selected === "legacy-orion" ? "legacy-orion" : selected === "silverlake" ? "silverlake" : selected === "copper" ? "copper" : "goldlake";
       setContractVersion(version);
       setProtocolAddresses(null);
       loadProtocol(version);

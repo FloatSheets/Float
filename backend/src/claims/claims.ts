@@ -36,6 +36,7 @@ const vaultAbi = parseAbi([
 /** Deployments in display order: the current one first, then retired ones. */
 export const CLAIM_DEPLOYMENTS: { version: ContractVersion; name: string }[] = [
   { version: "goldlake", name: "FloatSheets Goldlake" },
+  { version: "copper", name: "FloatSheets Copper" },
   { version: "silverlake", name: "FloatSheets Silverlake" },
   { version: "amber", name: "FloatSheets Amber" },
   { version: "jasper", name: "FloatSheets Jasper" },
@@ -117,7 +118,7 @@ export class ClaimCenter {
     const clearingHouse = addresses.FLOAT_CLEARING_HOUSE_ADDRESS as Address;
     const vault = addresses.FLOAT_VAULT_ADDRESS as Address;
     const result: DeploymentClaims = {
-      version, name, current: version === "goldlake", clearing_house: clearingHouse, vault, items: [], pending_payout_usdg: "0.000000", error: null
+      version, name, current: version === "goldlake" || version === "copper", clearing_house: clearingHouse, vault, items: [], pending_payout_usdg: "0.000000", error: null
     };
     try {
       // Older deployments lack deferred payouts; a missing function means none are owed.

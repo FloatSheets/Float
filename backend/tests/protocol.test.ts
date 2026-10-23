@@ -95,7 +95,9 @@ test("publishes Goldlake addresses by default and supports retired and legacy se
     quote_signer: config.QUOTE_SIGNER_ADDRESS,
     max_position_duration_seconds: 604800,
     lp_actions_locked_while_positions_open: false,
-    lp_actions_queued_by_epoch: true
+    lp_actions_queued_by_epoch: true,
+    accepts_new_positions: true,
+    market_universe: "large_cap"
   });
   const meadow = await request(server).get("/v1/protocol").set("x-floatsheets-contract-version", "meadow");
   expect(meadow.body.contract_name).toBe("FloatSheets Meadow");
@@ -191,6 +193,43 @@ test("blocks all new deposits outside Goldlake while preserving legacy withdrawa
     .send({ shares: "1000000000000", receiver: "0x1111111111111111111111111111111111111111" });
   expect(response.status).toBe(200);
   expect(response.body.transaction.to).toBe(config.LEGACY_ORION_FLOAT_VAULT_ADDRESS);
+});
+
+test("Copper accepts new risk once configured and answers 503 until its contracts exist", async () => {
+  const missing = await request(server).post("/v1/protocol/transactions/vault-deposit")
+    .set("x-floatsheets-contract-version", "copper")
+    .send({ amountUsdg: "1000000", receiver: "0x1111111111111111111111111111111111111111" });
+  expect(missing.status).toBe(503);
+  expect(missing.body.error).toContain("Copper");
+
+  const copperConfig = loadConfig({
+    ...Object.fromEntries(Object.entries(config).map(([key, value]) => [key, value === undefined ? undefined : Array.isArray(value) ? value.join(",") : String(value)])),
+    COPPER_FLOAT_CLEARING_HOUSE_ADDRESS: "0xcccccccccccccccccccccccccccccccccccccccc",
+    COPPER_FLOAT_ORACLE_ADDRESS: "0xdddddddddddddddddddddddddddddddddddddddd",
+    COPPER_FLOAT_VAULT_ADDRESS: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    COPPER_LP_ALLOWLIST: "0x1111111111111111111111111111111111111111"
+  });
+  const copperApp = express();
+  copperApp.use(express.json());
+  copperApp.use("/v1/protocol", createProtocolRouter(copperConfig));
+  copperApp.use("/v1/protocol/transactions", createProtocolTransactionsRouter(copperConfig));
+  const copperServer = await listening(copperApp);
+  try {
+    const protocol = await request(copperServer).get("/v1/protocol").set("x-floatsheets-contract-version", "copper");
+    expect(protocol.body).toMatchObject({ contract_name: "FloatSheets Copper", vault: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", accepts_new_positions: true, market_universe: "penny" });
+    const deposit = await request(copperServer).post("/v1/protocol/transactions/vault-deposit")
+      .set("x-floatsheets-contract-version", "copper")
+      .send({ amountUsdg: "1000000", receiver: "0x1111111111111111111111111111111111111111" });
+    expect(deposit.status).toBe(200);
+    expect(deposit.body.transaction.to).toBe("0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
+    // Opens are routed to the Copper router (not refused as a retired version).
+    const open = await request(copperServer).post("/v1/protocol/transactions/trade-quote")
+      .set("x-floatsheets-contract-version", "copper")
+      .send({ market: "RCAT", trader: "0x1111111111111111111111111111111111111111", isLong: true, notionalUsdg: "1000000" });
+    expect(open.status).not.toBe(409);
+  } finally {
+    await new Promise<void>((resolve) => copperServer.close(() => resolve()));
+  }
 });
 
 test("rejects signer issuance without the master admin key", async () => {
@@ -324,6 +363,110 @@ test("builds a trader quote and execution transaction without exposing the quote
   } finally {
     await new Promise<void>((resolve, reject) => quoteServer.close((error) => error ? reject(error) : resolve()));
   }
+});
+
+test("prices reference-market exits off the worse of the on-chain mark and the live mid", async () => {
+  const clearingAbi = parseAbi([
+    "function markets(bytes32) view returns (uint8,uint64,uint64,uint64,uint64,uint128)",
+    "function getPosition(address,bytes32) view returns (int256,uint256,uint256,uint64)",
+    "function badDebtUsdg() view returns (uint256)"
+  ]);
+  const oracleAbi = parseAbi(["function getPrice(bytes32) view returns (uint256,uint256,uint256,uint256,uint64,uint64,bool)"]);
+  let liveMid = "99";
+  let degradation = 50;
+  let circuitBroken = false;
+  let margin = 100_000000n;
+  const database = {
+    query: async (sql: string) => {
+      if (sql.includes("FROM public.markets")) return { rows: [{ id: "market-1", status: "active", max_ticket_usdg: "1000", max_half_spread_bps: 200, observed_at: new Date(), oracle_tradable: true, price_source: "reference", spot_price_usdg: liveMid }] };
+      if (sql.includes("SELECT notional_usdg")) return { rows: [{ notional_usdg: "1000", execution_degradation_bps: degradation }] };
+      if (sql.includes("FROM public.exchange_halts")) return { rows: [] };
+      throw new Error(`unexpected query: ${sql}`);
+    }
+  } as unknown as Pool;
+  const rpc: RpcTransport = {
+    call: async ({ to, data }) => {
+      if (to.toLowerCase() !== config.GOLDLAKE_FLOAT_CLEARING_HOUSE_ADDRESS!.toLowerCase()) {
+        return encodeFunctionResult({ abi: oracleAbi, functionName: "getPrice", result: [100_000000000000000000n, 100_000000000000000000n, 50n, 0n, BigInt(Math.floor(Date.now() / 1000)), 9n, circuitBroken] });
+      }
+      const positionSelector = encodeFunctionData({ abi: clearingAbi, functionName: "getPosition", args: ["0x1111111111111111111111111111111111111111", (`0x${"00".repeat(32)}`) as `0x${string}`] }).slice(0, 10);
+      const badDebtSelector = encodeFunctionData({ abi: clearingAbi, functionName: "badDebtUsdg" }).slice(0, 10);
+      if (data.startsWith(badDebtSelector)) return encodeFunctionResult({ abi: clearingAbi, functionName: "badDebtUsdg", result: 0n });
+      // A 10-token long; market: 15x, 4% maintenance, 750 bps execution bound, $1,000 cap.
+      return data.startsWith(positionSelector)
+        ? encodeFunctionResult({ abi: clearingAbi, functionName: "getPosition", result: [10_000000000000000000n, 100_000000000000000000n, margin, 1_800_000_000n] })
+        : encodeFunctionResult({ abi: clearingAbi, functionName: "markets", result: [1, 15_000000000000000000n, 400n, 750n, 50n, 1_000_000000n] });
+    }
+  };
+  const app = express();
+  app.use(express.json());
+  app.use("/v1/protocol/transactions", createProtocolTransactionsRouter(config, database, rpc, { ensureFreshMarket: async () => undefined }));
+  const quoteServer = await listening(app);
+  const close = () => request(quoteServer).post("/v1/protocol/transactions/close-quote").send({ market: "RCAT", trader: "0x1111111111111111111111111111111111111111" });
+  try {
+    // Live mid 1% under a lagging mark of 100: the long sells off 99, not 100.
+    const lagging = await close();
+    expect(lagging.status).toBe(200);
+    expect(lagging.body.quote.executionPriceE18).toBe("98505000000000000000"); // 99 x (1 - 0.50%)
+    // Breaker set (frozen): the frozen sample spread still applies; no free exit at the mark.
+    circuitBroken = true; degradation = 700; liveMid = "100";
+    const frozen = await close();
+    expect(frozen.status).toBe(200);
+    expect(frozen.body.quote.executionPriceE18).toBe("93000000000000000000");
+    // A frozen close that would lose more than the margin waits instead of creating bad debt.
+    margin = 60_000000n;
+    const underwater = await close();
+    expect(underwater.status).toBe(400);
+    expect(underwater.body.error).toContain("more than this position's margin");
+    margin = 100_000000n;
+    // Live mid 30% under the mark: beyond the 750 bps bound, so retry once the mark catches up.
+    circuitBroken = false; degradation = 50; liveMid = "70";
+    const gap = await close();
+    expect(gap.status).toBe(400);
+    expect(gap.body.error).toContain("catching up");
+
+    // Opens: refused while the on-chain mark lags the live mid by more than 2x the republish band.
+    liveMid = "101";
+    const open = (notional: string) => request(quoteServer).post("/v1/protocol/transactions/trade-quote").send({ market: "RCAT", trader: "0x1111111111111111111111111111111111111111", isLong: true, notionalUsdg: notional });
+    expect((await open("100000000")).body.error).toContain("moving");
+    // At 15x / 4% MM the headroom is 267 bps: a 150 bps spread (x2 > 267) is refused.
+    liveMid = "100"; degradation = 150;
+    expect((await open("100000000")).body.error).toContain("too wide");
+    degradation = 60;
+    const accepted = await open("100000000");
+    expect(accepted.status).toBe(200);
+    // Reference quotes live at most 15 s.
+    expect(BigInt(accepted.body.quote.expiry) - BigInt(Math.floor(Date.now() / 1_000))).toBeLessThanOrEqual(15n);
+    // Saturday: new penny risk is capped at 3x on the whole position (10 tokens at ~100 on $100 margin is ~10x).
+    setSystemTime(new Date("2026-10-24T15:00:00.000Z"));
+    try {
+      const weekend = await open("100000000");
+      expect(weekend.status).toBe(400);
+      expect(weekend.body.error).toContain("limited to 3x");
+    } finally {
+      setSystemTime();
+    }
+  } finally {
+    await new Promise<void>((resolve, reject) => quoteServer.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+test("keeps Copper vault deposits closed until enabled or allowlisted", async () => {
+  const base = Object.fromEntries(Object.entries(config).map(([key, value]) => [key, value === undefined ? undefined : Array.isArray(value) ? value.join(",") : String(value)]));
+  const copper = { ...base, COPPER_FLOAT_CLEARING_HOUSE_ADDRESS: "0xcccccccccccccccccccccccccccccccccccccccc", COPPER_FLOAT_ORACLE_ADDRESS: "0xdddddddddddddddddddddddddddddddddddddddd", COPPER_FLOAT_VAULT_ADDRESS: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" };
+  const deposit = async (env: Record<string, string | undefined>, receiver: string) => {
+    const app = express();
+    app.use(express.json());
+    app.use("/v1/protocol/transactions", createProtocolTransactionsRouter(loadConfig(env)));
+    const server = await listening(app);
+    try {
+      return await request(server).post("/v1/protocol/transactions/vault-deposit").set("x-floatsheets-contract-version", "copper").send({ amountUsdg: "1000000", receiver });
+    } finally { await new Promise<void>((resolve) => server.close(() => resolve())); }
+  };
+  const team = "0x1111111111111111111111111111111111111111";
+  expect((await deposit(copper, team)).status).toBe(409);
+  expect((await deposit({ ...copper, COPPER_LP_ALLOWLIST: team }, team)).status).toBe(200);
+  expect((await deposit({ ...copper, COPPER_LP_DEPOSITS_ENABLED: "true" }, "0x2222222222222222222222222222222222222222")).status).toBe(200);
 });
 
 test("accepts a signed, in-band improvement from the live buy matrix", async () => {

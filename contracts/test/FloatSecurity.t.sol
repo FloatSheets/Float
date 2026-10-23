@@ -1195,8 +1195,10 @@ contract FloatSecurityTest is Test {
         vault.startNextQueueEpoch();
         vm.expectRevert(FloatVault.QueueNotReady.selector);
         vault.settleQueue();
+        // Read the epoch first: expectRevert applies to the very next call, view calls included.
+        uint64 openEpoch = vault.queueEpoch();
         vm.expectRevert(FloatVault.QueueNotReady.selector);
-        vault.claimDeposit(vault.queueEpoch());
+        vault.claimDeposit(openEpoch);
         vm.expectRevert(FloatVault.ZeroAmount.selector);
         vault.deposit(0, address(this));
         vm.expectRevert(FloatVault.ZeroAmount.selector);
@@ -1214,8 +1216,9 @@ contract FloatSecurityTest is Test {
         vm.warp(block.timestamp + vault.QUEUE_EPOCH_DURATION());
         vault.settleQueue();
         token.setBlockedRecipient(receiver, true);
+        uint64 settledEpoch = vault.queueEpoch();
         vm.expectRevert(FloatVault.TransferFailed.selector);
-        vault.claimWithdrawal(vault.queueEpoch(), receiver);
+        vault.claimWithdrawal(settledEpoch, receiver);
     }
 
     function testMarketCapacityRiskChangesAndImmediateOwnershipTransfer() public {

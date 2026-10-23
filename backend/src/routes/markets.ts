@@ -8,6 +8,7 @@ import { readClearingMarket, readOraclePrice } from '../chain/protocol-read';
 import type { RpcTransport } from '../chain/rpc';
 import type { Address } from 'viem';
 import { contractVersionFromRequest } from '../contract-version';
+import type { ContractVersion } from '../config';
 import { HALT_FEED_STALE_SECONDS, readActiveHalts } from '../markets/halts';
 import { closedWindow } from '../markets/sessions';
 import { readCorporateActions, type CorporateActionOptions } from '../markets/corporate-actions';
@@ -24,7 +25,12 @@ function usdgDecimal(units: bigint): string {
 }
 
 type LiveMarketDependencies = { rpc: RpcTransport; clearingHouse: Address; oracle: Address };
-type VersionedLiveMarketDependencies = Partial<Record<'goldlake' | 'silverlake' | 'amber' | 'jasper' | 'meadow' | 'legacy-orion', LiveMarketDependencies>>;
+type VersionedLiveMarketDependencies = Partial<Record<ContractVersion, LiveMarketDependencies>>;
+
+/** Copper lists the penny markets; every other release lists the large-cap set. */
+export function listingRelease(version: ContractVersion): 'goldlake' | 'copper' {
+  return version === 'copper' ? 'copper' : 'goldlake';
+}
 
 export function effectiveMaxTicketUsdg(backendCap: number | string, onchainCapE6: bigint): number {
   return Math.min(Number(backendCap), Number(onchainCapE6) / 1_000_000);
@@ -52,15 +58,22 @@ export function createMarketsRouter(
       const result = await database.query(
         `SELECT m.symbol, m.status, m.max_leverage, m.max_ticket_usdg,
                 m.min_half_spread_bps, m.max_half_spread_bps,
+                m.price_source, m.listing_class, m.market_cap_usd,
+                -- DATE as text: node-pg would turn it into local midnight and shift the day.
+                m.market_cap_as_of::text AS market_cap_as_of,
                 s.observed_at, s.liquidity, s.usdg_balance, s.twap_price_usdg, s.spot_price_usdg,
-                s.spot_twap_deviation_bps, s.oracle_tradable
+                s.spot_twap_deviation_bps, s.oracle_tradable, s.source AS snapshot_source,
+                s.sources_used, s.source_dispersion_bps, s.frozen_reason
          FROM public.markets m
          LEFT JOIN LATERAL (
            SELECT observed_at, liquidity, usdg_balance, twap_price_usdg, spot_price_usdg,
-                  spot_twap_deviation_bps, oracle_tradable FROM public.pool_snapshots
+                  spot_twap_deviation_bps, oracle_tradable, source, sources_used, source_dispersion_bps, frozen_reason
+           FROM public.pool_snapshots
            WHERE market_id = m.id ORDER BY observed_at DESC LIMIT 1
          ) s ON true
-         WHERE m.listed = TRUE ORDER BY m.symbol`
+         WHERE m.listed = TRUE AND $1 = ANY(m.releases)
+         ORDER BY (m.listing_class = 'penny'), m.market_cap_usd ASC NULLS LAST, m.symbol`,
+        [listingRelease(contractVersionFromRequest(request))]
       );
       const [halts, actions] = await Promise.all([readActiveHalts(database), readCorporateActions(database, actionOptions)]);
       const rows = await Promise.all(result.rows.map(async (row) => ({

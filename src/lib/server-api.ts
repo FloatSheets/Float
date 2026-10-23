@@ -2,10 +2,10 @@ import { createServerFn } from "@tanstack/react-start";
 import { getRequestIP } from "@tanstack/react-start/server";
 
 type JsonRecord = Record<string, unknown>;
-type ContractVersion = "goldlake" | "silverlake" | "amber" | "jasper" | "meadow" | "legacy-orion";
+type ContractVersion = "goldlake" | "copper" | "silverlake" | "amber" | "jasper" | "meadow" | "legacy-orion";
 
 function versionOf(value: unknown): ContractVersion {
-  return value === "legacy-orion" ? "legacy-orion" : value === "silverlake" ? "silverlake" : value === "jasper" ? "jasper" : value === "meadow" ? "meadow" : value === "amber" ? "amber" : "goldlake";
+  return value === "legacy-orion" ? "legacy-orion" : value === "copper" ? "copper" : value === "silverlake" ? "silverlake" : value === "jasper" ? "jasper" : value === "meadow" ? "meadow" : value === "amber" ? "amber" : "goldlake";
 }
 
 function apiOrigin() {

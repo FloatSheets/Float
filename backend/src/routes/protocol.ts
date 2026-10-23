@@ -1,7 +1,7 @@
 import { Router } from "express";
 
 import type { AppConfig } from "../config";
-import { contractConfigForVersion, isGoldlakeConfigured, isSilverlakeConfigured } from "../config";
+import { acceptsNewRisk, contractConfigForVersion, isVersionConfigured } from "../config";
 import { contractVersionFromRequest } from "../contract-version";
 
 export function createProtocolRouter(config: AppConfig): Router {
@@ -9,14 +9,14 @@ export function createProtocolRouter(config: AppConfig): Router {
 
   router.get("/", (request, response) => {
     const version = contractVersionFromRequest(request);
-    if (version === "goldlake" && !isGoldlakeConfigured(config)) {
-      response.status(503).json({ error: "Goldlake contracts are not deployed or configured" });
+    if ((version === "goldlake" || version === "copper") && !isVersionConfigured(config, version)) {
+      response.status(503).json({ error: `${version === "copper" ? "Copper" : "Goldlake"} contracts are not deployed or configured` });
       return;
     }
     const versionConfig = contractConfigForVersion(config, version);
     response.json({
       contract_version: version,
-      contract_name: version === "goldlake" ? "FloatSheets Goldlake" : version === "silverlake" ? "FloatSheets Silverlake" : version === "amber" ? "FloatSheets Amber" : version === "jasper" ? "FloatSheets Jasper" : version === "meadow" ? "FloatSheets Meadow" : "FloatSheets Legacy Orion",
+      contract_name: version === "goldlake" ? "FloatSheets Goldlake" : version === "copper" ? "FloatSheets Copper" : version === "silverlake" ? "FloatSheets Silverlake" : version === "amber" ? "FloatSheets Amber" : version === "jasper" ? "FloatSheets Jasper" : version === "meadow" ? "FloatSheets Meadow" : "FloatSheets Legacy Orion",
       chain_id: config.RHC_ID,
       settlement_asset: "USDG",
       settlement_asset_address: config.USDG_ADDRESS,
@@ -27,7 +27,9 @@ export function createProtocolRouter(config: AppConfig): Router {
       quote_signer: config.QUOTE_SIGNER_ADDRESS,
       max_position_duration_seconds: version === "legacy-orion" ? null : 604800,
       lp_actions_locked_while_positions_open: version === "meadow",
-      lp_actions_queued_by_epoch: version !== "legacy-orion"
+      lp_actions_queued_by_epoch: version !== "legacy-orion",
+      accepts_new_positions: acceptsNewRisk(version),
+      market_universe: version === "copper" ? "penny" : "large_cap"
     });
   });
 

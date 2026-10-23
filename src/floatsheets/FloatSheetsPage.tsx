@@ -3,7 +3,7 @@ import { pages } from "./pages";
 import { installWalletButton } from "@/lib/walletconnect";
 import { getClaims, getCloseTransaction, getFloatNews, getKeeperStatus, getSolvency, getStatus, getLiveMarket, getMarketHistory, getMarkets, getWeekendAllowance } from "@/lib/server-api";
 
-type DashboardContractVersion = "goldlake" | "silverlake" | "amber" | "meadow" | "legacy-orion";
+type DashboardContractVersion = "goldlake" | "copper" | "silverlake" | "amber" | "meadow" | "legacy-orion";
 type DashboardServerApi = {
   getMarkets: (version: DashboardContractVersion) => Promise<any>;
   getFloatNews: () => Promise<any>;

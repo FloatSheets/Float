@@ -5,7 +5,7 @@ import {
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
-import { contractConfigForVersion, isGoldlakeConfigured, isSilverlakeConfigured, type AppConfig, type ContractVersion } from "../config";
+import { configuredVersions, contractConfigForVersion, isGoldlakeConfigured, isSilverlakeConfigured, type AppConfig, type ContractVersion } from "../config";
 import { marketId } from "../chain/protocol";
 import { readClearingPosition, readPayoutBalances } from "../chain/protocol-read";
 import type { RpcTransport } from "../chain/rpc";
@@ -24,6 +24,9 @@ const RECENT_ACTION_LIMIT = 10;
  */
 export const KEEPER_START_BLOCKS: Record<ContractVersion, bigint> = {
   goldlake: 94_807_521n,
+  // Copper is not deployed yet. Set COPPER_DEPLOYMENT_BLOCK to its deployment
+  // block; this fallback (chain head on 2026-10-22) only bounds the first scan.
+  copper: 95_269_000n,
   silverlake: 94_764_216n,
   amber: 94_624_581n,
   jasper: 94_292_113n,
@@ -151,10 +154,7 @@ export class PositionKeeper {
   ) {}
 
   private versions(): ContractVersion[] {
-    const all: ContractVersion[] = ["goldlake", "silverlake", "amber", "jasper", "meadow", "legacy-orion"];
-    return all.filter((version) => {
-      if (version === "goldlake" && !isGoldlakeConfigured(this.config)) return false;
-      if (version === "silverlake" && !isSilverlakeConfigured(this.config)) return false;
+    return configuredVersions(this.config).filter((version) => {
       try {
         contractConfigForVersion(this.config, version);
         return true;
@@ -190,12 +190,14 @@ export class PositionKeeper {
     const cursor = await this.database.query<{ next_block: string }>(
       "SELECT next_block FROM public.keeper_cursors WHERE contract_version=$1", [version]
     );
-    let from = cursor.rows[0] ? BigInt(cursor.rows[0].next_block) : KEEPER_START_BLOCKS[version];
+    const startBlock = version === "copper" && this.config.COPPER_DEPLOYMENT_BLOCK !== undefined
+      ? BigInt(this.config.COPPER_DEPLOYMENT_BLOCK) : KEEPER_START_BLOCKS[version];
+    let from = cursor.rows[0] ? BigInt(cursor.rows[0].next_block) : startBlock;
     if (from > latestBlock + 1n) {
       // A cursor past the chain head cannot be real (for example, written by a
       // test against the wrong database) and would hide every new position.
       console.warn(JSON.stringify({ event: "keeper_cursor_reset", version, cursor: from.toString(), chain_head: latestBlock.toString() }));
-      from = KEEPER_START_BLOCKS[version];
+      from = startBlock;
     }
     let span = MAX_LOG_SPAN;
     const clearingHouse = this.clearingHouse(version);

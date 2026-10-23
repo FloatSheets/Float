@@ -2,7 +2,7 @@ import { z } from "zod";
 import { privateKeyToAccount } from "viem/accounts";
 
 const address = z.string().regex(/^0x[a-fA-F0-9]{40}$/, "must be an EVM address");
-export const contractVersionSchema = z.enum(["goldlake", "silverlake", "amber", "jasper", "meadow", "legacy-orion"]);
+export const contractVersionSchema = z.enum(["goldlake", "copper", "silverlake", "amber", "jasper", "meadow", "legacy-orion"]);
 export type ContractVersion = z.infer<typeof contractVersionSchema>;
 
 const schema = z.object({
@@ -19,6 +19,44 @@ const schema = z.object({
   GOLDLAKE_FLOAT_CLEARING_HOUSE_ADDRESS: address.default("0xA1329C69e8EDA292cdA849BaBB990fbD05198cDb"),
   GOLDLAKE_FLOAT_ORACLE_ADDRESS: address.default("0xe47c7ab6e236e44CB888Ab08CE96f5839887C5Ec"),
   GOLDLAKE_FLOAT_VAULT_ADDRESS: address.default("0x24B530f2ef4c76D10003e861182208ceA4120C45"),
+  // FloatSheets Copper: the penny-stock release (own oracle, vault, clearing house).
+  // Leave unset until the contracts are deployed; every Copper path stays off.
+  COPPER_FLOAT_CLEARING_HOUSE_ADDRESS: address.optional(),
+  COPPER_FLOAT_ORACLE_ADDRESS: address.optional(),
+  COPPER_FLOAT_VAULT_ADDRESS: address.optional(),
+  COPPER_DEPLOYMENT_BLOCK: z.coerce.number().int().min(0).optional(),
+  // Reference prices for markets without a deep Uniswap pool (price_source = 'reference').
+  REFERENCE_PRICES_ENABLED: z.enum(["true", "false"]).default("true"),
+  ROBINHOOD_PRICES_URL: z.url().default("https://api.robinhood.com/rhj/prices/"),
+  PYTH_HERMES_URL: z.url().default("https://hermes.pyth.network"),
+  PYTH_API_KEY: z.string().min(1).optional(),
+  // Bounded below by MARKET_POLL_INTERVAL_MS (the main loop).
+  REFERENCE_POLL_INTERVAL_SECONDS: z.coerce.number().int().min(5).max(300).default(5),
+  // Reference-market quotes expire faster than pool quotes: a long-lived quote is a free option in a fast tape.
+  REFERENCE_QUOTE_TTL_SECONDS: z.coerce.number().int().min(5).max(60).default(15),
+  // Unfrozen marks needed in the averaging window before opens resume (after a halt or weekend).
+  REFERENCE_MIN_WINDOW_POINTS: z.coerce.number().int().min(1).max(500).default(20),
+  // Before a weekend/holiday closure (and during it) new penny risk is capped at this leverage.
+  COPPER_CLOSURE_MAX_LEVERAGE: z.coerce.number().int().min(1).max(18).default(3),
+  COPPER_CLOSURE_LEAD_HOURS: z.coerce.number().int().min(0).max(48).default(6),
+  // A source older than this is ignored; with too few fresh sources the market is close-only.
+  REFERENCE_SOURCE_MAX_AGE_SECONDS: z.coerce.number().int().min(10).max(600).default(90),
+  // Sources must agree within this band for opens (median is used as the mark).
+  REFERENCE_MAX_SOURCE_DISPERSION_BPS: z.coerce.number().int().min(10).max(2_000).default(150),
+  REFERENCE_TWAP_WINDOW_SECONDS: z.coerce.number().int().min(60).max(3_600).default(900),
+  // Synthetic depth used by the risk screen for reference markets (USDG).
+  // Size-impact model for reference quotes: impact = notional / depth / 2 (a $1,000 trade at 250k = 20 bps).
+  REFERENCE_VIRTUAL_DEPTH_USDG: z.coerce.number().int().min(1_000).default(250_000),
+  // A Robinhood quote whose bid/ask hasn't changed for this long counts as stale.
+  REFERENCE_UNCHANGED_QUOTE_SECONDS: z.coerce.number().int().min(60).max(86_400).default(600),
+  // Republish a reference mark once it moves this far from the on-chain price.
+  REFERENCE_REPUBLISH_BPS: z.coerce.number().int().min(5).max(500).default(25),
+  // New Copper LP deposits stay closed (team liquidity is seeded directly) until this is true.
+  COPPER_LP_DEPOSITS_ENABLED: z.enum(["true", "false"]).default("false"),
+  COPPER_LP_ALLOWLIST: z.string().default("").transform((value) => value.split(",").map((item) => item.trim().toLowerCase()).filter(Boolean)),
+  // With no live source, keep the last mark (opens refused, closes allowed) this long.
+  // Covers a four-day holiday weekend (Friday 20:00 to Tuesday 04:00 is ~80h) with margin.
+  REFERENCE_HOLD_MAX_SECONDS: z.coerce.number().int().min(60).max(604_800).default(432_000),
   MEADOW_FLOAT_CLEARING_HOUSE_ADDRESS: address.default("0xc1AfA648C30090Aa8fDd3fbca384bd65b52B58Dd"),
   MEADOW_FLOAT_ORACLE_ADDRESS: address.default("0x7Fda40E8FD27cA067C9Ee23EA0Fd0cb8Bb786A8a"),
   MEADOW_FLOAT_VAULT_ADDRESS: address.default("0xb74eD266A95d8393cDaF2Fa6cADd98b5a1D91875"),
@@ -106,7 +144,45 @@ export function isGoldlakeConfigured(config: AppConfig): boolean {
   );
 }
 
+export function isCopperConfigured(config: AppConfig): boolean {
+  return Boolean(
+    config.COPPER_FLOAT_CLEARING_HOUSE_ADDRESS
+    && config.COPPER_FLOAT_ORACLE_ADDRESS
+    && config.COPPER_FLOAT_VAULT_ADDRESS
+  );
+}
+
+/** Releases that accept new positions and deposits. */
+export const OPEN_RELEASES = ["goldlake", "copper"] as const satisfies readonly ContractVersion[];
+export function acceptsNewRisk(version: ContractVersion): boolean {
+  return (OPEN_RELEASES as readonly ContractVersion[]).includes(version);
+}
+
+/** Every release in service order; unconfigured ones are skipped by `configuredVersions`. */
+export const ALL_VERSIONS = ["goldlake", "copper", "silverlake", "amber", "jasper", "meadow", "legacy-orion"] as const satisfies readonly ContractVersion[];
+export function isVersionConfigured(config: AppConfig, version: ContractVersion): boolean {
+  if (version === "goldlake") return isGoldlakeConfigured(config);
+  if (version === "silverlake") return isSilverlakeConfigured(config);
+  if (version === "copper") return isCopperConfigured(config);
+  if (version === "jasper") return config.NODE_ENV === "test" || Boolean(
+    config.JASPER_FLOAT_CLEARING_HOUSE_ADDRESS && config.JASPER_FLOAT_ORACLE_ADDRESS && config.JASPER_FLOAT_VAULT_ADDRESS
+  );
+  return true;
+}
+export function configuredVersions(config: AppConfig): ContractVersion[] {
+  return ALL_VERSIONS.filter((version) => isVersionConfigured(config, version));
+}
+
 export function contractConfigForVersion(config: AppConfig, version: ContractVersion): AppConfig {
+  if (version === "copper") {
+    if (!isCopperConfigured(config)) throw new Error("Copper contract addresses are not configured");
+    return {
+      ...config,
+      FLOAT_CLEARING_HOUSE_ADDRESS: config.COPPER_FLOAT_CLEARING_HOUSE_ADDRESS!,
+      FLOAT_ORACLE_ADDRESS: config.COPPER_FLOAT_ORACLE_ADDRESS!,
+      FLOAT_VAULT_ADDRESS: config.COPPER_FLOAT_VAULT_ADDRESS!
+    };
+  }
   if (version === "goldlake") {
     if (!isGoldlakeConfigured(config)) throw new Error("Goldlake contract addresses are not configured");
     const clearingHouse = config.GOLDLAKE_FLOAT_CLEARING_HOUSE_ADDRESS ?? (config.NODE_ENV === "test" ? config.FLOAT_CLEARING_HOUSE_ADDRESS : undefined);

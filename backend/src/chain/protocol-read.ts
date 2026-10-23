@@ -2,7 +2,10 @@ import { decodeFunctionResult, encodeFunctionData, parseAbi, type Address, type 
 
 import type { RpcTransport } from "./rpc";
 
-const oracleAbi = parseAbi(["function getPrice(bytes32) view returns (uint256,uint256,uint256,uint256,uint64,uint64,bool)"]);
+const oracleAbi = parseAbi([
+  "function getPrice(bytes32) view returns (uint256,uint256,uint256,uint256,uint64,uint64,bool)",
+  "function effectiveOracleConfig(bytes32) view returns (uint256 maxSpotTwapDeviationBps, uint256 maxPriceJumpBps)"
+]);
 const clearingAbi = parseAbi([
   "function markets(bytes32) view returns (uint8,uint64,uint64,uint64,uint64,uint128)",
   "function marketExposure(bytes32) view returns (uint256 longBaseE18,uint256 shortBaseE18)",
@@ -83,4 +86,24 @@ export async function readPayoutBalances(rpc: RpcTransport, clearingHouse: Addre
     return decodeFunctionResult({ abi: payoutAbi, functionName, data: result });
   }));
   return { claimableBalance: values[0], deferredClaim: values[1], pendingPayout: values[2] };
+}
+
+export type OracleThresholds = { maxSpotTwapDeviationBps: bigint; maxPriceJumpBps: bigint };
+/** Releases before Copper have no per-market config: their thresholds are the old constants. */
+export const LEGACY_ORACLE_THRESHOLDS: OracleThresholds = { maxSpotTwapDeviationBps: 50n, maxPriceJumpBps: 2_000n };
+
+/** The breaker band and jump guard the oracle itself will apply to this market. */
+export async function readOracleThresholds(rpc: RpcTransport, oracle: Address, id: Hex): Promise<OracleThresholds> {
+  const data = encodeFunctionData({ abi: oracleAbi, functionName: "effectiveOracleConfig", args: [id] });
+  let result: Hex;
+  try {
+    result = await rpc.call({ to: oracle, data });
+  } catch (error) {
+    // Older oracles revert on the unknown selector: they use the constants.
+    if (/revert|execution reverted|invalid opcode/i.test(String((error as Error)?.message ?? error))) return LEGACY_ORACLE_THRESHOLDS;
+    throw error;
+  }
+  if (result === "0x") return LEGACY_ORACLE_THRESHOLDS;
+  const [maxSpotTwapDeviationBps, maxPriceJumpBps] = decodeFunctionResult({ abi: oracleAbi, functionName: "effectiveOracleConfig", data: result });
+  return { maxSpotTwapDeviationBps, maxPriceJumpBps };
 }
