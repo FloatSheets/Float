@@ -60,7 +60,8 @@ app.use((request, response, next) => {
   const trader = typeof request.body?.trader === "string" && /^0x[0-9a-fA-F]{40}$/.test(request.body.trader)
     ? request.body.trader.toLowerCase()
     : "anonymous";
-  const limit = alertRoute ? 12 : transactionRoute
+  const telegramStatus = path === "/v1/telegram-alerts/link-status" && request.method === "POST";
+  const limit = alertRoute ? (telegramStatus ? 60 : 12) : transactionRoute
     ? closeQuote ? CLOSE_QUOTE_RATE_LIMIT : openQuote ? OPEN_QUOTE_RATE_LIMIT : OTHER_TRANSACTION_RATE_LIMIT
     : GENERAL_RATE_LIMIT;
   const bucket = alertRoute ? path : transactionRoute ? closeQuote ? "close" : openQuote ? "open" : path : "api";

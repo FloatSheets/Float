@@ -228,6 +228,10 @@ async function telegramAlertPost(path: string, body: JsonRecord): Promise<any> {
   const response = await fetch(`${apiOrigin()}/v1/telegram-alerts/${path}`, {
     method: "POST", headers: apiHeaders("goldlake", true), body: JSON.stringify(body),
   });
+  if (path === "link-status" && response.status === 429) {
+    const retryAfter = Number(response.headers.get("retry-after") ?? 60);
+    return { linked: false, rate_limited: true, retry_after_seconds: Number.isFinite(retryAfter) ? Math.min(120, Math.max(5, retryAfter)) : 60 };
+  }
   const result = await response.json().catch(() => ({})) as JsonRecord;
   if (!response.ok) throw new Error(typeof result["error"] === "string" ? result["error"] : `Telegram alert request failed (${response.status}).`);
   return result;

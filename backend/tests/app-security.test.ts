@@ -36,3 +36,32 @@ test("sets API security headers and enforces local and shared database rate limi
     resetRateLimitsForTest();
   }
 });
+
+test('Telegram status polling has its own budget while link creation stays restricted', async () => {
+  for (const shared of [false, true]) {
+    resetRateLimitsForTest();
+    const buckets = new Map<string, number>();
+    if (shared) setRateLimitDatabase({ query: async (_sql: string, params: string[]) => {
+      const key = params[0];
+      const hits = (buckets.get(key) ?? 0) + 1;
+      buckets.set(key, hits);
+      return { rows: [{ hits }] };
+    }} as never);
+    try {
+      for (let index = 0; index < 60; index++) {
+        const response = await request(app).post('/v1/telegram-alerts/link-status').send({ token: 'a'.repeat(43) });
+        expect(response.status).not.toBe(429);
+        expect(response.headers['ratelimit-limit']).toBe('60');
+      }
+      const limited = await request(app).post('/v1/telegram-alerts/link-status');
+      expect(limited.status).toBe(429);
+      expect(limited.headers['retry-after']).toBeDefined();
+      for (let index = 0; index < 12; index++) {
+        const response = await request(app).post('/v1/telegram-alerts/link');
+        expect(response.status).not.toBe(429);
+        expect(response.headers['ratelimit-limit']).toBe('12');
+      }
+      expect((await request(app).post('/v1/telegram-alerts/link')).status).toBe(429);
+    } finally { resetRateLimitsForTest(); }
+  }
+});

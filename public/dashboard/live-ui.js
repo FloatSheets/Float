@@ -772,16 +772,25 @@
           const open=telegramRow.querySelector('#liquidation-telegram-open'); open.href=result.link_url; open.hidden=false;
           status.textContent='Open Telegram, then tap Start. This one-time link expires in 10 minutes.';
           if(window.__FLOATSHEETS_TELEGRAM_LINK_POLL__)clearInterval(window.__FLOATSHEETS_TELEGRAM_LINK_POLL__);
-          let checking=false; const started=Date.now();
+          let checking=false,nextCheckAt=0; const started=Date.now();
           window.__FLOATSHEETS_TELEGRAM_LINK_POLL__=setInterval(async function(){
-            if(checking)return; checking=true;
+            const currentWallet=window.__FLOATSHEETS_WALLET__;
+            if(!telegramRow.isConnected||!currentWallet?.connected||currentWallet.address?.toLowerCase()!==wallet.address.toLowerCase()||Date.now()-started>=10*60*1000){
+              clearInterval(window.__FLOATSHEETS_TELEGRAM_LINK_POLL__);window.__FLOATSHEETS_TELEGRAM_LINK_POLL__=null;
+              if(telegramRow.isConnected){status.textContent='Link check stopped. Start again to get a new link.';linkButton.disabled=false;open.hidden=true;}
+              return;
+            }
+            if(checking||Date.now()<nextCheckAt||document.hidden)return; checking=true;
             try{
               const state=await wallet.getTelegramAlertLinkStatus(result.token);
+              if(!telegramRow.isConnected||window.__FLOATSHEETS_WALLET__?.address?.toLowerCase()!==wallet.address.toLowerCase())return;
+              if(state.rate_limited){nextCheckAt=Date.now()+state.retry_after_seconds*1000;status.textContent='Waiting before checking again. Your Telegram link is still valid.';return;}
+              status.textContent='Waiting for Telegram. Open the link and tap Start.';
               if(state.linked){clearInterval(window.__FLOATSHEETS_TELEGRAM_LINK_POLL__);window.__FLOATSHEETS_TELEGRAM_LINK_POLL__=null;const pref={enabled:true,username:state.telegram_username||null};localStorage.setItem('floatsheets-liquidation-telegram-'+wallet.address.toLowerCase(),JSON.stringify(pref));toggle.disabled=false;toggle.checked=true;linked.textContent=pref.username?'Linked as '+pref.username:'Telegram linked';status.textContent='Telegram linked and liquidation alerts enabled.';open.hidden=true;linkButton.disabled=false;}
               else if(Date.now()-started>10*60*1000){clearInterval(window.__FLOATSHEETS_TELEGRAM_LINK_POLL__);window.__FLOATSHEETS_TELEGRAM_LINK_POLL__=null;status.textContent='Link expired. Start again to get a new one-time link.';linkButton.disabled=false;}
             }catch(error){clearInterval(window.__FLOATSHEETS_TELEGRAM_LINK_POLL__);window.__FLOATSHEETS_TELEGRAM_LINK_POLL__=null;status.textContent=error instanceof Error?error.message:'Could not check Telegram link status.';linkButton.disabled=false;}
             finally{checking=false;}
-          },2500);
+          },5000);
         }catch(error){status.textContent=error instanceof Error?error.message:'Could not create Telegram link.';linkButton.disabled=false;}
       });
     }
