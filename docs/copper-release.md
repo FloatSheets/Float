@@ -8,18 +8,18 @@ Snapshot: 2026-10-22. Market caps come from stockanalysis.com and are recorded i
 
 ## The 10 markets
 
-| # | Ticker | Company | Market cap | Price sources | Launch | Cap |
+| # | Ticker | Company | Market cap | Price source | Launch | Cap |
 |---|---|---|---|---|---|---|
 | 1 | WYFI | WhiteFiber | $411M | Robinhood | 5× | $500 |
-| 2 | NNE | NANO Nuclear Energy | $684M | Robinhood + Pyth | 5× | $1,000 |
-| 3 | RCAT | Red Cat Holdings | $686M | Robinhood + Pyth | 5× | $1,000 |
+| 2 | NNE | NANO Nuclear Energy | $684M | Robinhood | 5× | $1,000 |
+| 3 | RCAT | Red Cat Holdings | $686M | Robinhood | 5× | $1,000 |
 | 4 | TE | T1 Energy | $701M | Robinhood | 5× | $500 |
-| 5 | XNDU | Xanadu Quantum | $833M | Robinhood + Pyth | 5× | $1,000 |
-| 6 | POET | POET Technologies | $929M | Robinhood + Pyth | 5× | $1,000 |
-| 7 | FLNC | Fluence Energy | $1.06B | Robinhood + Pyth | 5× | $1,000 |
-| 8 | QUBT | Quantum Computing | $1.52B | Robinhood + Pyth | 5× | $1,000 |
+| 5 | XNDU | Xanadu Quantum | $833M | Robinhood | 5× | $1,000 |
+| 6 | POET | POET Technologies | $929M | Robinhood | 5× | $1,000 |
+| 7 | FLNC | Fluence Energy | $1.06B | Robinhood | 5× | $1,000 |
+| 8 | QUBT | Quantum Computing | $1.52B | Robinhood | 5× | $1,000 |
 | 9 | RUN | Sunrun | $1.82B | Robinhood | 5× | $500 |
-| 10 | DJT | Trump Media & Technology | $1.85B | Robinhood + Pyth | 5× | $1,000 |
+| 10 | DJT | Trump Media & Technology | $1.85B | Robinhood | 5× | $1,000 |
 
 - **Launch profile:** 5× with 5% maintenance margin on every market. A position is liquidated after roughly a 15% adverse move.
 - **Step-up profile** (after 14 days without bad debt): 10× / 6% for the two-source markets; single-source markets stay at 5×.
@@ -32,7 +32,7 @@ Snapshot: 2026-10-22. Market caps come from stockanalysis.com and are recorded i
 Their Uniswap pools are empty or a few thousand USDG deep, so pools are never price sources. `ReferencePriceMonitor` (`backend/src/prices/reference.ts`) polls two off-chain sources that trading on Robinhood Chain can't move:
 
 1. **Robinhood:** `rhj/prices` token bid/ask, matched by the official contract address. A quote counts only once it has been seen changing, and is stale after 10 unchanged minutes.
-2. **Pyth:** the equity feed × the token's `uiMultiplier()`. **Needs `PYTH_API_KEY`**; without it Hermes returns 401 and the seven two-source markets can't open.
+2. **Pyth (optional cross-check):** the equity feed × the token's `uiMultiplier()`. Every market opens on Robinhood's quote alone (migration 019). Pyth joins when `PYTH_API_KEY` is set on a plan that covers US equities (a crypto-only plan returns 403 "Not entitled"); a disagreement between live sources then blocks opens.
 
 The published mark is the median of fresh sources, with spot equal to the mark, so the stock oracle's 50 bps spot/TWAP band never freezes it. Moves larger than the 20% jump guard are walked in 19% steps by the publisher; each step is a clean mark, so liquidations keep running.
 
@@ -85,7 +85,7 @@ forge script script/ConfigureCopperMarkets.s.sol --rpc-url rhc --broadcast --acc
 - **Gaps:** penny names gap 20–40% overnight. A gap past a position's margin becomes bad debt on the Copper vault; bad debt pauses new Copper opens only. Caps ($500–$1,000 per position, open interest ≤ 15% of the vault per market) bound the loss.
 - **Frozen exits** cost 7%, and a close that would exceed its margin waits for the reopen.
 - **The closure profile is a manual owner step.** If it's skipped, positions opened mid-week ride the weekend gap; the 3× cap only stops new ones.
-- **Single-source markets** (WYFI, TE, RUN) open on Robinhood's quote alone: a stale quote stops opens, but a wrong fresh quote would be signed.
+- **Single source:** every market opens on Robinhood's quote alone until Pyth equities are added: a stale quote stops opens, but a wrong fresh quote would be signed.
 - **Data terms:** `rhj/prices` is Robinhood's public token quote endpoint; its terms for commercial reuse are unverified. Pyth Hermes needs an API key.
 - **Still open from the last audit:** single-EOA owner, signers inside the API process, no timelock. Copper inherits all three; team liquidity only until they're fixed.
 - **US persons:** perps on single US stocks can't be offered to US persons. Geofence Copper.
