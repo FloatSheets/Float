@@ -52,7 +52,7 @@ const referenceMonitor = new ReferencePriceMonitor(db, rpc, config);
 // Robinhood's own price feed) before pricing it, and re-checks hourly.
 const keeper = new PositionKeeper(db, createKeeperChain(config, rpc), config);
 const liquidationAlerts = new LiquidationAlertService(db, config);
-const telegramBot = new TelegramBotService(db, config);
+const telegramBot = new TelegramBotService(db, config, rpc);
 app.use("/v1/markets", createMarketsRouter(db, config.ORACLE_PRICE_MAX_AGE_SECONDS, {
   ...(jaguarConfig ? { jaguar: { rpc, clearingHouse: jaguarConfig.FLOAT_CLEARING_HOUSE_ADDRESS as `0x${string}`, oracle: jaguarConfig.FLOAT_ORACLE_ADDRESS as `0x${string}` } } : {}),
   ...(goldlakeConfig ? { goldlake: { rpc, clearingHouse: goldlakeConfig.FLOAT_CLEARING_HOUSE_ADDRESS as `0x${string}`, oracle: goldlakeConfig.FLOAT_ORACLE_ADDRESS as `0x${string}` } } : {}),
