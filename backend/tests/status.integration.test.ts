@@ -35,10 +35,10 @@ const deps: StatusDependencies = {
   keeperStatus: async () => ({ last_run_finished_at: keeperRun, last_error: null })
 };
 
-async function freshSamples(at: Date): Promise<void> {
+async function freshSamples(at: Date, except: string[] = []): Promise<void> {
   await db.query(
     `INSERT INTO public.pool_snapshots (market_id, observed_at, sqrt_price_x96, liquidity, usdg_balance, twap_price_usdg, spot_price_usdg, spot_twap_deviation_bps, oracle_tradable)
-     SELECT id, $1, 1, 1, 1, 100, 100, 0, true FROM public.markets WHERE listed = TRUE AND status <> 'disabled'`, [at]
+     SELECT id, $1, 1, 1, 1, 100, 100, 0, true FROM public.markets WHERE listed = TRUE AND status <> 'disabled' AND NOT (symbol = ANY($2::text[]))`, [at, except]
   );
   inserted.push(at);
 }
@@ -76,6 +76,21 @@ test("flags stale data, a stopped keeper and circuit-broken marks", async () => 
   expect(results.keeper).toEqual({ status: "outage", detail: "Last keeper run 10 min ago" });
   rpcDown = true;
   expect((await new StatusMonitor(db, deps).check(NOW)).chain).toEqual({ status: "outage", detail: "Robinhood RPC returned HTTP 502" });
+}, 60_000);
+
+test("treats a penny market waiting on its quote as a restriction, not a sampler failure", async () => {
+  // RUN is reference-priced: its quote has not updated, so it has no recent price yet.
+  await freshSamples(NOW, ["RUN"]);
+  const monitor = new StatusMonitor(db, deps);
+  expect((await monitor.check(NOW)).market_data).toEqual({ status: "operational", detail: null });
+  const report = await monitor.report(NOW);
+  expect(report.market_events).toContainEqual(expect.objectContaining({ market: "RUN", kind: "awaiting_price" }));
+
+  // With no penny-stock prices at all, the reference feed itself is reported.
+  const pennies = await db.query<{ symbol: string }>("SELECT symbol FROM public.markets WHERE price_source = 'reference' AND listed = TRUE AND status <> 'disabled'");
+  await db.query("DELETE FROM public.pool_snapshots WHERE observed_at = $1", [NOW]);
+  await freshSamples(NOW, pennies.rows.map((row) => row.symbol));
+  expect((await monitor.check(NOW)).market_data).toEqual({ status: "degraded", detail: "No live penny-stock prices from the reference quote feeds" });
 }, 60_000);
 
 test("opens an incident after two failed checks and resolves it on recovery", async () => {

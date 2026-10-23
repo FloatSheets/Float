@@ -57,6 +57,10 @@ function minutes(seconds: number): string {
 export class StatusMonitor {
   constructor(private readonly database: Pool, private readonly deps: StatusDependencies) {}
 
+  private sampleAgeLimitSeconds(): number {
+    return Math.max(120, (this.deps.marketPollIntervalMs / 1_000) * 4);
+  }
+
   async check(now: Date = new Date()): Promise<Record<ComponentId, CheckResult>> {
     const run = async (fn: () => Promise<CheckResult>): Promise<CheckResult> => {
       try { return await fn(); } catch (error) { return { status: "outage", detail: safeErrorMessage(error) }; }
@@ -69,8 +73,8 @@ export class StatusMonitor {
       // Without the database nothing else can be evaluated or recorded.
       return Object.fromEntries(Object.keys(COMPONENTS).map((id) => [id, id === "api" ? api : { status: "outage", detail: "database unavailable" }])) as Record<ComponentId, CheckResult>;
     }
-    const listed = await this.database.query<{ symbol: string; observed_at: Date | null }>(
-      `SELECT m.symbol, s.observed_at FROM public.markets m LEFT JOIN LATERAL (
+    const listed = await this.database.query<{ symbol: string; observed_at: Date | null; price_source: string | null }>(
+      `SELECT m.symbol, s.observed_at, m.price_source FROM public.markets m LEFT JOIN LATERAL (
          SELECT observed_at FROM public.pool_snapshots WHERE market_id=m.id ORDER BY observed_at DESC LIMIT 1
        ) s ON true WHERE m.listed = TRUE AND m.status <> 'disabled' ORDER BY m.symbol`
     );
@@ -82,10 +86,22 @@ export class StatusMonitor {
         return { status: "operational", detail: null };
       }),
       market_data: await run(async () => {
-        const limit = Math.max(120, (this.deps.marketPollIntervalMs / 1_000) * 4);
-        const stale = listed.rows.filter((row) => (ageSeconds(row.observed_at, now) ?? Infinity) > limit).map((row) => row.symbol);
-        if (stale.length === 0) return { status: "operational", detail: null };
-        return { status: stale.length === listed.rows.length ? "outage" : "degraded", detail: `Stale pool samples: ${stale.join(", ")}` };
+        const limit = this.sampleAgeLimitSeconds();
+        const isStale = (row: { observed_at: Date | null }) => (ageSeconds(row.observed_at, now) ?? Infinity) > limit;
+        // Pool-priced markets are sampled every poll, so a stale one means the sampler failed.
+        const pools = listed.rows.filter((row) => row.price_source !== "reference");
+        const stale = pools.filter(isStale).map((row) => row.symbol);
+        // Reference-priced (penny) markets only record a price once their quote is live; one
+        // waiting on a quote is a market restriction, not a sampler failure. Only report the
+        // feed itself when none of them has a live price.
+        const reference = listed.rows.filter((row) => row.price_source === "reference");
+        const referenceDown = reference.length > 0 && reference.every(isStale);
+        if (stale.length === 0 && !referenceDown) return { status: "operational", detail: null };
+        const details = [
+          ...(stale.length ? [`Stale pool samples: ${stale.join(", ")}`] : []),
+          ...(referenceDown ? ["No live penny-stock prices from the reference quote feeds"] : [])
+        ];
+        return { status: pools.length > 0 && stale.length === pools.length ? "outage" : "degraded", detail: details.join("; ") };
       }),
       oracle: await run(async () => {
         const broken: string[] = [];
@@ -205,9 +221,18 @@ export class StatusMonitor {
     });
     const overall: ComponentStatus = components.some((item) => item.status === "outage") ? "outage"
       : components.some((item) => item.status === "degraded") ? "degraded" : "operational";
+    const waiting = await this.database.query<{ symbol: string }>(
+      `SELECT m.symbol FROM public.markets m LEFT JOIN LATERAL (
+         SELECT observed_at FROM public.pool_snapshots WHERE market_id=m.id ORDER BY observed_at DESC LIMIT 1
+       ) s ON true
+       WHERE m.listed = TRUE AND m.status <> 'disabled' AND m.price_source = 'reference'
+         AND (s.observed_at IS NULL OR s.observed_at < $1::timestamptz - make_interval(secs => $2::double precision))
+       ORDER BY m.symbol`, [now, this.sampleAgeLimitSeconds()]
+    );
     const marketEvents = [
       ...[...halts.values()].map((halt) => ({ market: halt.symbol, kind: "exchange_halt", summary: `Halted on ${halt.listing_market} (${halt.reason}). Close-only until trading resumes.`, since: halt.halted_at })),
-      ...[...actions.values()].map((action) => ({ market: action.symbol, kind: action.kind, summary: action.summary, since: action.close_only ? action.close_only_from : null }))
+      ...[...actions.values()].map((action) => ({ market: action.symbol, kind: action.kind, summary: action.summary, since: action.close_only ? action.close_only_from : null })),
+      ...waiting.rows.map((row) => ({ market: row.symbol, kind: "awaiting_price", summary: "Waiting for a live price quote. New positions open once its quote updates; quiet after-hours quotes can take until the next session.", since: null }))
     ];
     return {
       overall,
