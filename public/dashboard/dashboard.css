@@ -161,3 +161,4 @@
 .page-heading .release-switch{align-self:center;min-width:260px;margin:0}
 .release-note{margin:0;padding:14px 18px;font-size:13px;line-height:1.5;opacity:.8;border-top:1px solid currentColor;border-top-color:color-mix(in srgb,currentColor 12%,transparent)}
 @media (max-width:640px){.page-heading .release-switch{min-width:0;width:100%;margin-top:12px}}
+.capacity-cell{font-variant-numeric:tabular-nums;white-space:nowrap}.capacity-full{color:#a63c64;font-size:12px}.capacity-note{margin:6px 0 12px}

@@ -10,6 +10,7 @@ import type { Address } from 'viem';
 import { contractVersionFromRequest } from '../contract-version';
 import type { ContractVersion } from '../config';
 import { HALT_FEED_STALE_SECONDS, readActiveHalts } from '../markets/halts';
+import { readCapacities, type Capacity } from '../markets/capacity';
 import { closedWindow } from '../markets/sessions';
 import { readCorporateActions, type CorporateActionOptions } from '../markets/corporate-actions';
 import { openingBellTerms, openingBellTicket, type OpeningBellOptions } from '../markets/opening-bell';
@@ -46,6 +47,22 @@ export function createMarketsRouter(
 ): Router {
   const router = Router();
   const bands = new WeekendBands(database, bandOptions);
+  // Capacity reads every registered market on-chain; share them across requests briefly.
+  const capacityCache = new Map<string, { at: number; value: Map<string, Capacity> }>();
+  async function cachedCapacities(rpc: RpcTransport, clearingHouse: Address, oracle: Address, caps: Map<string, bigint>) {
+    const key = clearingHouse.toLowerCase();
+    const hit = capacityCache.get(key);
+    if (hit && Date.now() - hit.at < 15_000) return hit.value;
+    try {
+      const value = await readCapacities(rpc, clearingHouse, oracle, caps);
+      capacityCache.set(key, { at: Date.now(), value });
+      return value;
+    } catch (error) {
+      // Capacity is advisory: never fail the market list because of it.
+      console.warn(JSON.stringify({ event: 'market_capacity_unavailable', clearing_house: key, error: error instanceof Error ? error.message.slice(0, 200) : String(error) }));
+      return hit?.value ?? null;
+    }
+  }
   async function bandView(symbol: string, poolPrice?: string | null): Promise<WeekendBandView | null> {
     const band = await bands.band(symbol);
     if (!band) return null;
@@ -85,16 +102,26 @@ export function createMarketsRouter(
       if (!live) return response.json({ markets: rows });
       const selectedLive = 'rpc' in live ? live : live[contractVersionFromRequest(request)];
       if (!selectedLive) return response.status(503).json({ error: 'live market reads are unavailable for this contract version' });
-      const markets = await Promise.all(rows.map(async (row) => {
+      const onchain = await Promise.all(rows.map(async (row) => {
         const id = marketId(row.symbol);
-        const market = await readClearingMarket(selectedLive.rpc, selectedLive.clearingHouse, id);
+        return { row, id, market: await readClearingMarket(selectedLive.rpc, selectedLive.clearingHouse, id) };
+      }));
+      const capacities = await cachedCapacities(selectedLive.rpc, selectedLive.clearingHouse, selectedLive.oracle,
+        new Map(onchain.map(({ id, market }) => [id.toLowerCase(), BigInt(market.maxPositionNotionalUsdg)])));
+      const markets = onchain.map(({ row, id, market }) => {
+        const capacity = capacities?.get(id.toLowerCase());
         return {
           ...row,
           max_leverage: Number(market.maxLeverageE18) / 1e18,
           max_ticket_usdg: effectiveMaxTicketUsdg(row.max_ticket_usdg, market.maxPositionNotionalUsdg),
-          onchain_market_state: market.state
+          onchain_market_state: market.state,
+          capacity: capacity ? {
+            long_usdg: usdgDecimal(capacity.longUsdg),
+            short_usdg: usdgDecimal(capacity.shortUsdg),
+            vault_usdg: usdgDecimal(capacity.vaultUsdg)
+          } : null
         };
-      }));
+      });
       response.json({ markets });
     } catch (error) {
       next(error);
