@@ -1,6 +1,7 @@
 import type { Pool, PoolClient } from "pg";
 import { contractVersionSchema, type AppConfig } from "../config";
 import type { RpcTransport } from "../chain/rpc";
+import { telegramVaultReports } from "./telegram-vault";
 import { telegramPositionReports } from "./telegram-positions";
 import { linkTelegramChat, telegramRequest } from "../routes/telegram-alerts";
 
@@ -65,41 +66,41 @@ export class TelegramBotService {
     const text = message?.text?.trim() ?? "";
     if (!chatId || !text.startsWith('/')) return;
     const command = text.split(/\s+/, 1)[0]!.split('@')[0]!.toLowerCase();
-    if (!['/start', '/help', '/positions', '/trades'].includes(command)) return;
+    if (!['/start', '/help', '/positions', '/trades', '/vault'].includes(command)) return;
     const args = text.split(/\s+/, 2);
     const token = args[1];
     if (message?.chat?.type !== "private") {
       await telegramRequest(this.config, "sendMessage", { chat_id: chatId, text: "For security, link your Telegram account in a private chat with this bot." });
       return;
     }
-    if (command === '/positions' || command === '/trades') {
+    if (command === '/positions' || command === '/trades' || command === '/vault') {
       const version = token ? contractVersionSchema.safeParse(token.toLowerCase()) : null;
       if (version && !version.success) {
-        await telegramRequest(this.config, 'sendMessage', { chat_id: chatId, text: 'Use /positions or /positions <version>. Versions: ' + contractVersionSchema.options.join(', ') });
+        await telegramRequest(this.config, 'sendMessage', { chat_id: chatId, text: 'Use ' + command + ' or ' + command + ' <version>. Versions: ' + contractVersionSchema.options.join(', ') });
         return;
       }
       const key = String(chatId), now = Date.now();
       if (now - (this.positionRequests.get(key) ?? 0) < 30_000) {
-        await telegramRequest(this.config, 'sendMessage', { chat_id: chatId, text: 'Please wait 30 seconds between position lookups.' });
+        await telegramRequest(this.config, 'sendMessage', { chat_id: chatId, text: 'Please wait 30 seconds between wallet lookups.' });
         return;
       }
       for (const [id, at] of this.positionRequests) if (now - at >= 30_000) this.positionRequests.delete(id);
       this.positionRequests.set(key, now);
       try {
-        const reports = await telegramPositionReports(this.database, this.config, this.rpc, key, version?.success ? version.data : undefined);
+        const reports = await (command === '/vault' ? telegramVaultReports : telegramPositionReports)(this.database, this.config, this.rpc, key, version?.success ? version.data : undefined);
         let batch = '';
         for (const report of reports) {
           if (batch.length + report.length > 3500) { await telegramRequest(this.config, 'sendMessage', { chat_id: chatId, text: batch }); batch = ''; }
           batch += (batch ? '\n\n' : '') + report;
         }
-        if (batch) await telegramRequest(this.config, 'sendMessage', { chat_id: chatId, text: batch, reply_markup: { inline_keyboard: [[{ text: 'Open Portfolio', url: new URL('/dashboard/#portfolio', this.config.FRONTEND_URL).href }]] } });
+        if (batch) await telegramRequest(this.config, 'sendMessage', { chat_id: chatId, text: batch, reply_markup: { inline_keyboard: [[{ text: command === '/vault' ? 'Open Vault' : 'Open Portfolio', url: new URL(command === '/vault' ? '/dashboard/#vault' : '/dashboard/#portfolio', this.config.FRONTEND_URL).href }]] } });
       } catch {
-        await telegramRequest(this.config, 'sendMessage', { chat_id: chatId, text: 'Could not load positions right now. Please try again shortly.' });
+        await telegramRequest(this.config, 'sendMessage', { chat_id: chatId, text: 'Could not load wallet data right now. Please try again shortly.' });
       }
       return;
     }
     if (command === '/help' || !token || !/^[A-Za-z0-9_-]{40,60}$/.test(token)) {
-      await telegramRequest(this.config, "sendMessage", { chat_id: chatId, text: "FloatSheets commands:\n/positions or /trades — your open positions across deployments\n/positions jaguar — filter by version\n/help — show commands\n\nConnect your wallet and use Link Telegram in dashboard Settings first. Commands work in private chat only." });
+      await telegramRequest(this.config, "sendMessage", { chat_id: chatId, text: "FloatSheets commands:\n/positions or /trades — your open positions across deployments\n/positions jaguar — filter by version\n/vault — LP balances and queue status\n/vault goldlake — filter by version\n/help — show commands\n\nConnect your wallet and use Link Telegram in dashboard Settings first. Commands work in private chat only." });
       return;
     }
     const user = message?.from;
