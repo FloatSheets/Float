@@ -25,6 +25,7 @@ import { ClaimCenter } from "./claims/claims";
 import { SolvencyReader } from "./solvency/solvency";
 import { StatusMonitor } from "./status/status";
 import { CopperClosureWatch } from "./markets/copper-closure";
+import { PennyMarketAlerts } from "./alerts/penny-alerts";
 import { createEmailAlertsRouter } from "./routes/email-alerts";
 import { LiquidationAlertService } from "./alerts/liquidation-alerts";
 import { TelegramSettlementService } from "./alerts/telegram-settlements";
@@ -206,3 +207,6 @@ setTimeout(() => {
 }, 90_000).unref();
 // Remind the Copper owner about the weekend closure profile (at most once per window).
 setInterval(() => void copperClosure.remind().catch((error) => console.error("FloatSheets Copper closure reminder failed", error)), 600_000).unref();
+// Penny-market halt, pause and resume alerts for /pennyalerts subscribers.
+const pennyAlerts = new PennyMarketAlerts(db, config);
+if (config.TELEGRAM_BOT_TOKEN) setInterval(() => void pennyAlerts.runOnce(), 30_000).unref();
