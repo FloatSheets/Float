@@ -1,0 +1,148 @@
+{
+  "chainId": 4663,
+  "network": "Robinhood Chain",
+  "version": "floatsheets-copper",
+  "settlementAsset": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+  "owner": "0x2241D50BfE090BEb20a2521bdaf351C42446D73c",
+  "deployer": "0x2241D50BfE090BEb20a2521bdaf351C42446D73c",
+  "oracle": "0x4533F3a3bFF4DF0060810186182520A903A5d656",
+  "vault": "0x920F5eEc51E0361615Fc0B861A1Fe0C1F4cf62f0",
+  "clearingHouse": "0xD81E638b19E2e4Fff0C88958F9e0b6d0969AcFfE",
+  "oracleSigner": "0x9417f45d924b43587fE1a03803001fA073ce3a5a",
+  "quoteSigner": "0x325Fd0FA56AC44dfe6015c6F4c2C426967aFb3ad",
+  "feeRecipient": "0x5140a99bf0fB56637a3DBDA7685cc4E190F15c94",
+  "deploymentTransactions": [
+    "0xf3d83ede1f44a43009c71491ced64fa9f6f19051ae940731ef0d25507b4581b3",
+    "0xc1d73c9ed2b3dcc447172443a682441a1d184e9e9cc3b8845a31029e9bb9c673",
+    "0x805c4a5382b370bddd640a3407b1f0def8b2dd812243fd06faa0e4f9e467521d",
+    "0x201e468ea5a08eb79dab9ca2fc516d7e02b2923ab2d8a662ba602ab5a41e31bb"
+  ],
+  "deploymentBlock": 95675318,
+  "verification": {
+    "runtimeBytecode": "FloatInstantVault runtime matches local Foundry artifacts; all three contracts are the same source as Jaguar (contracts/src unchanged)",
+    "vaultAsset": "matches USDG",
+    "vaultClearingHouseLink": "matches deployed clearing house",
+    "oracleSigner": "matches configured oracle signer",
+    "quoteSigner": "matches configured quote signer",
+    "owner": "matches configured owner"
+  },
+  "markets": [
+    {
+      "symbol": "RCAT",
+      "state": "Active",
+      "maxLeverage": "5x",
+      "maintenanceMarginBps": 500,
+      "maxPositionNotionalUsdg": 40,
+      "priceSource": "Robinhood Stock Token quote"
+    },
+    {
+      "symbol": "NNE",
+      "state": "Active",
+      "maxLeverage": "5x",
+      "maintenanceMarginBps": 500,
+      "maxPositionNotionalUsdg": 40,
+      "priceSource": "Robinhood Stock Token quote"
+    },
+    {
+      "symbol": "XNDU",
+      "state": "Active",
+      "maxLeverage": "5x",
+      "maintenanceMarginBps": 500,
+      "maxPositionNotionalUsdg": 40,
+      "priceSource": "Robinhood Stock Token quote"
+    },
+    {
+      "symbol": "POET",
+      "state": "Active",
+      "maxLeverage": "5x",
+      "maintenanceMarginBps": 500,
+      "maxPositionNotionalUsdg": 40,
+      "priceSource": "Robinhood Stock Token quote"
+    },
+    {
+      "symbol": "FLNC",
+      "state": "Active",
+      "maxLeverage": "5x",
+      "maintenanceMarginBps": 500,
+      "maxPositionNotionalUsdg": 40,
+      "priceSource": "Robinhood Stock Token quote"
+    },
+    {
+      "symbol": "QUBT",
+      "state": "Active",
+      "maxLeverage": "5x",
+      "maintenanceMarginBps": 500,
+      "maxPositionNotionalUsdg": 40,
+      "priceSource": "Robinhood Stock Token quote"
+    },
+    {
+      "symbol": "DJT",
+      "state": "Active",
+      "maxLeverage": "5x",
+      "maintenanceMarginBps": 500,
+      "maxPositionNotionalUsdg": 40,
+      "priceSource": "Robinhood Stock Token quote"
+    },
+    {
+      "symbol": "WYFI",
+      "state": "Active",
+      "maxLeverage": "5x",
+      "maintenanceMarginBps": 500,
+      "maxPositionNotionalUsdg": 40,
+      "priceSource": "Robinhood Stock Token quote"
+    },
+    {
+      "symbol": "TE",
+      "state": "Active",
+      "maxLeverage": "5x",
+      "maintenanceMarginBps": 500,
+      "maxPositionNotionalUsdg": 40,
+      "priceSource": "Robinhood Stock Token quote"
+    },
+    {
+      "symbol": "RUN",
+      "state": "Active",
+      "maxLeverage": "5x",
+      "maintenanceMarginBps": 500,
+      "maxPositionNotionalUsdg": 40,
+      "priceSource": "Robinhood Stock Token quote"
+    }
+  ],
+  "configurationBatches": [
+    {
+      "script": "ConfigureCopperMarkets.s.sol",
+      "profile": "launch",
+      "COPPER_MARKET_STATE": 1,
+      "COPPER_POSITION_CAP_USDG": 40,
+      "fromBlock": 95677806,
+      "toBlock": 95678376,
+      "transactions": [
+        "0x5d0f73723b7e6cd80e67a93acc0083a1a7f4e20fefbf6f33e894aea4d64f4c91",
+        "0xcec6353b47557c12553cc51f76cd8986089bf2b1d1efcaa9191af0917e84ca21",
+        "0x231509afca0e84acf2e71a067adea1d1429f7012d827f1359cbdd6cd235367a9",
+        "0xf3078e4732c6e1d770c57e2529dc2dd9a5e1d49628bf7a247055805d87cec3db",
+        "0x58632e9d8b6204e2f8d23d6ab5c80fb4b795c8b28c482769554ab273977439d6",
+        "0xeda7e72f9ee136a537a648be5a5b472bacf115ce218f073c141f02ec7ab2a8b7",
+        "0x1e5eac9788a4734d76ad49964730991b574eae1799ae02cd022fb79694cc105a",
+        "0x636dd10f366d4c5b3a7606e32a717a71a8385d8795ad7cb70c0ed822d1d0d3e4",
+        "0x776f9f69da3642ef0824e6cf77e24322bf4fde815f8ea00904c3245fe39d50e2",
+        "0xed1940d4caec49725eade5239b397cf01fc7d81be48434694ba8092abe587e9f",
+        "0xc220a263639755712c22d6e0db223f3676e863119ba47505892321845b23b5b8",
+        "0xed6af9a797ee5a11d4231aca96e9295f03cf37a30d018c1a09bdec6ded209d5b",
+        "0xf108202016922364716e60f36f91d640e1b48d8f0bfc19b3997eb933c8a1440a",
+        "0xf2a1e37ea4d6fff4a234ee1ef609ed37268fd14dfba685dd9f6807f174e4c8e8",
+        "0x835cfb7eeb8f76f396ca5147fab944d8cd5878c3d56af7f9764637c7189fb4ee",
+        "0x314ade09d5defdc4c158b9b13f72ea6afffed54198fe514e999de042c52c287c",
+        "0x7b14e6d51f5b91dad93585f612f52cefa2731e7163128cdc973b7c3b51773c9d",
+        "0x76865dfe14e1d0fa45dafb6f89beb63e3ef571fa788d3fcf60156884cb9d0941",
+        "0x466db8c549f99ed5b0353c7df9ce9082ca9366d39e5a78ea0b167f9f3299b362",
+        "0x5397dcb5f98318f5b781ce856ff120ffde5183c44a0fea399f76f3e332d8a133"
+      ]
+    }
+  ],
+  "notes": [
+    "Penny-stock release on the existing audited contracts with Jaguar's instant-liquidity vault. Owner is a separate team wallet from Goldlake and Jaguar.",
+    "Seeded with 440 USDG team liquidity on 2026-10-23; position cap sized to ~10% of the vault.",
+    "Weekly: run contracts/script/copper-profile.sh closure before each weekend or holiday close, and launch after the reopen."
+  ]
+}

@@ -37,6 +37,8 @@ export type StatusDependencies = {
   corporateActions: CorporateActionOptions;
   corporateActionPollSeconds: number;
   keeperStatus: () => Promise<{ last_run_finished_at: string | null; last_error: string | null }>;
+  /** Copper weekend closure autopilot: an owner action that is due or was missed. */
+  copperClosure?: () => Promise<{ action: string | null; summary: string | null } | null>;
 };
 
 function ageSeconds(at: Date | string | null | undefined, now: Date): number | null {
@@ -229,9 +231,11 @@ export class StatusMonitor {
          AND (s.observed_at IS NULL OR s.observed_at < $1::timestamptz - make_interval(secs => $2::double precision))
        ORDER BY m.symbol`, [now, this.sampleAgeLimitSeconds()]
     );
+    const closure = this.deps.copperClosure ? await this.deps.copperClosure().catch(() => null) : null;
     const marketEvents = [
       ...[...halts.values()].map((halt) => ({ market: halt.symbol, kind: "exchange_halt", summary: `Halted on ${halt.listing_market} (${halt.reason}). Close-only until trading resumes.`, since: halt.halted_at })),
       ...[...actions.values()].map((action) => ({ market: action.symbol, kind: action.kind, summary: action.summary, since: action.close_only ? action.close_only_from : null })),
+      ...(closure?.action && closure.summary ? [{ market: "Copper", kind: "closure_profile", summary: closure.summary, since: null }] : []),
       ...waiting.rows.map((row) => ({ market: row.symbol, kind: "awaiting_price", summary: "Waiting for a live price quote. New positions open once its quote updates; quiet after-hours quotes can take until the next session.", since: null }))
     ];
     return {

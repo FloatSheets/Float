@@ -116,3 +116,15 @@ export function openingBell(now: Date, minutes: number): OpeningBell | null {
   const endsAt = new Date(startsAt.getTime() + minutes * 60_000);
   return now >= startsAt && now < endsAt ? { startsAt, endsAt } : null;
 }
+
+/**
+ * The closure window containing `now`, or else the next one to start, found by
+ * scanning ahead hour by hour (weekends and NYSE holidays only, so a week is enough).
+ */
+export function currentOrNextClosedWindow(now: Date, horizonHours = 24 * 9): ClosedWindow | null {
+  for (let hour = 0; hour <= horizonHours; hour++) {
+    const window = closedWindow(new Date(now.getTime() + hour * 3_600_000));
+    if (window) return window;
+  }
+  return null;
+}

@@ -74,9 +74,9 @@ forge script script/ConfigureCopperMarkets.s.sol --rpc-url rhc --broadcast --acc
 
 **5. Watch the marks**, then go Active. `GET /v1/markets` with header `x-floatsheets-contract-version: copper` shows `sources_used`, `source_dispersion_bps` and `frozen_reason`. When marks are live and agreeing, rerun step 2 with `COPPER_MARKET_STATE=1`.
 
-**Weekly:** before each weekend or holiday close (by 14:00 ET), rerun step 2 with `COPPER_MARKET_STATE=1 COPPER_LEVERAGE_PROFILE=closure`; after the reopen, run it with `launch`.
+**Weekly (closure autopilot):** before each weekend or holiday close (by 14:00 ET), run `contracts/script/copper-profile.sh closure`; after the reopen, run `contracts/script/copper-profile.sh launch`. Addresses come from `contracts/deployments/copper-4663.json`. The backend watches Copper's on-chain leverage against the NYSE calendar, messages the Telegram account linked to the Copper owner wallet when a switch is due, and flags a missed switch on the status page (`GET /v1/copper/closure`).
 
-**After 14 days with zero bad debt:** rerun step 2 with `COPPER_LEVERAGE_PROFILE=step-up`.
+**After 14 days with zero bad debt:** run `contracts/script/copper-profile.sh step-up`.
 
 **Refreshing the list:** re-pull market caps into `penny-market-caps.json`, run `bun scripts/discover-penny-markets.ts --pools-cache pools.json`, and review the generated SQL. The 10 slots are full, so swapping a market needs `deregisterMarket` on an empty market first.
 
