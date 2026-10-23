@@ -26,6 +26,7 @@ import { SolvencyReader } from "./solvency/solvency";
 import { StatusMonitor } from "./status/status";
 import { createEmailAlertsRouter } from "./routes/email-alerts";
 import { LiquidationAlertService } from "./alerts/liquidation-alerts";
+import { TelegramSettlementService } from "./alerts/telegram-settlements";
 import { TelegramBotService } from "./alerts/telegram-bot";
 import { createTelegramAlertsRouter } from "./routes/telegram-alerts";
 import { createNewsRouter } from "./routes/news";
@@ -53,6 +54,7 @@ const referenceMonitor = new ReferencePriceMonitor(db, rpc, config);
 const keeper = new PositionKeeper(db, createKeeperChain(config, rpc), config);
 const liquidationAlerts = new LiquidationAlertService(db, config);
 const telegramBot = new TelegramBotService(db, config, rpc);
+const telegramSettlements = new TelegramSettlementService(db, config, rpc);
 app.use("/v1/markets", createMarketsRouter(db, config.ORACLE_PRICE_MAX_AGE_SECONDS, {
   ...(jaguarConfig ? { jaguar: { rpc, clearingHouse: jaguarConfig.FLOAT_CLEARING_HOUSE_ADDRESS as `0x${string}`, oracle: jaguarConfig.FLOAT_ORACLE_ADDRESS as `0x${string}` } } : {}),
   ...(goldlakeConfig ? { goldlake: { rpc, clearingHouse: goldlakeConfig.FLOAT_CLEARING_HOUSE_ADDRESS as `0x${string}`, oracle: goldlakeConfig.FLOAT_ORACLE_ADDRESS as `0x${string}` } } : {}),
@@ -175,11 +177,15 @@ app.listen(port, () => {
   void refreshHalts();
   void refreshCorporateActions();
   void telegramBot.pollOnce();
+  void telegramSettlements.pollOnce();
 });
 
 setInterval(() => void refreshMarkets(), config.MARKET_POLL_INTERVAL_MS).unref();
 setInterval(() => void refreshHalts(), config.HALT_POLL_INTERVAL_SECONDS * 1_000).unref();
-if (config.TELEGRAM_BOT_TOKEN) setInterval(() => void telegramBot.pollOnce(), 5_000).unref();
+if (config.TELEGRAM_BOT_TOKEN) {
+  setInterval(() => void telegramBot.pollOnce(), 5_000).unref();
+  setInterval(() => void telegramSettlements.pollOnce(), 60_000).unref();
+}
 setInterval(() => void refreshCorporateActions(), config.CORPORATE_ACTIONS_POLL_SECONDS * 1_000).unref();
 // Status checks start after the first market and feed refreshes have had time to run.
 setTimeout(() => {

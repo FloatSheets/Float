@@ -153,6 +153,11 @@ Set `DATABASE_URL`, `DATABASE_PASSWORD`, `RHC_ID`, `RHC_RPC_URL`, `PROTOCOL_FEE_
 
 Linked Telegram users can send `/positions` (or `/trades`) in private chat to read open positions across configured deployments. Use `/positions jaguar` or `/positions copper` to filter by version, and `/help` for instructions. Reports include direction, margin, entry, and oracle-marked unrealized PnL before fees and borrow charges. Stale or unavailable marks and incomplete reads are labeled. Commands require no new secrets, use the existing bot polling loop, and do not submit transactions or spend gas. Pausing liquidation notifications does not disable position lookups for a linked wallet.
 
+Use `/vault` for Goldlake, Jaguar, and Copper LP balances, or `/vault <version>` for a specific configured deployment. Queue reports inspect the current epoch and the ten preceding epochs, label pending and deferred requests, and show when the current epoch becomes eligible to settle. NAV estimates are withheld when freshness cannot be verified. These lookups are read-only and consume no transaction gas.
+
+Goldlake LPs can opt into separate Telegram settlement notifications with `/settlements on` and stop them with `/settlements off`. The backend checks actual on-chain settlement every minute, resumes its per-wallet epoch cursor from PostgreSQL, and checks older epochs for outstanding claims when first enabled. Notifications distinguish claimable deposits, settled withdrawals, and deferred withdrawals. Users must still select Goldlake in the dashboard and claim or manage the request themselves. The service normally deduplicates deliveries; a crash between Telegram delivery and recording its receipt can cause a repeat. Relinking a wallet to a different Telegram chat invalidates its previous subscription. No additional environment variables are required.
+
+
 The public repository's GitHub workflow also publishes `ghcr.io/floatsheets/float-backend:latest` and a SHA-tagged image. If Render is configured to pull the GHCR image instead, provide registry credentials when the package is private. Set `RENDER_DEPLOY_HOOK_URL` in the public repository's Actions secrets to have successful backend image builds trigger Render automatically.
 
 ### Vercel frontend
