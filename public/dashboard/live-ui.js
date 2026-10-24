@@ -516,8 +516,15 @@
       root.querySelector('#pnl-wallet-balance').textContent = balance;
       paintPnl(snapshot,portfolio);
       const open = snapshot.positions.filter(p=>BigInt(p.sizeE18)!==0n);
-      const table = '<div class="table-scroll"><table><thead><tr><th>Market</th><th>Direction</th><th>Base size</th><th>Entry price</th><th>Margin</th><th>uPnL (USDG)</th>'+(portfolio?'<th>Share</th>':'')+'</tr></thead><tbody>'+open.map(function(p,index){
-        return '<tr><td>'+escapeMessage(p.symbol)+'</td><td class="'+(BigInt(p.sizeE18)>0n?'positive':'negative')+'">'+(BigInt(p.sizeE18)>0n?'Long':'Short')+'</td><td>'+Math.abs(Number(p.sizeE18)/1e18).toLocaleString(undefined,{maximumFractionDigits:8})+'</td><td>$'+(Number(p.entryPriceE18)/1e18).toLocaleString(undefined,{maximumFractionDigits:4})+'</td><td>'+displayUsdG(BigInt(p.marginUsdg))+' USDG</td><td>'+pnlDisplay.signedDecimal(p.pnlUsdg)+'</td>'+(portfolio?'<td><button class="small-btn" type="button" data-share-trade="'+index+'">Share</button></td>':'')+'</tr>';
+      const table = '<div class="table-scroll"><table><thead><tr><th>Market</th><th>Direction</th><th>Base size</th><th>Entry price</th><th>Margin</th><th>uPnL (USDG)</th>'+(portfolio?'<th>Liquidation</th><th>Risk</th><th>Actions</th><th>Share</th>':'')+'</tr></thead><tbody>'+open.map(function(p,index){
+        const size=BigInt(p.sizeE18),mark=p.markPriceE18?BigInt(p.markPriceE18):0n,liquidation=p.liquidationPriceE18?BigInt(p.liquidationPriceE18):0n;
+        let distance=null;
+        if(mark>0n&&liquidation>0n){const delta=size>0n?mark-liquidation:liquidation-mark;distance=Number(delta*10000n/mark)/100;}
+        const riskLabel=p.stale?'STALE MARK':distance===null?'Unavailable':distance<=5?'Near liquidation':distance<=15?'Monitor':'Open buffer';
+        const riskClass=p.stale?'risk-stale':distance===null?'risk-unknown':distance<=5?'risk-critical':distance<=15?'risk-watch':'risk-clear';
+        const riskDetail=distance===null?'Distance unavailable':(distance<0?'Beyond estimate':distance.toFixed(2)+'% to liquidation')+(p.stale?' · last mark':'');
+        const liquidationLabel=liquidation>0n?'$'+(Number(liquidation)/1e18).toLocaleString(undefined,{maximumFractionDigits:4}):'Unavailable';
+        return '<tr><td>'+escapeMessage(p.symbol)+'</td><td class="'+(size>0n?'positive':'negative')+'">'+(size>0n?'Long':'Short')+'</td><td>'+Math.abs(Number(size)/1e18).toLocaleString(undefined,{maximumFractionDigits:8})+'</td><td>$'+(Number(p.entryPriceE18)/1e18).toLocaleString(undefined,{maximumFractionDigits:4})+'</td><td>'+displayUsdG(BigInt(p.marginUsdg))+' USDG</td><td>'+pnlDisplay.signedDecimal(p.pnlUsdg)+'</td>'+(portfolio?'<td>'+liquidationLabel+'</td><td><span class="position-risk '+riskClass+'">'+riskLabel+'</span><small class="position-risk-detail">'+riskDetail+'</small></td><td><div class="position-actions"><button class="small-btn" type="button" data-position-add-margin="'+escapeMessage(p.symbol)+'">Add margin</button><button class="small-btn" type="button" data-position-close="'+escapeMessage(p.symbol)+'">Close</button></div></td><td><button class="small-btn" type="button" data-share-trade="'+index+'">Share</button></td>':'')+'</tr>';
       }).join('')+'</tbody></table></div>';
       if(portfolio){
         const margin=snapshot.positions.reduce(function(sum,position){return sum+BigInt(position.marginUsdg);},0n);
@@ -527,6 +534,18 @@
         root.querySelector('#portfolio-equity').textContent = displayUsdG(equity);
         root.querySelector('#portfolio-position-table').innerHTML = open.length ? table : '<div class="empty-state"><h3>No open positions</h3><p>Your closed trades are included in realized PnL.</p></div>';
         root.querySelectorAll('[data-share-trade]').forEach(function(button){button.addEventListener('click',function(){const position=open[Number(button.dataset.shareTrade)];if(position)openTradeShare(position);});});
+        root.querySelectorAll('[data-position-add-margin]').forEach(function(button){button.addEventListener('click',function(){
+          const symbol=button.dataset.positionAddMargin;
+          modal('Add margin · '+symbol,'<p>Add USDG collateral to this open position. Your wallet will ask you to approve and confirm the transaction.</p><div class="field token-amount-field"><label for="portfolio-margin-amount">Margin amount</label><div class="token-amount-shell"><div class="token-amount-token"><img src="/usdg_logo.png" alt="">USDG</div><div class="token-amount-value"><span aria-hidden="true">$</span><input id="portfolio-margin-amount" inputmode="decimal" autocomplete="off" placeholder="0.00"></div></div></div>','Continue',async function(){
+            try{const amount=rawUsdG(document.getElementById('portfolio-margin-amount')?.value||'0');if(amount===0n)throw new Error('Enter a USDG amount greater than zero.');const wallet=walletApi();if(!wallet?.connected)throw new Error('Connect a Robinhood Chain wallet first.');const allowance=await wallet.allowance();if(allowance<amount){const approval=await wallet.buildTransaction('approve',{amountUsdg:amount.toString()});await wallet.send(approval.transaction);}const deposit=await wallet.buildTransaction('deposit',{market:symbol,amountUsdg:amount.toString()});const hash=await wallet.send(deposit.transaction);dialog.close();render();showActionModal('Margin added',displayUsdG(amount)+' USDG added to '+symbol+'. Transaction: '+hash);}catch(error){showActionModal('Could not add margin',error instanceof Error?error.message:'Margin could not be added.');}
+          });
+        });});
+        root.querySelectorAll('[data-position-close]').forEach(function(button){button.addEventListener('click',function(){
+          const symbol=button.dataset.positionClose;
+          modal('Close '+symbol+' position?','<p>FloatSheets will request a fresh close quote. Review the transaction details in your wallet before confirming.</p>','Request close quote',async function(){
+            try{const wallet=walletApi();if(!wallet?.connected)throw new Error('Connect a Robinhood Chain wallet first.');const quote=await wallet.buildTransaction('close-quote',{market:symbol});const hash=await wallet.send(quote.transaction);dialog.close();render();showActionModal('Position closed',symbol+' was confirmed closed on Robinhood Chain. Transaction: '+hash);}catch(error){showActionModal('Could not close position',error instanceof Error?error.message:'Position could not be closed.');}
+          });
+        });});
       } else {
         const position = snapshot.positions[0];
         root.querySelector('#wallet-market-margin').textContent = displayUsdG(BigInt(position.marginUsdg));
