@@ -53,6 +53,7 @@ export type ReferenceMarket = {
   min_half_spread_bps: number;
   max_spot_twap_deviation_bps: number;
   min_sources_for_open: number;
+  max_unchanged_quote_seconds?: number;
 };
 
 export type Aggregate = {
@@ -246,7 +247,8 @@ export class ReferencePriceMonitor {
     try {
       const { rows } = await this.database.query<ReferenceMarket>(
         `SELECT id, symbol, token_address, pyth_feed_id, max_ticket_usdg::text,
-                min_half_spread_bps, max_spot_twap_deviation_bps, min_sources_for_open
+                min_half_spread_bps, max_spot_twap_deviation_bps, min_sources_for_open,
+                max_unchanged_quote_seconds
          FROM public.markets WHERE price_source = 'reference' AND status != 'disabled' ORDER BY symbol`
       );
       if (rows.length === 0) return;
@@ -310,7 +312,8 @@ export class ReferencePriceMonitor {
       this.lastChange.set(token, previous);
     }
     const unchangedSeconds = (now.getTime() - previous.at.getTime()) / 1_000;
-    return unchangedSeconds > this.config.REFERENCE_UNCHANGED_QUOTE_SECONDS ? previous.at : quote.generatedAt;
+    const maxUnchangedSeconds = market.max_unchanged_quote_seconds ?? this.config.REFERENCE_UNCHANGED_QUOTE_SECONDS;
+    return unchangedSeconds > maxUnchangedSeconds ? previous.at : quote.generatedAt;
   }
 
   /** When this bid/ask first appeared after the last different one (epoch 0 if never seen changing). */

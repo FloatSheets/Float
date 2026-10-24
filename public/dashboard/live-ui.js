@@ -1045,6 +1045,17 @@
     paintCorporateAction(data.corporate_action);
     paintWeekendBand(data.exchange_halt?null:data.weekend_band);
     paintOpeningBell(data.exchange_halt?null:data.opening_bell,data.market);
+    paintRunSpreadWarning(data);
+  }
+  function paintRunSpreadWarning(data){
+    let notice=root.querySelector('#run-spread-warning');
+    const shouldShow=data&&data.market==='RUN'&&selectedContractVersion()==='copper';
+    if(!shouldShow){notice?.remove();return;}
+    if(!notice){notice=document.createElement('div');notice.id='run-spread-warning';notice.className='info-note';notice.setAttribute('role','note');
+      const stats=root.querySelector('.chart-stats');
+      if(stats?.parentElement)stats.parentElement.insertBefore(notice,stats.nextSibling);
+    }
+    notice.innerHTML='<strong>RUN has a wider execution limit.</strong> Quotes may be up to 5% away from the midpoint on each side, about 10% round trip before fees. Check the final price and fee before signing.';
   }
   function abortable(promise,signal){
     return new Promise(function(resolve,reject){
