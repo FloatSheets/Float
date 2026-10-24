@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { Router } from "express";
 import type { Pool } from "pg";
 import { recoverMessageAddress } from "viem";
-import type { AppConfig } from "../config";
+import { contractConfigForVersion, type AppConfig } from "../config";
 
 const walletPattern = /^0x[a-fA-F0-9]{40}$/;
 const signaturePattern = /^0x[a-fA-F0-9]{130}$/;
@@ -180,6 +180,107 @@ export function createTelegramAlertsRouter(database: Pool, config: AppConfig): R
       }
       await client.query("COMMIT");
       response.json({ enabled, telegram_username: update.rows[0]?.telegram_username, message: enabled ? "Telegram liquidation alerts enabled" : "Telegram liquidation alerts disabled" });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally { client.release(); }
+  });
+
+  router.post("/settlement-status", async (request, response) => {
+    const wallet = request.body?.wallet;
+    if (typeof wallet !== "string" || !walletPattern.test(wallet)) return response.status(400).json({ error: "A valid wallet is required" });
+    if (!telegramConfigured(config)) return response.status(503).json({ error: "Telegram alerts are not configured" });
+    const vault = contractConfigForVersion(config, "goldlake").FLOAT_VAULT_ADDRESS!.toLowerCase();
+    const result = await database.query<{ linked: boolean; enabled: boolean }>(
+      `SELECT (l.wallet_address IS NOT NULL) AS linked, COALESCE(s.enabled,FALSE) AS enabled
+       FROM (SELECT $1::text AS wallet_address) w
+       LEFT JOIN public.liquidation_telegram_links l ON l.wallet_address=w.wallet_address
+       LEFT JOIN public.telegram_vault_subscriptions s ON s.wallet_address=l.wallet_address AND s.vault_address=$2`,
+      [wallet.toLowerCase(), vault]
+    );
+    response.json(result.rows[0] ?? { linked: false, enabled: false });
+  });
+
+  router.post("/settlement-settings-challenge", async (request, response) => {
+    const wallet = request.body?.wallet;
+    const enabled = request.body?.enabled;
+    if (typeof wallet !== "string" || !walletPattern.test(wallet) || typeof enabled !== "boolean") {
+      return response.status(400).json({ error: "Valid wallet settlement settings are required" });
+    }
+    if (!telegramConfigured(config)) return response.status(503).json({ error: "Telegram alerts are not configured" });
+    const normalized = wallet.toLowerCase();
+    const expiresAt = new Date(Date.now() + 5 * 60_000);
+    const message = [
+      "FloatSheets Goldlake settlement notifications",
+      `Wallet: ${normalized}`,
+      `Action: ${enabled ? "enable" : "disable"} settlement notifications`,
+      `Nonce: ${randomBytes(24).toString("hex")}`,
+      `Expires: ${expiresAt.toISOString()}`,
+      "This signature changes only this wallet's Goldlake settlement notification preference."
+    ].join("\n");
+    await database.query(
+      `INSERT INTO public.telegram_vault_settings_challenges(wallet_address,enabled,message,expires_at)
+       VALUES($1,$2,$3,$4)
+       ON CONFLICT(wallet_address) DO UPDATE SET enabled=EXCLUDED.enabled,message=EXCLUDED.message,expires_at=EXCLUDED.expires_at`,
+      [normalized, enabled, message, expiresAt]
+    );
+    response.json({ message });
+  });
+
+  router.post("/settlement-settings", async (request, response) => {
+    const wallet = request.body?.wallet;
+    const signature = request.body?.signature;
+    const enabled = request.body?.enabled;
+    if (typeof wallet !== "string" || !walletPattern.test(wallet) || typeof signature !== "string" || !signaturePattern.test(signature) || typeof enabled !== "boolean") {
+      return response.status(400).json({ error: "Valid signed settlement settings are required" });
+    }
+    if (!telegramConfigured(config)) return response.status(503).json({ error: "Telegram alerts are not configured" });
+    const normalized = wallet.toLowerCase();
+    const challenge = await database.query<{ message: string; enabled: boolean; expires_at: Date }>(
+      "SELECT message,enabled,expires_at FROM public.telegram_vault_settings_challenges WHERE wallet_address=$1", [normalized]
+    );
+    const row = challenge.rows[0];
+    if (!row || row.enabled !== enabled || new Date(row.expires_at).getTime() <= Date.now()) {
+      return response.status(401).json({ error: "Wallet authorization expired; try again" });
+    }
+    let recovered: string;
+    try { recovered = await recoverMessageAddress({ message: row.message, signature: signature as `0x${string}` }); }
+    catch { return response.status(401).json({ error: "Wallet signature is invalid" }); }
+    if (recovered.toLowerCase() !== normalized) return response.status(401).json({ error: "Wallet signature does not match" });
+    const vault = contractConfigForVersion(config, "goldlake").FLOAT_VAULT_ADDRESS!.toLowerCase();
+    const client = await database.connect();
+    try {
+      await client.query("BEGIN");
+      const consumed = await client.query(
+        "DELETE FROM public.telegram_vault_settings_challenges WHERE wallet_address=$1 AND message=$2 AND enabled=$3 AND expires_at>now() RETURNING wallet_address",
+        [normalized, row.message, enabled]
+      );
+      if (!consumed.rowCount) {
+        await client.query("ROLLBACK");
+        return response.status(401).json({ error: "Wallet authorization expired; try again" });
+      }
+      if (enabled) {
+        const linked = await client.query(
+          `INSERT INTO public.telegram_vault_subscriptions(wallet_address,telegram_chat_id,vault_address)
+           SELECT wallet_address,telegram_chat_id,$2 FROM public.liquidation_telegram_links WHERE wallet_address=$1
+           ON CONFLICT(wallet_address) DO UPDATE SET
+             next_epoch=CASE WHEN telegram_vault_subscriptions.telegram_chat_id<>EXCLUDED.telegram_chat_id
+               OR telegram_vault_subscriptions.vault_address<>EXCLUDED.vault_address THEN 0 ELSE telegram_vault_subscriptions.next_epoch END,
+             telegram_chat_id=EXCLUDED.telegram_chat_id,vault_address=EXCLUDED.vault_address,enabled=true,updated_at=now()
+           RETURNING wallet_address`, [normalized, vault]
+        );
+        if (!linked.rowCount) {
+          await client.query("ROLLBACK");
+          return response.status(409).json({ error: "Link your Telegram account before enabling settlement notifications" });
+        }
+      } else {
+        await client.query(
+          "UPDATE public.telegram_vault_subscriptions SET enabled=false,updated_at=now() WHERE wallet_address=$1",
+          [normalized]
+        );
+      }
+      await client.query("COMMIT");
+      response.json({ enabled, message: enabled ? "Goldlake settlement notifications enabled" : "Goldlake settlement notifications disabled" });
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;

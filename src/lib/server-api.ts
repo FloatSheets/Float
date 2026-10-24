@@ -271,3 +271,23 @@ export const saveTelegramAlertSettings = createServerFn({ method: "POST" })
     return value;
   })
   .handler(({ data }): Promise<any> => telegramAlertPost("settings", data));
+
+export const getTelegramSettlementSettings = createServerFn({ method: "POST" })
+  .validator(telegramAlertInput)
+  .handler(({ data }): Promise<any> => telegramAlertPost("settlement-status", data));
+
+export const getTelegramSettlementSettingsChallenge = createServerFn({ method: "POST" })
+  .validator((input: unknown) => {
+    const value = telegramAlertInput(input);
+    if (typeof value["enabled"] !== "boolean") throw new Error("Settlement alert state is required.");
+    return value;
+  })
+  .handler(({ data }): Promise<any> => telegramAlertPost("settlement-settings-challenge", data));
+
+export const saveTelegramSettlementSettings = createServerFn({ method: "POST" })
+  .validator((input: unknown) => {
+    const value = telegramAlertInput(input);
+    if (typeof value["signature"] !== "string" || typeof value["enabled"] !== "boolean") throw new Error("Valid signed settlement settings are required.");
+    return value;
+  })
+  .handler(({ data }): Promise<any> => telegramAlertPost("settlement-settings", data));

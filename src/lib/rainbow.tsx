@@ -7,7 +7,7 @@ import { replayAccount, unrealizedPnl, liquidationPrice, type AccountEvent } fro
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { checkTrade, createTelegramAlertLink, getCloseTransaction, getEmailAlertChallenge, getProtocol, getTelegramAlertLinkChallenge, getTelegramAlertLinkStatus, getTelegramAlertSettingsChallenge, getTradeTransaction, getTransactionCalldata, saveEmailAlertSettings, saveTelegramAlertSettings, verifyEmailAlert } from "./server-api";
+import { checkTrade, createTelegramAlertLink, getCloseTransaction, getEmailAlertChallenge, getProtocol, getTelegramAlertLinkChallenge, getTelegramAlertLinkStatus, getTelegramAlertSettingsChallenge, getTelegramSettlementSettings, getTelegramSettlementSettingsChallenge, getTradeTransaction, getTransactionCalldata, saveEmailAlertSettings, saveTelegramAlertSettings, saveTelegramSettlementSettings, verifyEmailAlert } from "./server-api";
 
 const DEFAULT_USDG_ADDRESS = "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168" as const;
 const erc20Abi = parseAbi(["function allowance(address owner,address spender) view returns (uint256)", "function balanceOf(address account) view returns (uint256)"]);
@@ -170,6 +170,18 @@ export function RainbowWalletBridge() {
         const signature = await signMessageAsync({ message: challenge.message });
         const result = await saveTelegramAlertSettings({ data: { wallet: address, enabled, signature } });
         localStorage.setItem(`floatsheets-liquidation-telegram-${address.toLowerCase()}`, JSON.stringify({ enabled: result.enabled === true, username: result.telegram_username ?? null }));
+        return result;
+      },
+      async getTelegramSettlementSettings() {
+        if (!connected || !address) throw new Error("Connect your wallet on Robinhood Chain first.");
+        return getTelegramSettlementSettings({ data: { wallet: address } });
+      },
+      async configureTelegramSettlementAlerts(enabled: boolean) {
+        if (!connected || !address) throw new Error("Connect your wallet on Robinhood Chain first.");
+        const challenge = await getTelegramSettlementSettingsChallenge({ data: { wallet: address, enabled } });
+        const signature = await signMessageAsync({ message: challenge.message });
+        const result = await saveTelegramSettlementSettings({ data: { wallet: address, enabled, signature } });
+        localStorage.setItem(`floatsheets-goldlake-telegram-settlements-${address.toLowerCase()}`, String(result.enabled === true));
         return result;
       },
       async send(transaction: { to: string; data: string; value?: string; chainId: number; activity?: string; market?: string }) {

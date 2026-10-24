@@ -68,9 +68,9 @@ test("is idempotent within its isolated schema", async () => {
        'liquidation_email_preferences','liquidation_email_challenges',
        'liquidation_alert_cursors','liquidation_alert_events',
        'liquidation_telegram_wallet_challenges','liquidation_telegram_link_codes',
-       'liquidation_telegram_links','telegram_bot_state','liquidation_alert_deliveries'
+       'liquidation_telegram_links','telegram_bot_state','liquidation_alert_deliveries','telegram_vault_settings_challenges'
      )`, [schema]
   );
-  expect(migrations.rows[0]?.count).toBe("22");
-  expect(alertTables.rows[0]?.count).toBe("9");
+  expect(migrations.rows[0]?.count).toBe("23");
+  expect(alertTables.rows[0]?.count).toBe("10");
 }, 60_000);

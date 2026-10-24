@@ -752,6 +752,27 @@
   function installThemeToggle(){
     const settingsPanel=root.querySelector('#preferences-form .panel-body') || root.querySelector('#preferences-form')?.parentElement;
     if(!settingsPanel) return;
+    async function refreshSettlementSetting(){
+      const row=document.getElementById('goldlake-settlement-alerts');
+      const toggle=row?.querySelector('#goldlake-settlement-enabled');
+      const status=row?.querySelector('#goldlake-settlement-status');
+      const wallet=window.__FLOATSHEETS_WALLET__;
+      if(!row||!toggle||!status)return;
+      if(!wallet?.connected||typeof wallet.getTelegramSettlementSettings!=='function'){
+        toggle.checked=false;toggle.disabled=true;status.textContent='Connect your wallet to check this setting.';return;
+      }
+      toggle.disabled=true;status.textContent='Checking linked Telegram settings…';
+      try{
+        const result=await wallet.getTelegramSettlementSettings();
+        if(!row.isConnected||window.__FLOATSHEETS_WALLET__?.address?.toLowerCase()!==wallet.address.toLowerCase())return;
+        if(!result.linked){toggle.checked=false;toggle.disabled=true;status.textContent='Link Telegram above before enabling settlement notifications.';return;}
+        toggle.checked=result.enabled===true;toggle.disabled=false;
+        status.textContent=result.enabled?'Enabled for Goldlake. Settled requests are reported in your linked bot chat.':'Disabled. Enable to get a Telegram message when Goldlake queue requests settle.';
+      }catch(error){
+        if(!row.isConnected)return;
+        toggle.disabled=true;status.textContent=error instanceof Error?error.message:'Could not load settlement alert settings.';
+      }
+    }
     if(!document.getElementById('liquidation-email-alerts')){
       const alertRow=document.createElement('section'); alertRow.id='liquidation-email-alerts'; alertRow.className='list-row liquidation-email-alerts';
       alertRow.style.cssText='display:block;padding:18px 0;border-top:1px solid var(--line,#e5eaf1)';
@@ -817,13 +838,32 @@
               if(!telegramRow.isConnected||window.__FLOATSHEETS_WALLET__?.address?.toLowerCase()!==wallet.address.toLowerCase())return;
               if(state.rate_limited){nextCheckAt=Date.now()+state.retry_after_seconds*1000;status.textContent='Waiting before checking again. Your Telegram link is still valid.';return;}
               status.textContent='Waiting for Telegram. Open the link and tap Start.';
-              if(state.linked){clearInterval(window.__FLOATSHEETS_TELEGRAM_LINK_POLL__);window.__FLOATSHEETS_TELEGRAM_LINK_POLL__=null;const pref={enabled:true,username:state.telegram_username||null};localStorage.setItem('floatsheets-liquidation-telegram-'+wallet.address.toLowerCase(),JSON.stringify(pref));toggle.disabled=false;toggle.checked=true;linked.textContent=pref.username?'Linked as '+pref.username:'Telegram linked';status.textContent='Telegram linked and liquidation alerts enabled.';open.hidden=true;linkButton.disabled=false;}
+              if(state.linked){clearInterval(window.__FLOATSHEETS_TELEGRAM_LINK_POLL__);window.__FLOATSHEETS_TELEGRAM_LINK_POLL__=null;const pref={enabled:true,username:state.telegram_username||null};localStorage.setItem('floatsheets-liquidation-telegram-'+wallet.address.toLowerCase(),JSON.stringify(pref));toggle.disabled=false;toggle.checked=true;linked.textContent=pref.username?'Linked as '+pref.username:'Telegram linked';status.textContent='Telegram linked and liquidation alerts enabled.';open.hidden=true;linkButton.disabled=false;void refreshSettlementSetting();}
               else if(Date.now()-started>10*60*1000){clearInterval(window.__FLOATSHEETS_TELEGRAM_LINK_POLL__);window.__FLOATSHEETS_TELEGRAM_LINK_POLL__=null;status.textContent='Link expired. Start again to get a new one-time link.';linkButton.disabled=false;}
             }catch(error){clearInterval(window.__FLOATSHEETS_TELEGRAM_LINK_POLL__);window.__FLOATSHEETS_TELEGRAM_LINK_POLL__=null;status.textContent=error instanceof Error?error.message:'Could not check Telegram link status.';linkButton.disabled=false;}
             finally{checking=false;}
           },5000);
         }catch(error){status.textContent=error instanceof Error?error.message:'Could not create Telegram link.';linkButton.disabled=false;}
       });
+    }
+    if(!document.getElementById('goldlake-settlement-alerts')){
+      const settlementRow=document.createElement('section');settlementRow.id='goldlake-settlement-alerts';settlementRow.className='list-row goldlake-settlement-alerts';
+      settlementRow.style.cssText='display:block;padding:18px 0;border-top:1px solid var(--line,#e5eaf1)';
+      settlementRow.innerHTML='<div><strong>Goldlake settlement notifications</strong><p>Get a Telegram message when a queued Goldlake deposit or withdrawal settles. This is separate from liquidation alerts. You still claim settled requests in the dashboard.</p></div><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px"><label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="goldlake-settlement-enabled" disabled> Enable settlement alerts</label></div><p id="goldlake-settlement-status" role="status" aria-live="polite" style="margin:10px 0 0">Checking linked Telegram settings…</p>';
+      settingsPanel.append(settlementRow);
+      settlementRow.querySelector('#goldlake-settlement-enabled').addEventListener('change',async function(event){
+        const toggle=event.currentTarget,wallet=window.__FLOATSHEETS_WALLET__,status=settlementRow.querySelector('#goldlake-settlement-status');
+        const enabled=toggle.checked;toggle.disabled=true;status.textContent='Confirm this preference in your wallet…';
+        try{
+          if(!wallet?.connected||typeof wallet.configureTelegramSettlementAlerts!=='function')throw new Error('Connect a Robinhood Chain wallet first.');
+          const result=await wallet.configureTelegramSettlementAlerts(enabled);
+          if(!settlementRow.isConnected||window.__FLOATSHEETS_WALLET__?.address?.toLowerCase()!==wallet.address.toLowerCase())return;
+          toggle.checked=result.enabled===true;status.textContent=result.message||'Goldlake settlement notifications updated.';
+        }catch(error){
+          toggle.checked=!enabled;status.textContent=error instanceof Error?error.message:'Could not update settlement notifications.';
+        }finally{if(settlementRow.isConnected)toggle.disabled=false;}
+      });
+      void refreshSettlementSetting();
     }
     if(!window.__FLOATSHEETS_EMAIL_ALERTS_RESULT_LISTENER__){
       window.__FLOATSHEETS_EMAIL_ALERTS_RESULT_LISTENER__=function(event){const status=document.getElementById('liquidation-alert-status');if(status)status.textContent=event.detail?.message||'Email alert settings updated.';const input=document.getElementById('liquidation-alert-email'),toggle=document.getElementById('liquidation-alert-enabled');if(event.detail?.verified&&toggle)toggle.checked=true;if(event.detail?.enabled===true&&toggle)toggle.checked=true;if(event.detail?.enabled===false&&toggle)toggle.checked=false;if(event.detail?.verified&&event.detail?.email&&input)input.value=event.detail.email;};
