@@ -483,14 +483,16 @@
     const details = view === 'trade' ? location.pathname.match(/^\/dashboard\/([A-Za-z0-9.-]+)\/?$/)?.[1]?.toUpperCase() : null;
     if(!portfolio && !details) return;
     const balance = displayUsdG(rawUsdG(wallet.usdgBalance || '0'));
-    const accountKey = wallet.address.toLowerCase() + ':' + (portfolio ? 'portfolio' : details);
+    const accountKey = wallet.address.toLowerCase() + ':' + (portfolio ? 'portfolio:' + selectedContractVersion() : details);
     const target = portfolio ? root.querySelector('#wallet-portfolio') : root.querySelector('.metric-grid');
     if(!target) return;
     if(target.dataset.account !== accountKey){
       target.dataset.account = accountKey;
       const walletCard = '<div class="metric featured"><small>Wallet USDG balance</small><strong id="pnl-wallet-balance">'+balance+'</strong><div class="metric-note"><span class="asset-ref"><img src="/usdg_logo.png" alt="">USDG</span> · available to use</div></div>';
+      const version=selectedContractVersion();
+      const versionName=({goldlake:'Goldlake',jaguar:'Jaguar',copper:'Copper',silverlake:'Silverlake',amber:'Amber',jasper:'Jasper',meadow:'Meadow','legacy-orion':'Legacy Orion'})[version]||version;
       target.innerHTML = portfolio
-        ? '<div class="metric-grid">'+walletCard+'<div class="metric"><small>Open positions</small><strong id="portfolio-position-count">…</strong><div class="metric-note">across your markets</div></div>'+pnlCard(true)+'</div><div id="portfolio-position-table"></div>'
+        ? '<div class="account-summary-heading"><div><span class="pill">'+versionName.toUpperCase()+' ACCOUNT</span><p>Balances and positions on your selected deployment.</p></div><a class="small-btn" href="#settings">Change version ↗</a></div><div class="metric-grid account-summary-grid">'+walletCard+'<div class="metric"><small>Margin across markets</small><strong id="portfolio-margin">…</strong><div class="metric-note">deposited on '+versionName+'</div></div><div class="metric"><small>Open positions</small><strong id="portfolio-position-count">…</strong><div class="metric-note">on '+versionName+'</div></div><div class="metric"><small>Trading account value</small><strong id="portfolio-equity">…</strong><div class="metric-note">wallet + margin + uPnL · excludes LP shares</div></div>'+pnlCard(true)+'</div><div class="account-summary-links"><a href="#trade">Open Trade ↗</a><a href="#vault">View Liquidity Vault ↗</a></div><div id="portfolio-position-table"></div>'
         : walletCard+'<div class="metric"><small>Margin in this market</small><strong id="wallet-market-margin">…</strong><div class="metric-note">'+details+' only</div></div><div class="metric"><small>Your position</small><strong id="wallet-market-size">…</strong><div class="metric-note">current size</div></div>'+pnlCard(false);
       target.querySelectorAll('[data-pnl-mode]').forEach(function(button){
         button.addEventListener('click',function(){
@@ -512,7 +514,11 @@
         return '<tr><td>'+escapeMessage(p.symbol)+'</td><td class="'+(BigInt(p.sizeE18)>0n?'positive':'negative')+'">'+(BigInt(p.sizeE18)>0n?'Long':'Short')+'</td><td>'+Math.abs(Number(p.sizeE18)/1e18).toLocaleString(undefined,{maximumFractionDigits:8})+'</td><td>$'+(Number(p.entryPriceE18)/1e18).toLocaleString(undefined,{maximumFractionDigits:4})+'</td><td>'+displayUsdG(BigInt(p.marginUsdg))+' USDG</td><td>'+pnlDisplay.signedDecimal(p.pnlUsdg)+'</td>'+(portfolio?'<td><button class="small-btn" type="button" data-share-trade="'+index+'">Share</button></td>':'')+'</tr>';
       }).join('')+'</tbody></table></div>';
       if(portfolio){
+        const margin=snapshot.positions.reduce(function(sum,position){return sum+BigInt(position.marginUsdg);},0n);
+        const equity=rawUsdG(wallet.usdgBalance||'0')+margin+BigInt(snapshot.unrealizedUsdg);
         root.querySelector('#portfolio-position-count').textContent = String(open.length);
+        root.querySelector('#portfolio-margin').textContent = displayUsdG(margin);
+        root.querySelector('#portfolio-equity').textContent = displayUsdG(equity);
         root.querySelector('#portfolio-position-table').innerHTML = open.length ? table : '<div class="empty-state"><h3>No open positions</h3><p>Your closed trades are included in realized PnL.</p></div>';
         root.querySelectorAll('[data-share-trade]').forEach(function(button){button.addEventListener('click',function(){const position=open[Number(button.dataset.shareTrade)];if(position)openTradeShare(position);});});
       } else {
