@@ -439,7 +439,10 @@ test("prices reference-market exits off the worse of the on-chain mark and the l
     expect(gap.status).toBe(400);
     expect(gap.body.error).toContain("catching up");
 
-    // Opens: refused while the on-chain mark lags the live mid by more than 2x the republish band.
+    // Opens: use a fixed weekday so the ordinary quote assertions do not
+    // inherit the weekend leverage cap from the wall clock.
+    setSystemTime(new Date("2026-10-27T15:00:00.000Z"));
+    // Refused while the on-chain mark lags the live mid by more than 2x the republish band.
     liveMid = "101";
     const open = (notional: string) => request(quoteServer).post("/v1/protocol/transactions/trade-quote").send({ market: "RCAT", trader: "0x1111111111111111111111111111111111111111", isLong: true, notionalUsdg: notional });
     expect((await open("100000000")).body.error).toContain("moving");
