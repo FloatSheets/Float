@@ -53,7 +53,8 @@ test("applies the market schema to an isolated deployed-Postgres schema", async 
   expect(copper.rows.map((row) => row.symbol)).toEqual(["WYFI", "NNE", "RCAT", "TE", "XNDU", "POET", "FLNC", "QUBT", "RUN", "DJT"]);
   expect(copper.rows.every((row) => row.price_source === "reference")).toBe(true);
   expect(copper.rows.find((row) => row.symbol === "QUBT")?.releases).toEqual(["goldlake", "copper"]);
-  expect(copper.rows.filter((row) => row.min_sources_for_open === 1).map((row) => row.symbol)).toEqual(["WYFI", "TE", "RUN"]);
+  // Copper opens on Robinhood's own quote alone (migration 019).
+  expect(copper.rows.every((row) => row.min_sources_for_open === 1)).toBe(true);
   const goldlake = await db.query<{ count: string }>(`SELECT count(*) FROM "${schema}".markets WHERE 'goldlake' = ANY(releases)`);
   expect(goldlake.rows[0]?.count).toBe("11");
 }, 60_000);
@@ -70,6 +71,6 @@ test("is idempotent within its isolated schema", async () => {
        'liquidation_telegram_links','telegram_bot_state','liquidation_alert_deliveries'
      )`, [schema]
   );
-  expect(migrations.rows[0]?.count).toBe("19");
+  expect(migrations.rows[0]?.count).toBe("22");
   expect(alertTables.rows[0]?.count).toBe("9");
 }, 60_000);

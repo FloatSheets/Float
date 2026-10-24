@@ -24,6 +24,8 @@ import { createClaimsRouter } from "./routes/claims";
 import { ClaimCenter } from "./claims/claims";
 import { SolvencyReader } from "./solvency/solvency";
 import { StatusMonitor } from "./status/status";
+import { CopperClosureWatch } from "./markets/copper-closure";
+import { PennyMarketAlerts } from "./alerts/penny-alerts";
 import { createEmailAlertsRouter } from "./routes/email-alerts";
 import { LiquidationAlertService } from "./alerts/liquidation-alerts";
 import { TelegramSettlementService } from "./alerts/telegram-settlements";
@@ -68,6 +70,15 @@ app.use("/v1/markets", createMarketsRouter(db, config.ORACLE_PRICE_MAX_AGE_SECON
 app.use("/ready", createReadinessRouter(db));
 app.use("/v1/keeper", createKeeperRouter(keeper));
 const statusOracle = (goldlakeConfig ?? silverlakeConfig ?? amberConfig).FLOAT_ORACLE_ADDRESS as `0x${string}`;
+const copperClosure = new CopperClosureWatch(db, rpc, config);
+app.get("/v1/copper/closure", async (_request, response) => {
+  try {
+    response.json({ closure: await copperClosure.state() });
+  } catch (error) {
+    console.error(JSON.stringify({ event: "copper_closure_state_failed", error: error instanceof Error ? error.message.slice(0, 200) : String(error) }));
+    response.status(503).json({ error: "Copper closure status is temporarily unavailable" });
+  }
+});
 const statusMonitor = new StatusMonitor(db, {
   rpc,
   oracle: statusOracle,
@@ -78,7 +89,8 @@ const statusMonitor = new StatusMonitor(db, {
   haltPollSeconds: config.HALT_POLL_INTERVAL_SECONDS,
   corporateActions: corporateActionOptions(config),
   corporateActionPollSeconds: config.CORPORATE_ACTIONS_POLL_SECONDS,
-  keeperStatus: () => keeper.status()
+  keeperStatus: () => keeper.status(),
+  copperClosure: () => copperClosure.state()
 });
 app.use("/v1/status", createStatusRouter(statusMonitor, config, db));
 app.use("/v1/claims", createClaimsRouter(new ClaimCenter(db, rpc, config)));
@@ -193,3 +205,8 @@ setTimeout(() => {
   refreshStatus();
   setInterval(refreshStatus, config.STATUS_CHECK_INTERVAL_SECONDS * 1_000).unref();
 }, 90_000).unref();
+// Remind the Copper owner about the weekend closure profile (at most once per window).
+setInterval(() => void copperClosure.remind().catch((error) => console.error("FloatSheets Copper closure reminder failed", error)), 600_000).unref();
+// Penny-market halt, pause and resume alerts for /pennyalerts subscribers.
+const pennyAlerts = new PennyMarketAlerts(db, config);
+if (config.TELEGRAM_BOT_TOKEN) setInterval(() => void pennyAlerts.runOnce(), 30_000).unref();

@@ -1,6 +1,7 @@
 import type { Pool, PoolClient } from "pg";
 import { contractVersionSchema, type AppConfig } from "../config";
 import type { RpcTransport } from "../chain/rpc";
+import { setPennyAlertSubscription } from "./penny-alerts";
 import { setSettlementSubscription } from "./telegram-settlements";
 import { telegramVaultReports } from "./telegram-vault";
 import { telegramPositionReports } from "./telegram-positions";
@@ -67,11 +68,20 @@ export class TelegramBotService {
     const text = message?.text?.trim() ?? "";
     if (!chatId || !text.startsWith('/')) return;
     const command = text.split(/\s+/, 1)[0]!.split('@')[0]!.toLowerCase();
-    if (!['/start', '/help', '/positions', '/trades', '/vault', '/settlements'].includes(command)) return;
+    if (!['/start', '/help', '/positions', '/trades', '/vault', '/settlements', '/pennyalerts'].includes(command)) return;
     const args = text.split(/\s+/, 2);
     const token = args[1];
     if (message?.chat?.type !== "private") {
       await telegramRequest(this.config, "sendMessage", { chat_id: chatId, text: "For security, link your Telegram account in a private chat with this bot." });
+      return;
+    }
+    if (command === '/pennyalerts') {
+      let response = 'Use /pennyalerts on to get a message when a FloatSheets penny market is halted, paused by a price jump, or resumes. Use /pennyalerts off to stop.';
+      if (token === 'on' || token === 'off') {
+        try { response = await setPennyAlertSubscription(this.database, String(chatId), token === 'on'); }
+        catch { response = 'Could not update penny-stock alerts. Please retry shortly.'; }
+      }
+      await telegramRequest(this.config, 'sendMessage', { chat_id: chatId, text: response });
       return;
     }
     if (command === '/settlements') {
@@ -110,7 +120,7 @@ export class TelegramBotService {
       return;
     }
     if (command === '/help' || !token || !/^[A-Za-z0-9_-]{40,60}$/.test(token)) {
-      await telegramRequest(this.config, "sendMessage", { chat_id: chatId, text: "FloatSheets commands:\n/positions or /trades — your open positions across deployments\n/positions jaguar — filter by version\n/vault — LP balances and queue status\n/vault goldlake — filter by version\n/settlements on or off — Goldlake settlement notifications\n/help — show commands\n\nConnect your wallet and use Link Telegram in dashboard Settings first. Commands work in private chat only." });
+      await telegramRequest(this.config, "sendMessage", { chat_id: chatId, text: "FloatSheets commands:\n/positions or /trades — your open positions across deployments\n/positions jaguar — filter by version\n/vault — LP balances and queue status\n/vault goldlake — filter by version\n/settlements on or off — Goldlake settlement notifications\n/pennyalerts on or off — penny-stock halt and pause alerts\n/help — show commands\n\nConnect your wallet and use Link Telegram in dashboard Settings first. Commands work in private chat only." });
       return;
     }
     const user = message?.from;
