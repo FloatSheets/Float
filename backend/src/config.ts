@@ -47,8 +47,9 @@ const schema = z.object({
   // Synthetic depth used by the risk screen for reference markets (USDG).
   // Size-impact model for reference quotes: impact = notional / depth / 2 (a $1,000 trade at 250k = 20 bps).
   REFERENCE_VIRTUAL_DEPTH_USDG: z.coerce.number().int().min(1_000).default(250_000),
-  // A Robinhood quote whose bid/ask hasn't changed for this long counts as stale.
-  REFERENCE_UNCHANGED_QUOTE_SECONDS: z.coerce.number().int().min(60).max(86_400).default(600),
+  // Allow thinly traded names more time between price changes. Quotes still
+  // need a recent provider heartbeat and must pass spread, halt, and source checks.
+  REFERENCE_UNCHANGED_QUOTE_SECONDS: z.coerce.number().int().min(60).max(86_400).default(3_600),
   // Republish a reference mark once it moves this far from the on-chain price.
   REFERENCE_REPUBLISH_BPS: z.coerce.number().int().min(5).max(500).default(25),
   // New Copper LP deposits stay closed (team liquidity is seeded directly) until this is true.

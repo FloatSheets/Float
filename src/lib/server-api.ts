@@ -30,7 +30,11 @@ function apiHeaders(version: ContractVersion, json = false): HeadersInit {
 }
 
 async function getJson<T extends JsonRecord>(path: string, version: ContractVersion = "goldlake"): Promise<T> {
-  const response = await fetch(`${apiOrigin()}${path}`, { headers: apiHeaders(version) });
+  const url = new URL(path, `${apiOrigin()}/`);
+  // Carry the selected deployment in both channels. Some hosting/proxy layers
+  // normalize custom headers, while the query parameter remains part of the URL.
+  url.searchParams.set("contract_version", version);
+  const response = await fetch(url, { headers: apiHeaders(version) });
   if (!response.ok) throw new Error(`FloatSheets API returned ${response.status} for ${path}.`);
   return (await response.json()) as T;
 }

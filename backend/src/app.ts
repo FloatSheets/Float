@@ -133,10 +133,15 @@ app.use((request, response, next) => {
 });
 
 app.use((request, response, next) => {
+  if (request.path.startsWith("/v1/")) {
+    // A response for one contract deployment must never be reused for another.
+    response.vary("x-floatsheets-contract-version");
+    if (request.method === "GET") response.setHeader("Cache-Control", "private, no-store, max-age=0");
+  }
   const allowedOrigin = process.env.FRONTEND_URL;
   if (allowedOrigin && request.headers.origin === allowedOrigin) {
     response.setHeader("Access-Control-Allow-Origin", allowedOrigin);
-    response.setHeader("Vary", "Origin");
+    response.vary("Origin");
   }
   response.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   response.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
