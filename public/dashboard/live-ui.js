@@ -1055,7 +1055,7 @@
       const stats=root.querySelector('.chart-stats');
       if(stats?.parentElement)stats.parentElement.insertBefore(notice,stats.nextSibling);
     }
-    notice.innerHTML='<strong>RUN has a wider execution limit.</strong> Quotes may be up to 5% away from the midpoint on each side, about 10% round trip before fees. Check the final price and fee before signing.';
+    notice.innerHTML='<strong>RUN is in accelerated launch mode.</strong> It uses one live Robinhood price sample instead of the normal history warm-up, and quotes may be up to 5% away from the midpoint on each side (about 10% round trip before fees). Review the final price and fee before signing.';
   }
   function abortable(promise,signal){
     return new Promise(function(resolve,reject){

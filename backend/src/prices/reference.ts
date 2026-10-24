@@ -54,6 +54,7 @@ export type ReferenceMarket = {
   max_spot_twap_deviation_bps: number;
   min_sources_for_open: number;
   max_unchanged_quote_seconds?: number;
+  reference_min_window_points?: number | null;
 };
 
 export type Aggregate = {
@@ -248,7 +249,7 @@ export class ReferencePriceMonitor {
       const { rows } = await this.database.query<ReferenceMarket>(
         `SELECT id, symbol, token_address, pyth_feed_id, max_ticket_usdg::text,
                 min_half_spread_bps, max_spot_twap_deviation_bps, min_sources_for_open,
-                max_unchanged_quote_seconds
+                max_unchanged_quote_seconds, reference_min_window_points
          FROM public.markets WHERE price_source = 'reference' AND status != 'disabled' ORDER BY symbol`
       );
       if (rows.length === 0) return;
@@ -364,10 +365,11 @@ export class ReferencePriceMonitor {
 
     const { average, points } = await this.windowAverage(market.id, mid, now);
     const deviationBps = Math.round(Math.abs(mid - average) / average * 10_000);
-    const warmedUp = points >= this.config.REFERENCE_MIN_WINDOW_POINTS;
+    const minWindowPoints = market.reference_min_window_points ?? this.config.REFERENCE_MIN_WINDOW_POINTS;
+    const warmedUp = points >= minWindowPoints;
     const tradable = aggregate.tradable && warmedUp && deviationBps <= market.max_spot_twap_deviation_bps;
     const frozenReason = aggregate.frozenReason
-      ?? (!warmedUp ? `collecting live prices (${points} of ${this.config.REFERENCE_MIN_WINDOW_POINTS})` : tradable ? null : `price is ${deviationBps} bps from its 15-minute average`);
+      ?? (!warmedUp ? `collecting live prices (${points} of ${minWindowPoints})` : tradable ? null : `price is ${deviationBps} bps from its 15-minute average`);
     const samples = referenceQuoteSamples({
       mid, halfSpreadBps: aggregate.halfSpreadBps,
       notionals: quoteNotionalsForMarketCap(market.max_ticket_usdg),
