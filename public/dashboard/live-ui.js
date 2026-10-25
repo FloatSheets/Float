@@ -348,6 +348,42 @@
     } catch { showActionModal('Could not open position',reason); }
   }
 
+  function openPartialExitPlanner(position){
+    const wallet=walletApi(),size=BigInt(position.sizeE18),entry=BigInt(position.entryPriceE18),margin=BigInt(position.marginUsdg),mark=BigInt(position.markPriceE18||'0');
+    if(!wallet?.connected||!wallet.address||size===0n||entry<=0n||mark<=0n||position.stale){showActionModal('Partial exit estimate unavailable','Connect the position wallet and wait for a fresh market mark before planning an exit.');return;}
+    const priceToE18=function(value){const text=String(value).trim();if(!/^\d+(?:\.\d{0,18})?$/.test(text))throw new Error('Enter a valid price with up to 18 decimal places.');const parts=text.split('.');return BigInt(parts[0]+(parts[1]||'').padEnd(18,'0'));};
+    const absoluteSize=size>0n?size:-size;
+    const body='<p>Model a portion of this position at a target price. This saves a dashboard reminder only; Float currently quotes full-position closes, so no partial close will be submitted.</p><label>Position to model (%)<input id="partial-exit-percent" type="number" min="0.01" max="99.99" step="0.01" value="25"></label><label>Target price · USDG<input id="partial-exit-target" type="number" min="0.000000000000000001" step="any" value="'+(Number(mark)/1e18)+'"></label><div id="partial-exit-estimate" role="status" aria-live="polite" style="margin-top:12px"></div><small>Gross PnL estimate excludes fees, spread, gas, funding, and price gaps. The remaining position is a snapshot calculation; live size or margin may change.</small>';
+    modal('Plan partial exit · '+escapeMessage(position.symbol),body,'Save price reminder',function(){
+      try{
+        const percent=Number(document.getElementById('partial-exit-percent')?.value),target=priceToE18(document.getElementById('partial-exit-target')?.value||'');
+        if(!Number.isFinite(percent)||percent<=0||percent>=100||target<=0n)throw new Error('Choose a percentage from 0.01% to 99.99% and enter a valid target price.');
+        const bps=BigInt(Math.round(percent*100)),closed=absoluteSize*bps/10000n,remainder=absoluteSize-closed;
+        if(closed===0n||remainder===0n)throw new Error('That percentage is too small or too large for this position size.');
+        const signedClosed=size>0n?closed:-closed,grossPnl=(target-entry)*signedClosed/10n**30n;
+        const market=markets.find(function(row){return row.symbol===position.symbol;}),baseline=Number(market?.twapPrice),targetNumber=Number(target)/1e18;
+        if(!Number.isFinite(baseline)||baseline<=0||targetNumber===baseline)throw new Error('A current TWAP and a target on one side of it are required to create a reminder.');
+        const direction=targetNumber>baseline?'above':'below';
+        const key='floatsheets-price-alerts-v1';let alerts=[];try{const saved=JSON.parse(localStorage.getItem(key)||'[]');if(Array.isArray(saved))alerts=saved;}catch{}
+        if(alerts.length>=50)throw new Error('You have reached the 50 saved price alert limit. Remove an alert before adding this reminder.');
+        alerts.push({id:globalThis.crypto?.randomUUID?.()||String(Date.now())+'-'+Math.random().toString(36).slice(2),symbol:position.symbol,scope:'position',source:'twap',type:'price',direction:direction,target:targetNumber,baseline:baseline,channel:'in_app',walletAddress:wallet.address.toLowerCase(),contractVersion:selectedContractVersion(),createdAt:Date.now(),fired:false,partialExitPercent:percent});
+        localStorage.setItem(key,JSON.stringify(alerts));dialog.close();showActionModal('Price reminder saved',position.symbol+' crossed your target reminder level. Review your position in Float; no trade will be placed.');
+      }catch(error){showActionModal('Could not save partial exit plan',error instanceof Error?error.message:'Please check the target and try again.');}
+    });
+    const update=function(){
+      const output=document.getElementById('partial-exit-estimate');if(!output)return;
+      try{
+        const percent=Number(document.getElementById('partial-exit-percent')?.value),target=priceToE18(document.getElementById('partial-exit-target')?.value||'');
+        if(!Number.isFinite(percent)||percent<=0||percent>=100||target<=0n)throw new Error('Enter a valid percentage and target.');
+        const bps=BigInt(Math.round(percent*100)),closed=absoluteSize*bps/10000n,remainder=absoluteSize-closed;
+        if(closed===0n||remainder===0n)throw new Error('Position size is too small for this percentage.');
+        const signedClosed=size>0n?closed:-closed,pnl=(target-entry)*signedClosed/10n**30n,remainingMargin=margin*(10000n-bps)/10000n;
+        output.textContent='Estimated partial size: '+(Number(closed)/1e18).toLocaleString(undefined,{maximumFractionDigits:8})+' · Remaining: '+(Number(remainder)/1e18).toLocaleString(undefined,{maximumFractionDigits:8})+' · Remaining margin: '+displayUsdG(remainingMargin)+' USDG · Gross target PnL: '+(pnl<0n?'-':'')+displayUsdG(pnl<0n?-pnl:pnl)+' USDG';
+      }catch(error){output.textContent=error instanceof Error?error.message:'Estimate unavailable.';}
+    };
+    setTimeout(function(){['partial-exit-percent','partial-exit-target'].forEach(function(id){document.getElementById(id)?.addEventListener('input',update);});update();},0);
+  }
+
   function installClosePosition(position){
     const ticket=root.querySelector('.live-trade-ticket');
     if(!ticket||!position||BigInt(position.sizeE18)===0n||ticket.querySelector('#close-live-position'))return;
@@ -582,7 +618,7 @@
         const riskClass=p.stale?'risk-stale':distance===null?'risk-unknown':distance<=5?'risk-critical':distance<=15?'risk-watch':'risk-clear';
         const riskDetail=distance===null?'Distance unavailable':(distance<0?'Beyond estimate':distance.toFixed(2)+'% to liquidation')+(p.stale?' · last mark':'');
         const liquidationLabel=liquidation>0n?'$'+(Number(liquidation)/1e18).toLocaleString(undefined,{maximumFractionDigits:4}):'Unavailable';
-        return '<tr><td>'+escapeMessage(p.symbol)+'</td><td class="'+(size>0n?'positive':'negative')+'">'+(size>0n?'Long':'Short')+'</td><td>'+Math.abs(Number(size)/1e18).toLocaleString(undefined,{maximumFractionDigits:8})+'</td><td>$'+(Number(p.entryPriceE18)/1e18).toLocaleString(undefined,{maximumFractionDigits:4})+'</td><td>'+displayUsdG(BigInt(p.marginUsdg))+' USDG</td><td>'+pnlDisplay.signedDecimal(p.pnlUsdg)+'</td>'+(portfolio?'<td>'+liquidationLabel+'</td><td><span class="position-risk '+riskClass+'">'+riskLabel+'</span><small class="position-risk-detail">'+riskDetail+'</small></td><td><div class="position-actions"><button class="small-btn" type="button" data-position-add-margin="'+escapeMessage(p.symbol)+'">Add margin</button><button class="small-btn" type="button" data-position-close="'+escapeMessage(p.symbol)+'">Close</button></div></td><td><button class="small-btn" type="button" data-share-trade="'+index+'">Share</button></td>':'')+'</tr>';
+        return '<tr><td>'+escapeMessage(p.symbol)+'</td><td class="'+(size>0n?'positive':'negative')+'">'+(size>0n?'Long':'Short')+'</td><td>'+Math.abs(Number(size)/1e18).toLocaleString(undefined,{maximumFractionDigits:8})+'</td><td>$'+(Number(p.entryPriceE18)/1e18).toLocaleString(undefined,{maximumFractionDigits:4})+'</td><td>'+displayUsdG(BigInt(p.marginUsdg))+' USDG</td><td>'+pnlDisplay.signedDecimal(p.pnlUsdg)+'</td>'+(portfolio?'<td>'+liquidationLabel+'</td><td><span class="position-risk '+riskClass+'">'+riskLabel+'</span><small class="position-risk-detail">'+riskDetail+'</small></td><td><div class="position-actions"><button class="small-btn" type="button" data-position-add-margin="'+escapeMessage(p.symbol)+'">Add margin</button><button class="small-btn" type="button" data-position-plan-exit="'+index+'">Plan partial exit</button><button class="small-btn" type="button" data-position-close="'+escapeMessage(p.symbol)+'">Close</button></div></td><td><button class="small-btn" type="button" data-share-trade="'+index+'">Share</button></td>':'')+'</tr>';
       }).join('')+'</tbody></table></div>';
       if(portfolio){
         const margin=snapshot.positions.reduce(function(sum,position){return sum+BigInt(position.marginUsdg);},0n);
@@ -592,6 +628,7 @@
         root.querySelector('#portfolio-equity').textContent = displayUsdG(equity);
         root.querySelector('#portfolio-position-table').innerHTML = open.length ? table : '<div class="empty-state"><h3>No open positions</h3><p>Your closed trades are included in realized PnL.</p></div>';
         root.querySelectorAll('[data-share-trade]').forEach(function(button){button.addEventListener('click',function(){const position=open[Number(button.dataset.shareTrade)];if(position)openTradeShare(position);});});
+        root.querySelectorAll('[data-position-plan-exit]').forEach(function(button){button.addEventListener('click',function(){const position=open[Number(button.dataset.positionPlanExit)];if(position)openPartialExitPlanner(position);});});
         root.querySelectorAll('[data-position-add-margin]').forEach(function(button){button.addEventListener('click',function(){
           const symbol=button.dataset.positionAddMargin;
           modal('Add margin · '+symbol,'<p>Add USDG collateral to this open position. Your wallet will ask you to approve and confirm the transaction.</p><div class="field token-amount-field"><label for="portfolio-margin-amount">Margin amount</label><div class="token-amount-shell"><div class="token-amount-token"><img src="/usdg_logo.png" alt="">USDG</div><div class="token-amount-value"><span aria-hidden="true">$</span><input id="portfolio-margin-amount" inputmode="decimal" autocomplete="off" placeholder="0.00"></div></div></div>','Continue',async function(){
@@ -976,7 +1013,7 @@
     function paint(){
       const alerts=read();
       const currentList=document.querySelector('#price-alert-list');if(!currentList)return;
-      currentList.innerHTML=alerts.length?alerts.map(function(a){const target=a.type==='price'?'$'+Number(a.target).toLocaleString(undefined,{maximumFractionDigits:6})+' USDG':Number(a.target)+'%';return '<div class="list-row" style="display:flex;justify-content:space-between;gap:12px;align-items:center;padding:10px 0"><span><strong>'+escapeHtml(a.symbol)+'</strong> · '+(a.scope==='position'?'Open position':'Market')+' · '+a.source.toUpperCase()+' · '+a.type.replaceAll('_',' ')+' · '+(a.type==='liquidation_distance'?'within ':'threshold ')+target+(a.fired?' · Triggered':'')+'</span><button type="button" class="secondary-btn" data-remove-price-alert="'+escapeHtml(a.id)+'">Remove</button></div>';}).join(''):'<p>No price alerts saved in this browser.</p>';
+      currentList.innerHTML=alerts.length?alerts.map(function(a){const target=a.type==='price'?'$'+Number(a.target).toLocaleString(undefined,{maximumFractionDigits:6})+' USDG':Number(a.target)+'%';return '<div class="list-row" style="display:flex;justify-content:space-between;gap:12px;align-items:center;padding:10px 0"><span><strong>'+escapeHtml(a.symbol)+'</strong> · '+(a.scope==='position'?'Open position':'Market')+' · '+a.source.toUpperCase()+' · '+a.type.replaceAll('_',' ')+' · '+(a.type==='liquidation_distance'?'within ':'threshold ')+target+(a.partialExitPercent?' · partial exit plan '+Number(a.partialExitPercent)+'%':'')+(a.fired?' · Triggered':'')+'</span><button type="button" class="secondary-btn" data-remove-price-alert="'+escapeHtml(a.id)+'">Remove</button></div>';}).join(''):'<p>No price alerts saved in this browser.</p>';
       currentList.querySelectorAll('[data-remove-price-alert]').forEach(function(button){button.addEventListener('click',function(){save(read().filter(function(a){return a.id!==button.dataset.removePriceAlert;}));});});
     }
     function refreshSymbols(){
@@ -1075,7 +1112,7 @@
       }catch(error){console.warn('FloatSheets price alert check unavailable',error);}finally{checking=false;}
     }
     function notifyPriceAlert(alert,price){
-      const message=alert.type==='liquidation_distance'?alert.symbol+' position is '+Number(price).toFixed(2)+'% from its estimated liquidation price.':alert.type==='move_pct'?alert.symbol+' moved '+(Number(price)>0?'+':'')+Number(price).toFixed(2)+'% from your alert baseline.':alert.symbol+' crossed $'+Number(alert.target).toLocaleString(undefined,{maximumFractionDigits:6})+' USDG.';
+      const message=alert.partialExitPercent?alert.symbol+' crossed your partial exit plan target. Review your position; no trade was placed.':alert.type==='liquidation_distance'?alert.symbol+' position is '+Number(price).toFixed(2)+'% from its estimated liquidation price.':alert.type==='move_pct'?alert.symbol+' moved '+(Number(price)>0?'+':'')+Number(price).toFixed(2)+'% from your alert baseline.':alert.symbol+' crossed $'+Number(alert.target).toLocaleString(undefined,{maximumFractionDigits:6})+' USDG.';
       if(alert.channel==='browser'&&Notification.permission==='granted'){try{new Notification('FloatSheets price alert',{body:message,tag:'floatsheets-price-'+alert.id});}catch{if(typeof toast==='function')toast(message);}}
       else if(typeof toast==='function')toast(message);
       const currentStatus=document.querySelector('#price-alert-status');if(currentStatus)currentStatus.textContent=message;
