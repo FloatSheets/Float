@@ -254,6 +254,43 @@ export function RainbowWalletBridge() {
         const result = await publicClient.readContract({ address: protocolAddresses.oracle, abi: oracleAbi, functionName: "getPrice", args: [marketId] });
         return { priceE18: result[0].toString(), timestamp: result[4].toString(), circuitBroken: result[6] };
       },
+      async estimateEntryRisk(payload: { symbol: string; isLong: boolean; notionalUsdg: string; marginUsdg: string }) {
+        if (!connected || !address || !publicClient) throw new Error("Connect a wallet on Robinhood Chain first.");
+        if (!protocolAddresses) throw new Error("Trading configuration is still loading. Please try again.");
+        const symbol = payload.symbol.trim().toUpperCase();
+        const id = keccak256(stringToHex(symbol));
+        const block = await publicClient.getBlock();
+        const [position, mark, market] = await Promise.all([
+          publicClient.readContract({ address: protocolAddresses.clearingHouse, abi: clearingAbi, functionName: "getPosition", args: [address, id], blockNumber: block.number }),
+          publicClient.readContract({ address: protocolAddresses.oracle, abi: oracleAbi, functionName: "getPrice", args: [id], blockNumber: block.number }),
+          publicClient.readContract({ address: protocolAddresses.clearingHouse, abi: marketRiskAbi, functionName: "markets", args: [id], blockNumber: block.number })
+        ]);
+        const markPriceE18 = mark[0];
+        const stale = markPriceE18 === 0n || mark[5] === 0n || block.timestamp > mark[4] + 120n || mark[4] > block.timestamp + 5n || mark[6];
+        const existingPosition = position[0] !== 0n;
+        const idleMarginUsdg = position[2].toString();
+        if (stale) return { available: false, stale: true, existingPosition, idleMarginUsdg, markPriceE18: markPriceE18.toString(), liquidationPriceE18: null };
+        if (market[2] <= 0n || market[2] >= 10_000n) return { available: false, stale: false, existingPosition, idleMarginUsdg, markPriceE18: markPriceE18.toString(), liquidationPriceE18: null };
+        const notional = BigInt(payload.notionalUsdg);
+        const margin = BigInt(payload.marginUsdg);
+        const fee = (notional * 6n + 9_999n) / 10_000n;
+        const postFeeMargin = margin > fee ? margin - fee : 0n;
+        const unsignedSize = notional * 10n ** 30n / markPriceE18;
+        const size = payload.isLong ? unsignedSize : -unsignedSize;
+        const liquidation = liquidationPrice(size, markPriceE18, postFeeMargin, market[2]);
+        return {
+          available: true,
+          stale: false,
+          existingPosition,
+          idleMarginUsdg,
+          markPriceE18: markPriceE18.toString(),
+          maintenanceMarginBps: market[2].toString(),
+          estimatedFeeUsdg: fee.toString(),
+          postFeeMarginUsdg: postFeeMargin.toString(),
+          sizeE18: size.toString(),
+          liquidationPriceE18: liquidation?.toString() ?? null
+        };
+      },
       async pnlSnapshot(symbols: string[], includeHistory = false) {
         if (!connected || !address || !publicClient || !protocolAddresses) throw new Error('Connect your wallet and wait for trading settings to load.');
         const block = await publicClient.getBlock();

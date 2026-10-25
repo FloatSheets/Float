@@ -176,7 +176,7 @@
   function tradeTicket(){
     const wallet=walletState();
     if(!wallet?.connected) return '<div class="live-only-panel"><h2>Ready to trade?</h2><p>Connect your wallet to use USDG as margin and open a position.</p><button class="primary-btn" id="connect-to-trade">Connect wallet</button></div>';
-    return '<div class="live-only-panel live-trade-ticket"><h2>Open '+selected.symbol+' exposure</h2><div class="segmented"><button type="button" data-live-side="long" class="active">↗ Long</button><button type="button" data-live-side="short" class="short">↘ Short</button></div>'+tokenAmountInput('live-collateral','Margin to deposit')+'<div class="field live-leverage-field"><label for="live-leverage">Target leverage <b id="live-leverage-value">1×</b></label><input id="live-leverage" type="range" min="1" max="'+selected.max+'" value="1" step="1"><div class="leverage-row"><span>1×</span><span>'+selected.max+'× maximum</span></div></div>'+(selected.capacity?'<p class="order-disclosure capacity-note">Max new position now: <b>'+capacityMoney(selected.capacity.long_usdg)+'</b> long · <b>'+capacityMoney(selected.capacity.short_usdg)+'</b> short, from the vault\'s current room.</p>':'')+'<p class="trade-contract-warning" id="live-contract-warning" role="alert" hidden></p><div class="order-summary" id="live-order-summary"></div><p class="order-disclosure">You will see the final price and fee before confirming. Prices refresh quickly.</p><button class="primary-btn" id="submit-live-trade" type="button">Open long position</button></div>';
+    return '<div class="live-only-panel live-trade-ticket"><h2>Open '+selected.symbol+' exposure</h2><div class="segmented"><button type="button" data-live-side="long" class="active">↗ Long</button><button type="button" data-live-side="short" class="short">↘ Short</button></div>'+tokenAmountInput('live-collateral','Margin to deposit')+'<div class="field live-leverage-field"><label for="live-leverage">Target leverage <b id="live-leverage-value">1×</b></label><input id="live-leverage" type="range" min="1" max="'+selected.max+'" value="1" step="1"><div class="leverage-row"><span>1×</span><span>'+selected.max+'× maximum</span></div></div>'+(selected.capacity?'<p class="order-disclosure capacity-note">Max new position now: <b>'+capacityMoney(selected.capacity.long_usdg)+'</b> long · <b>'+capacityMoney(selected.capacity.short_usdg)+'</b> short, from the vault\'s current room.</p>':'')+'<p class="trade-contract-warning" id="live-contract-warning" role="alert" hidden></p><div class="order-summary" id="live-order-summary"></div><section class="order-disclosure" id="live-tpsl-planner"><strong>Take-profit / stop-loss planner</strong><p>Optional estimates for a new position. These levels are not submitted as orders and will not automatically close a trade.</p><div style="display:flex;gap:10px;flex-wrap:wrap"><label>Take-profit price · USDG<input id="live-take-profit" type="number" min="0.000001" step="any" inputmode="decimal" placeholder="Optional"></label><label>Stop-loss price · USDG<input id="live-stop-loss" type="number" min="0.000001" step="any" inputmode="decimal" placeholder="Optional"></label></div><div id="live-tpsl-estimate" role="status" aria-live="polite">Enter a take-profit or stop-loss price to see an estimate.</div><small>Estimates use the current on-chain oracle mark and maintenance ratio. PnL is gross and excludes closing fees, spread, gas, and price gaps. Execution at a trigger price is not guaranteed.</small></section><p class="order-disclosure">You will see the final price and fee before confirming. Prices refresh quickly.</p><button class="primary-btn" id="submit-live-trade" type="button">Open long position</button></div>';
   }
 
   function bindTradeTicket(){
@@ -190,7 +190,63 @@
     const submit=ticket.querySelector('#submit-live-trade');
     const warning=ticket.querySelector('#live-contract-warning');
     const leverageField=ticket.querySelector('.live-leverage-field');
+    const takeProfit=ticket.querySelector('#live-take-profit');
+    const stopLoss=ticket.querySelector('#live-stop-loss');
+    const riskOutput=ticket.querySelector('#live-tpsl-estimate');
     let validationTimer=0,validationRequest=0,tradeAccepted=false;
+    let riskTimer=0,riskRequest=0;
+    const toPriceE18=function(value){
+      const normalized=String(value??'').trim();
+      if(!/^\d+(\.\d{1,18})?$/.test(normalized))return null;
+      const [whole,fraction='']=normalized.split('.');
+      return BigInt(whole)*10n**18n+BigInt((fraction+'0'.repeat(18)).slice(0,18)||'0');
+    };
+    const priceText=function(value){return '$'+(Number(value)/1e18).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4});};
+    function scheduleRiskPlanner(){
+      clearTimeout(riskTimer);
+      const request=++riskRequest;
+      const tp=takeProfit.value.trim(),sl=stopLoss.value.trim();
+      if(!tp&&!sl){riskOutput.textContent='Enter a take-profit or stop-loss price to see an estimate.';return;}
+      let margin,lev,notional;
+      try{margin=rawUsdG(collateral.value);lev=BigInt(leverage.value);notional=margin*lev*10000n/(10000n+lev*6n);}catch{riskOutput.textContent='Enter a valid margin amount to calculate an estimate.';return;}
+      if(margin===0n||notional===0n){riskOutput.textContent='Enter a margin amount to calculate an estimate.';return;}
+      riskOutput.textContent='Reading the current oracle mark and market risk settings…';
+      riskTimer=setTimeout(async function(){
+        try{
+          if(request!==riskRequest||!ticket.isConnected)return;
+          const wallet=walletApi();if(!wallet?.estimateEntryRisk)throw new Error('Risk estimates are still loading.');
+          const estimate=await wallet.estimateEntryRisk({symbol:selected.symbol,isLong:isLong,notionalUsdg:notional.toString(),marginUsdg:margin.toString()});
+          if(request!==riskRequest||!ticket.isConnected)return;
+          if(!estimate.available){riskOutput.textContent=estimate.stale?'Estimate unavailable because the oracle price is stale, uninitialized, or circuit-broken.':'Estimate unavailable because current market risk settings could not be verified.';return;}
+          if(estimate.existingPosition){riskOutput.textContent='Estimate unavailable while you have an open '+escapeHtml(selected.symbol)+' position. Its net entry and margin would change the result.';return;}
+          if(BigInt(estimate.idleMarginUsdg)>0n){riskOutput.textContent='Estimate unavailable because idle '+escapeHtml(selected.symbol)+' margin is already held. The trade ticket will use that balance instead of the amount entered here.';return;}
+          const mark=BigInt(estimate.markPriceE18),size=BigInt(estimate.sizeE18),liquidation=estimate.liquidationPriceE18?BigInt(estimate.liquidationPriceE18):null;
+          const rows=[];
+          for(const [name,input] of [['Take-profit',tp],['Stop-loss',sl]]){
+            if(!input)continue;
+            const target=toPriceE18(input);
+            if(target===null||target<=0n){rows.push('<p>'+name+': enter a valid price with up to 18 decimal places.</p>');continue;}
+            const pnl=size*(target-mark)/10n**30n;
+            const favorable=isLong?target>mark:target<mark;
+            if(name==='Take-profit'&&!favorable)rows.push('<p>Take-profit should be '+(isLong?'above':'below')+' the current oracle mark.</p>');
+            if(name==='Stop-loss'){
+              const correctSide=isLong?target<mark:target>mark;
+              if(!correctSide)rows.push('<p>Stop-loss should be '+(isLong?'below':'above')+' the current oracle mark.</p>');
+              if(liquidation!==null){
+                const buffer=isLong?target-liquidation:liquidation-target;
+                const bufferBps=Number(buffer*10000n/mark);
+                if(buffer<=0n)rows.push('<p class="trade-contract-warning">Warning: this stop is at or beyond the estimated liquidation price. Liquidation may happen first.</p>');
+                else if(bufferBps<200)rows.push('<p class="trade-contract-warning">Warning: only '+(bufferBps/100).toFixed(2)+'% estimated buffer remains between the stop and liquidation. Liquidation may happen first.</p>');
+                else rows.push('<p>Estimated stop-to-liquidation buffer: '+(bufferBps/100).toFixed(2)+'%.</p>');
+              }else rows.push('<p>Liquidation price has no positive boundary in this estimate; treat the stop as advisory.</p>');
+            }
+            rows.push('<p>'+name+' at '+priceText(target)+': estimated gross PnL <strong>'+pnlDisplay.signedDecimal(pnl)+' USDG</strong>.</p>');
+          }
+          rows.unshift('<p>Indicative entry mark: <strong>'+priceText(mark)+'</strong> · Estimated liquidation: <strong>'+(liquidation===null?'Unavailable':priceText(liquidation))+'</strong>.</p>');
+          riskOutput.innerHTML=rows.join('');
+        }catch(error){if(request===riskRequest)riskOutput.textContent=error instanceof Error?error.message:'Risk estimate unavailable.';}
+      },350);
+    }
     const clearContractWarning=function(){
       warning.hidden=true;warning.textContent='';ticket.querySelector('.token-amount-shell')?.classList.remove('is-contract-invalid','contract-shake');leverageField?.classList.remove('is-contract-invalid','contract-shake');
     };
@@ -209,6 +265,7 @@
         ticket.querySelector('#live-leverage-value').textContent=leverage.value+'×';
         summary.innerHTML='<div><span>Margin</span><b>'+displayUsdG(margin)+' USDG</b></div><div><span>Position size</span><b>Up to '+displayUsdG(notional)+' USDG</b></div><div><span>Trading fee</span><b>0.06%</b></div>';
         submit.disabled=margin===0n||!tradeAccepted;
+        scheduleRiskPlanner();
       } catch { summary.innerHTML=''; submit.disabled=true; }
     };
     const checkTrade=function(){
@@ -236,6 +293,7 @@
     };
     ticket.querySelectorAll('[data-live-side]').forEach(function(button){button.addEventListener('click',function(){isLong=button.dataset.liveSide==='long';ticket.querySelectorAll('[data-live-side]').forEach(function(item){item.classList.toggle('active',item===button);});submit.textContent='Open '+(isLong?'long':'short')+' position';checkTrade();});});
     collateral.addEventListener('input',function(){paintTokenAmount(collateral);checkTrade();}); leverage.addEventListener('input',checkTrade); paintTokenAmount(collateral);update();
+    takeProfit.addEventListener('input',scheduleRiskPlanner);stopLoss.addEventListener('input',scheduleRiskPlanner);
     submit.addEventListener('click',async function(){
       let marginDeposited=false;
       let marginAlreadyHeld=false;
