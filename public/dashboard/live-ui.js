@@ -168,6 +168,7 @@
   }
 
   function capacityMoney(value){return '$'+Number(value).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});}
+  function rawUsdGText(value){const raw=BigInt(value),whole=(raw/1000000n).toString(),fraction=(raw%1000000n).toString().padStart(6,'0').replace(/0+$/,'');return fraction?whole+'.'+fraction:whole;}
   function capacityCell(m){
     if(!m.capacity) return '<span class="solvency-muted">—</span>';
     if(Number(m.capacity.long_usdg)<=0&&Number(m.capacity.short_usdg)<=0) return '<span class="capacity-full">Vault full</span>';
@@ -176,7 +177,7 @@
   function tradeTicket(){
     const wallet=walletState();
     if(!wallet?.connected) return '<div class="live-only-panel"><h2>Ready to trade?</h2><p>Connect your wallet to use USDG as margin and open a position.</p><button class="primary-btn" id="connect-to-trade">Connect wallet</button></div>';
-    return '<div class="live-only-panel live-trade-ticket"><h2>Open '+selected.symbol+' exposure</h2><div class="segmented"><button type="button" data-live-side="long" class="active">↗ Long</button><button type="button" data-live-side="short" class="short">↘ Short</button></div>'+tokenAmountInput('live-collateral','Margin to deposit')+'<div class="field live-leverage-field"><label for="live-leverage">Target leverage <b id="live-leverage-value">1×</b></label><input id="live-leverage" type="range" min="1" max="'+selected.max+'" value="1" step="1"><div class="leverage-row"><span>1×</span><span>'+selected.max+'× maximum</span></div></div>'+(selected.capacity?'<p class="order-disclosure capacity-note">Max new position now: <b>'+capacityMoney(selected.capacity.long_usdg)+'</b> long · <b>'+capacityMoney(selected.capacity.short_usdg)+'</b> short, from the vault\'s current room.</p>':'')+'<p class="trade-contract-warning" id="live-contract-warning" role="alert" hidden></p><div class="order-summary" id="live-order-summary"></div><section class="order-disclosure" id="live-tpsl-planner"><strong>Take-profit / stop-loss planner</strong><p>Optional estimates for a new position. These levels are not submitted as orders and will not automatically close a trade.</p><div style="display:flex;gap:10px;flex-wrap:wrap"><label>Take-profit price · USDG<input id="live-take-profit" type="number" min="0.000001" step="any" inputmode="decimal" placeholder="Optional"></label><label>Stop-loss price · USDG<input id="live-stop-loss" type="number" min="0.000001" step="any" inputmode="decimal" placeholder="Optional"></label></div><div id="live-tpsl-estimate" role="status" aria-live="polite">Enter a take-profit or stop-loss price to see an estimate.</div><small>Estimates use the current on-chain oracle mark and maintenance ratio. PnL is gross and excludes closing fees, spread, gas, and price gaps. Execution at a trigger price is not guaranteed.</small></section><p class="order-disclosure">You will see the final price and fee before confirming. Prices refresh quickly.</p><button class="primary-btn" id="submit-live-trade" type="button">Open long position</button></div>';
+    return '<div class="live-only-panel live-trade-ticket"><h2>Open '+selected.symbol+' exposure</h2><div class="segmented"><button type="button" data-live-side="long" class="active">↗ Long</button><button type="button" data-live-side="short" class="short">↘ Short</button></div>'+tokenAmountInput('live-collateral','Margin to deposit')+'<div class="field live-leverage-field"><label for="live-leverage">Target leverage <b id="live-leverage-value">1×</b></label><input id="live-leverage" type="range" min="1" max="'+selected.max+'" value="1" step="1"><div class="leverage-row"><span>1×</span><span>'+selected.max+'× maximum</span></div></div>'+(selected.capacity?'<p class="order-disclosure capacity-note">Max new position now: <b>'+capacityMoney(selected.capacity.long_usdg)+'</b> long · <b>'+capacityMoney(selected.capacity.short_usdg)+'</b> short, from the vault\'s current room.</p>':'')+'<p class="trade-contract-warning" id="live-contract-warning" role="alert" hidden></p><div class="order-summary" id="live-order-summary"></div><section class="order-disclosure" id="live-twap-planner"><strong>TWAP trade planner</strong><p>Split a target notional into smaller manual trade steps. Float will not run the schedule or submit trades for you.</p><div style="display:flex;gap:10px;flex-wrap:wrap"><label>Total target notional · USDG<input id="twap-total" type="number" min="0.01" step="any" placeholder="e.g. 1000"></label><label>Steps<input id="twap-count" type="number" min="2" max="20" step="1" value="4"></label><label>Minutes between steps<input id="twap-interval" type="number" min="1" max="1440" step="1" value="15"></label><button type="button" class="secondary-btn" id="twap-create">Create schedule</button></div><div id="twap-schedule" role="status" aria-live="polite" style="margin-top:12px"></div><small>Each step uses the selected direction and leverage, and must pass current market checks. Request a fresh quote and confirm every step in your wallet. Actual fills and exposure can differ from this schedule.</small></section><section class="order-disclosure" id="live-tpsl-planner"><strong>Take-profit / stop-loss planner</strong><p>Optional estimates for a new position. These levels are not submitted as orders and will not automatically close a trade.</p><div style="display:flex;gap:10px;flex-wrap:wrap"><label>Take-profit price · USDG<input id="live-take-profit" type="number" min="0.000001" step="any" inputmode="decimal" placeholder="Optional"></label><label>Stop-loss price · USDG<input id="live-stop-loss" type="number" min="0.000001" step="any" inputmode="decimal" placeholder="Optional"></label></div><div id="live-tpsl-estimate" role="status" aria-live="polite">Enter a take-profit or stop-loss price to see an estimate.</div><small>Estimates use the current on-chain oracle mark and maintenance ratio. PnL is gross and excludes closing fees, spread, gas, and price gaps. Execution at a trigger price is not guaranteed.</small></section><p class="order-disclosure">You will see the final price and fee before confirming. Prices refresh quickly.</p><button class="primary-btn" id="submit-live-trade" type="button">Open long position</button></div>';
   }
 
   function bindTradeTicket(){
@@ -193,6 +194,35 @@
     const takeProfit=ticket.querySelector('#live-take-profit');
     const stopLoss=ticket.querySelector('#live-stop-loss');
     const riskOutput=ticket.querySelector('#live-tpsl-estimate');
+    const twapTotal=ticket.querySelector('#twap-total');
+    const twapCount=ticket.querySelector('#twap-count');
+    const twapInterval=ticket.querySelector('#twap-interval');
+    const twapSchedule=ticket.querySelector('#twap-schedule');
+    const twapKey='floatsheets-twap-plan-v1:'+wallet.address.toLowerCase()+':'+selectedContractVersion()+':'+selected.symbol;
+    let twapPlan=null, queuedTwapStep=null;
+    try{const saved=JSON.parse(localStorage.getItem(twapKey)||'null');if(saved&&saved.symbol===selected.symbol&&saved.wallet===wallet.address.toLowerCase()&&saved.version===selectedContractVersion()&&typeof saved.totalUsdg==='string'&&/^\d+$/.test(saved.totalUsdg)&&Number.isFinite(saved.startedAt)&&Number.isInteger(saved.steps)&&saved.steps>=2&&saved.steps<=20&&Number.isInteger(saved.intervalMinutes)&&saved.intervalMinutes>=1&&saved.intervalMinutes<=1440&&Number.isInteger(saved.completed)&&saved.completed>=0&&saved.completed<=saved.steps&&['long','short'].includes(saved.side))twapPlan=saved;}catch{}
+    const twapStep=function(index){if(!twapPlan||index<0||index>=twapPlan.steps)return 0n;const total=BigInt(twapPlan.totalUsdg),base=total/BigInt(twapPlan.steps);return index===twapPlan.steps-1?total-base*BigInt(twapPlan.steps-1):base;};
+    const renderTwap=function(){
+      if(!twapSchedule)return;
+      if(!twapPlan){twapSchedule.textContent='Create a schedule to preview the notional allocated to each step.';return;}
+      const started=new Date(twapPlan.startedAt),completed=twapPlan.completed;
+      let html='<p><strong>'+escapeMessage(twapPlan.side.toUpperCase())+' · '+displayUsdG(BigInt(twapPlan.totalUsdg))+' USDG target notional</strong> · '+completed+'/'+twapPlan.steps+' confirmed · every '+twapPlan.intervalMinutes+' min</p><ol style="padding-left:22px">';
+      for(let i=0;i<twapPlan.steps;i++){
+        const scheduled=new Date(started.getTime()+i*twapPlan.intervalMinutes*60000),amount=twapStep(i);
+        html+='<li>Step '+(i+1)+' · '+displayUsdG(amount)+' USDG · '+scheduled.toLocaleString()+(i<completed?' · confirmed':'')+(i===completed?'<button type="button" class="small-btn" data-twap-use="'+i+'" style="margin-left:8px">Load step</button>':'')+'</li>';
+      }
+      html+='</ol>'+(completed===twapPlan.steps?'<p>All planned steps are confirmed. You can clear this completed schedule.</p>':'')+'<button type="button" class="small-btn" id="twap-clear">Clear schedule</button>';
+      twapSchedule.innerHTML=html;
+      twapSchedule.querySelector('[data-twap-use]')?.addEventListener('click',function(){
+        const index=Number(this.dataset.twapUse),notional=twapStep(index),lev=BigInt(leverage.value),denominator=lev*10000n;
+        const margin=(notional*(10000n+lev*6n)+denominator-1n)/denominator;
+        const side=twapPlan.side==='long';isLong=side;ticket.querySelectorAll('[data-live-side]').forEach(function(item){item.classList.toggle('active',(item.dataset.liveSide==='long')===side);});
+        submit.textContent='Open '+(isLong?'long':'short')+' position';collateral.value=rawUsdGText(margin);paintTokenAmount(collateral);queuedTwapStep=index;checkTrade();
+        twapSchedule.insertAdjacentHTML('afterbegin','<p role="status">Step '+(index+1)+' loaded. Review the trade, request a fresh quote, and confirm it in your wallet.</p>');
+      });
+      twapSchedule.querySelector('#twap-clear')?.addEventListener('click',function(){localStorage.removeItem(twapKey);twapPlan=null;queuedTwapStep=null;renderTwap();});
+    };
+    renderTwap();
     let validationTimer=0,validationRequest=0,tradeAccepted=false;
     let riskTimer=0,riskRequest=0;
     const toPriceE18=function(value){
@@ -291,6 +321,15 @@
         update();
       },350);
     };
+    ticket.querySelector('#twap-create')?.addEventListener('click',function(){
+      try{
+        const total=rawUsdG(twapTotal.value),steps=Number(twapCount.value),intervalMinutes=Number(twapInterval.value);
+        if(total<=0n||!Number.isInteger(steps)||steps<2||steps>20||!Number.isInteger(intervalMinutes)||intervalMinutes<1||intervalMinutes>1440)throw new Error('Enter a positive notional, 2–20 steps, and a 1–1440 minute interval.');
+        if(total<BigInt(steps))throw new Error('Target notional is too small to give every step at least 0.000001 USDG.');
+        twapPlan={symbol:selected.symbol,wallet:wallet.address.toLowerCase(),version:selectedContractVersion(),side:isLong?'long':'short',totalUsdg:total.toString(),steps:steps,intervalMinutes:intervalMinutes,startedAt:Date.now(),completed:0};
+        localStorage.setItem(twapKey,JSON.stringify(twapPlan));queuedTwapStep=null;renderTwap();
+      }catch(error){twapSchedule.textContent=error instanceof Error?error.message:'Could not create the TWAP schedule.';}
+    });
     ticket.querySelectorAll('[data-live-side]').forEach(function(button){button.addEventListener('click',function(){isLong=button.dataset.liveSide==='long';ticket.querySelectorAll('[data-live-side]').forEach(function(item){item.classList.toggle('active',item===button);});submit.textContent='Open '+(isLong?'long':'short')+' position';checkTrade();});});
     collateral.addEventListener('input',function(){paintTokenAmount(collateral);checkTrade();}); leverage.addEventListener('input',checkTrade); paintTokenAmount(collateral);update();
     takeProfit.addEventListener('input',scheduleRiskPlanner);stopLoss.addEventListener('input',scheduleRiskPlanner);
@@ -303,18 +342,32 @@
         margin=rawUsdG(collateral.value);
         const lev=BigInt(leverage.value);
         let notional=margin*lev*10000n/(10000n+lev*6n);
+        if(queuedTwapStep!==null){
+          if(!twapPlan||queuedTwapStep!==twapPlan.completed||twapPlan.side!==(isLong?'long':'short'))throw new Error('Reload the current TWAP step before submitting.');
+          notional=twapStep(queuedTwapStep);
+          const denominator=lev*10000n;margin=(notional*(10000n+lev*6n)+denominator-1n)/denominator;
+          collateral.value=rawUsdGText(margin);paintTokenAmount(collateral);
+          const currentCheck=await wallet.checkTrade({market:selected.symbol,isLong:isLong,marginUsdg:margin.toString(),notionalUsdg:notional.toString(),targetLeverage:lev.toString()});
+          if(currentCheck?.acceptable!==true&&currentCheck?.refresh_on_quote!==true)throw new Error(typeof currentCheck?.reason==='string'?currentCheck.reason:'This scheduled step is no longer available.');
+          tradeAccepted=true;
+        }
         if(margin===0n||notional===0n) throw new Error('Margin is too small for this leverage.');
         if(!tradeAccepted) throw new Error('Adjust your margin or leverage until this position is available.');
         ticket.dataset.submitting='true'; submit.disabled=true;
         const existingPosition=await wallet.position(selected.symbol);
         const heldMargin=existingPosition&&BigInt(existingPosition.sizeE18)===0n?BigInt(existingPosition.marginUsdg):0n;
         if(heldMargin>0n){
+          if(queuedTwapStep!==null){
+            if(heldMargin!==margin)throw new Error('Idle market margin does not match this planned step. Withdraw it before continuing this schedule.');
+            marginAlreadyHeld=true;submit.textContent='Using planned margin…';
+          }else{
           // A previous quote can fail after its separate margin transaction
           // confirms. Never ask the user to deposit that margin again.
           margin=heldMargin;
           notional=margin*lev*10000n/(10000n+lev*6n);
           marginAlreadyHeld=true;
           submit.textContent='Using available margin…';
+          }
         } else {
           const allowance=await wallet.allowance();
           if(allowance<margin){submit.textContent='Confirm USDG approval…';const approval=await wallet.buildTransaction('approve',{amountUsdg:margin.toString()});await wallet.send(approval.transaction);}
@@ -322,6 +375,7 @@
         }
         submit.textContent='Requesting live quote…';const quote=await wallet.buildTransaction('trade-quote',{market:selected.symbol,isLong:isLong,notionalUsdg:notional.toString()});
         submit.textContent='Confirm trade…';const hash=await wallet.send(quote.transaction);
+        if(queuedTwapStep!==null&&twapPlan&&queuedTwapStep===twapPlan.completed){twapPlan.completed++;localStorage.setItem(twapKey,JSON.stringify(twapPlan));queuedTwapStep=null;}
         delete ticket.dataset.submitting; render(); showActionModal('Position opened','Your '+selected.symbol+' position was confirmed on Robinhood Chain. Transaction: '+hash);
       } catch(reason) { delete ticket.dataset.submitting; submit.disabled=false; submit.textContent='Open '+(isLong?'long':'short')+' position'; const message=reason instanceof Error?reason.message:'Trade could not be submitted.'; if(marginDeposited||marginAlreadyHeld) void offerMarginRecovery(selected.symbol,margin,message); else showActionModal('Could not open position',message); }
     });
