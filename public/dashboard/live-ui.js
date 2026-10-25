@@ -893,6 +893,139 @@
     toggle.addEventListener('change',function(){document.body.classList.toggle('dashboard-dark',toggle.checked);localStorage.setItem('floatsheets-dashboard-theme',toggle.checked?'dark':'light');});
   }
 
+  function installPriceAlerts(settingsPanel){
+    settingsPanel=settingsPanel||document.querySelector('#preferences-form .panel-body')||document.querySelector('#preferences-form')?.parentElement;
+    let section=document.getElementById('price-alerts-panel');
+    if(!section){
+      section=document.createElement('section');
+      section.id='price-alerts-panel';section.className='list-row';
+      section.style.cssText='display:block;padding:18px 0;border-top:1px solid var(--line,#e5eaf1)';
+      section.innerHTML='<div><strong>Price alerts</strong><p>Get a dashboard or browser notification for a market price, percent move, or open-position liquidation distance. Alerts use FloatSheets pool prices and are checked while this dashboard stays open; suspended or closed tabs can delay them. Alerts do not place or close trades.</p></div><form id="price-alert-form" style="display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin-top:12px"><label>Market<select id="price-alert-market" required style="display:block;padding:10px;border:1px solid var(--line,#d8deea);border-radius:8px"></select></label><label>Alert applies to<select id="price-alert-scope" style="display:block;padding:10px;border:1px solid var(--line,#d8deea);border-radius:8px"><option value="market">Market price</option><option value="position">My open position</option></select></label><label>Price source<select id="price-alert-source" style="display:block;padding:10px;border:1px solid var(--line,#d8deea);border-radius:8px"><option value="twap">Pool TWAP</option><option value="spot">Pool spot</option></select></label><label>Alert type<select id="price-alert-type" style="display:block;padding:10px;border:1px solid var(--line,#d8deea);border-radius:8px"><option value="price">Price target</option><option value="move_pct">Percent move</option><option value="liquidation_distance">Liquidation distance</option></select></label><label>Direction<select id="price-alert-direction" style="display:block;padding:10px;border:1px solid var(--line,#d8deea);border-radius:8px"><option value="above">Rises above</option><option value="below">Falls below</option></select></label><label><span id="price-alert-target-label">USDG price</span><input id="price-alert-target" type="number" min="0.000001" step="any" required style="display:block;padding:10px;border:1px solid var(--line,#d8deea);border-radius:8px"></label><label>Delivery<select id="price-alert-channel" style="display:block;padding:10px;border:1px solid var(--line,#d8deea);border-radius:8px"><option value="in_app">In dashboard</option><option value="browser">Browser notification</option></select></label><button class="secondary-btn" type="submit">Add alert</button></form><p id="price-alert-status" role="status" aria-live="polite" style="margin:10px 0"></p><div id="price-alert-list"></div>';
+      document.body.append(section);
+    }
+    if(settingsPanel&&section.parentElement!==settingsPanel)settingsPanel.append(section);
+    section.hidden=!settingsPanel;
+    const key='floatsheets-price-alerts-v1';
+    const status=section.querySelector('#price-alert-status');
+    const form=section.querySelector('#price-alert-form');
+    const marketSelect=section.querySelector('#price-alert-market');
+    const scopeSelect=section.querySelector('#price-alert-scope');
+    const channelSelect=section.querySelector('#price-alert-channel');
+    const typeSelect=section.querySelector('#price-alert-type');
+    const targetInput=section.querySelector('#price-alert-target');
+    function read(){try{const value=JSON.parse(localStorage.getItem(key)||'[]');return Array.isArray(value)?value.filter(function(a){return a&&typeof a.id==='string'&&typeof a.symbol==='string'&&Number.isFinite(a.target)&&['above','below'].includes(a.direction)&&['market','position'].includes(a.scope)&&['twap','spot'].includes(a.source)&&['price','move_pct','liquidation_distance'].includes(a.type)&&['in_app','browser'].includes(a.channel)}):[];}catch{return [];}}
+    function save(alerts){localStorage.setItem(key,JSON.stringify(alerts));paint();}
+    function paint(){
+      const alerts=read();
+      const currentList=document.querySelector('#price-alert-list');if(!currentList)return;
+      currentList.innerHTML=alerts.length?alerts.map(function(a){const target=a.type==='price'?'$'+Number(a.target).toLocaleString(undefined,{maximumFractionDigits:6})+' USDG':Number(a.target)+'%';return '<div class="list-row" style="display:flex;justify-content:space-between;gap:12px;align-items:center;padding:10px 0"><span><strong>'+escapeHtml(a.symbol)+'</strong> · '+(a.scope==='position'?'Open position':'Market')+' · '+a.source.toUpperCase()+' · '+a.type.replaceAll('_',' ')+' · '+(a.type==='liquidation_distance'?'within ':'threshold ')+target+(a.fired?' · Triggered':'')+'</span><button type="button" class="secondary-btn" data-remove-price-alert="'+escapeHtml(a.id)+'">Remove</button></div>';}).join(''):'<p>No price alerts saved in this browser.</p>';
+      currentList.querySelectorAll('[data-remove-price-alert]').forEach(function(button){button.addEventListener('click',function(){save(read().filter(function(a){return a.id!==button.dataset.removePriceAlert;}));});});
+    }
+    function refreshSymbols(){
+      if(!marketSelect)return;
+      const symbols=Array.isArray(markets)?markets.map(function(m){return m.symbol;}).filter(Boolean):[];
+      const prior=marketSelect.value;
+      marketSelect.innerHTML=symbols.map(function(symbol){return '<option value="'+escapeHtml(symbol)+'">'+escapeHtml(symbol)+'</option>';}).join('');
+      if(symbols.includes(prior))marketSelect.value=prior;
+    }
+    refreshSymbols();paint();
+    if(form&&!typeSelect.dataset.bound){typeSelect.dataset.bound='true';
+      typeSelect.addEventListener('change',function(){
+        const isDistance=typeSelect.value==='liquidation_distance';
+        if(isDistance){scopeSelect.value='position';scopeSelect.disabled=true;section.querySelector('#price-alert-source').disabled=true;section.querySelector('#price-alert-direction').disabled=true;section.querySelector('#price-alert-target-label').textContent='Within % of liquidation';targetInput.max='100';}
+        else{scopeSelect.disabled=false;section.querySelector('#price-alert-source').disabled=false;section.querySelector('#price-alert-direction').disabled=false;section.querySelector('#price-alert-target-label').textContent=typeSelect.value==='move_pct'?'Percent move':'USDG price';targetInput.removeAttribute('max');}
+        targetInput.min=typeSelect.value==='price'?'0.000001':'0.01';
+      });
+    }
+    if(form&&!form.dataset.bound){form.dataset.bound='true';form.addEventListener('submit',async function(event){
+      event.preventDefault();
+      const symbol=marketSelect.value;
+      const type=typeSelect.value;
+      const target=Number(targetInput.value);
+      if(!symbol||!Number.isFinite(target)||target<=0||(type==='liquidation_distance'&&target>100)){status.textContent=type==='price'?'Enter a valid market price.':'Enter a percentage between 0 and 100.';return;}
+      const channel=channelSelect.value;
+      const scope=type==='liquidation_distance'?'position':scopeSelect.value;
+      let walletAddress=null;
+      if(scope==='position'){
+        const wallet=walletApi();
+        if(!wallet?.connected||!wallet.address){status.textContent='Connect the wallet that holds this position first.';return;}
+        try{const position=await wallet.position(symbol);if(!position||BigInt(position.sizeE18)===0n){status.textContent='Open a position in this market before adding a position alert.';return;}walletAddress=wallet.address.toLowerCase();}
+        catch{status.textContent='Could not verify this position. Try again when the wallet connection is ready.';return;}
+      }
+      if(channel==='browser'&&(!('Notification' in window))){status.textContent='Browser notifications are not available here. Choose In dashboard instead.';return;}
+      const create=function(){
+        const source=section.querySelector('#price-alert-source').value;
+        const market=markets.find(function(m){return m.symbol===symbol;});
+        const baseline=Number(source==='spot'?market?.spotPrice:market?.twapPrice);
+        if(!market||!Number.isFinite(baseline)||baseline<=0){status.textContent='A current market price is not available. Try again when market data is live.';return;}
+        if(channel==='browser'&&Notification.permission!=='granted'){status.textContent='Allow browser notifications in your browser settings, then add this alert again.';return;}
+        const alerts=read();
+        if(alerts.length>=50){status.textContent='You can save up to 50 alerts in this browser.';return;}
+        alerts.push({id:globalThis.crypto?.randomUUID?.()||String(Date.now())+'-'+Math.random().toString(36).slice(2),symbol:symbol,scope:scope,source:source,type:type,direction:section.querySelector('#price-alert-direction').value,target:target,baseline:baseline,channel:channel,walletAddress:walletAddress,contractVersion:selectedContractVersion(),createdAt:Date.now(),fired:false});
+        localStorage.setItem(key,JSON.stringify(alerts));paint();status.textContent='Alert saved in this browser.';
+      };
+      if(channel==='browser'&&Notification.permission==='default'){
+        Notification.requestPermission().then(function(permission){if(permission==='granted')create();else status.textContent='Browser notification permission was not granted.';});
+      }else create();
+    });}
+    let checking=false;
+    async function check(){
+      if(document.hidden||checking)return;
+      const alerts=read().filter(function(a){return !a.fired;});if(!alerts.length)return;
+      const api=window.__FLOATSHEETS_SERVER_API__;
+      if(!api?.getMarkets)return;
+      checking=true;
+      try{
+        const current=await api.getMarkets(selectedContractVersion());
+        const rows=Array.isArray(current)?current:(Array.isArray(current?.markets)?current.markets:[]);
+        const bySymbol=new Map(rows.map(function(m){const observed=Date.parse(m.observed_at);const fresh=Number.isFinite(observed)&&Date.now()-observed<=120000&&observed<=Date.now()+5000&&!m.frozen_reason;return [String(m.symbol||'').toUpperCase(),fresh?{twap:Number(m.twap_price_usdg),spot:Number(m.spot_price_usdg)}:null];}));
+        const wallet=walletApi();let changed=false;const positionReads=new Map();
+        function positionFor(alert){
+          const key=alert.symbol.toUpperCase()+':'+alert.type;
+          if(!positionReads.has(key))positionReads.set(key,Promise.resolve(alert.type==='liquidation_distance'&&typeof wallet.pnlSnapshot==='function'?wallet.pnlSnapshot([alert.symbol]).then(function(snapshot){return snapshot.positions?.find(function(position){return position.symbol===alert.symbol;})||null;}):wallet.position(alert.symbol)));
+          return positionReads.get(key);
+        }
+        const stored=read().map(function(a){
+          if(a.contractVersion!==selectedContractVersion())return a;
+          const prices=bySymbol.get(a.symbol.toUpperCase());const price=prices?.[a.source];if(a.type!=='liquidation_distance'&&(!Number.isFinite(price)||price<=0))return a;
+          if(a.scope==='position'){
+            if(!wallet?.connected||wallet.address?.toLowerCase()!==a.walletAddress||typeof wallet.position!=='function')return a;
+            // Position data is wallet-authenticated and read from the selected deployment.
+            return positionFor(a).then(function(position){
+              if(!position||BigInt(position.sizeE18)===0n)return a;
+              let crossed=false,observed=price;
+              if(a.type==='liquidation_distance'){
+                if(position.stale||!position.markPriceE18||!position.liquidationPriceE18)return a;
+                const mark=BigInt(position.markPriceE18),liquidation=BigInt(position.liquidationPriceE18);if(mark<=0n)return a;
+                const distance=Number(mark>liquidation?mark-liquidation:liquidation-mark)*100/Number(mark);
+                crossed=Number.isFinite(distance)&&distance<=a.target;observed=distance;
+              }else if(a.type==='move_pct'){
+                if(!(a.baseline>0))return a;
+                const move=(price/a.baseline-1)*100;
+                crossed=a.direction==='above'?move>=a.target:move<=-a.target;observed=move;
+              }else crossed=a.direction==='above'?(a.baseline<a.target&&price>=a.target):(a.baseline>a.target&&price<=a.target);
+              if(!crossed)return a;
+              a.fired=true;changed=true;notifyPriceAlert(a,observed);return a;
+            }).catch(function(){return a;});
+          }
+          const move=(price/a.baseline-1)*100;
+          const crossed=a.type==='move_pct'?(a.direction==='above'?(move>=a.target&&a.baseline>0):(move<=-a.target&&a.baseline>0)):a.direction==='above'?(a.baseline<a.target&&price>=a.target):(a.baseline>a.target&&price<=a.target);
+          if(crossed){a.fired=true;changed=true;notifyPriceAlert(a,a.type==='move_pct'?move:price);}
+          return a;
+        });
+        const resolved=await Promise.all(stored);if(changed){localStorage.setItem(key,JSON.stringify(resolved));paint();}
+      }catch(error){console.warn('FloatSheets price alert check unavailable',error);}finally{checking=false;}
+    }
+    function notifyPriceAlert(alert,price){
+      const message=alert.type==='liquidation_distance'?alert.symbol+' position is '+Number(price).toFixed(2)+'% from its estimated liquidation price.':alert.type==='move_pct'?alert.symbol+' moved '+(Number(price)>0?'+':'')+Number(price).toFixed(2)+'% from your alert baseline.':alert.symbol+' crossed $'+Number(alert.target).toLocaleString(undefined,{maximumFractionDigits:6})+' USDG.';
+      if(alert.channel==='browser'&&Notification.permission==='granted'){try{new Notification('FloatSheets price alert',{body:message,tag:'floatsheets-price-'+alert.id});}catch{if(typeof toast==='function')toast(message);}}
+      else if(typeof toast==='function')toast(message);
+      const currentStatus=document.querySelector('#price-alert-status');if(currentStatus)currentStatus.textContent=message;
+    }
+    if(!window.__FLOATSHEETS_PRICE_ALERT_TIMER__)window.__FLOATSHEETS_PRICE_ALERT_TIMER__=setInterval(function(){refreshSymbols();void check();},30000);
+    if(!window.__FLOATSHEETS_PRICE_ALERT_DISPOSE_BOUND__){window.__FLOATSHEETS_PRICE_ALERT_DISPOSE_BOUND__=true;window.addEventListener('floatsheets-dashboard-dispose',function(){clearInterval(window.__FLOATSHEETS_PRICE_ALERT_TIMER__);window.__FLOATSHEETS_PRICE_ALERT_TIMER__=null;window.__FLOATSHEETS_PRICE_ALERT_DISPOSE_BOUND__=false;},{once:true});}
+  }
+
   function showContractWelcome(){
     if(window.__FLOATSHEETS_WELCOME_SHOWN__||typeof modal!=='function')return;
     window.__FLOATSHEETS_WELCOME_SHOWN__=true;
@@ -1147,6 +1280,7 @@
     const chartLegend=root.querySelector('.chart-legend');
     if(chartLegend) chartLegend.textContent='Price history · USDG';
     installThemeToggle();
+    installPriceAlerts(null);
     showContractWelcome();
     installSidebarToggle();
     installMobileWorkspaceMenu();
